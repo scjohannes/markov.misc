@@ -203,3 +203,107 @@ markov_to_drs <- function(
 
   return(result)
 }
+
+#' Calculate Difference in Time Alive and Out Of Hospital
+#'
+#' Computes the true treatment effect as the difference in time spent in a
+#' target state (typically "home" or "alive and out of hospital") between
+#' treatment and control groups in simulated Markov trajectory data.
+#'
+#' @param data A data frame containing trajectory data with columns: `id`,
+#'   `y` (state), `tx` (treatment), and `time`.
+#' @param target_state Integer. The state representing the outcome of interest
+#'   (default: 1, typically representing Home/Discharged/Alive and Out of Hospital).
+#'
+#' @return A tibble with the following columns:
+#'   - `true_effect`: Difference in state occupation probability (tx=1 minus tx=0)
+#'     summed across all time points
+#'   - `tx0_mean_time`: Mean time spent in target state for control group
+#'   - `tx0_sd_time`: Standard deviation of time in target state for control group
+#'   - `tx1_mean_time`: Mean time spent in target state for treatment group
+#'   - `tx1_sd_time`: Standard deviation of time in target state for treatment group
+#'
+#' @details
+#' This function calculates the true treatment effect in two ways:
+#'
+#' 1. **State Occupation Probability Method**: Calculates the proportion of
+#'    patients in the target state at each time point for each treatment group,
+#'    then sums the difference across all time points.
+#'
+#' 2. **Individual Time in State**: For each patient, counts the total number
+#'    of time periods spent in the target state, then computes group-level
+#'    means and standard deviations.
+#'
+#' The `true_effect` represents the area between the state occupation curves
+#' and can be interpreted as the expected difference in total days spent in
+#' the target state over the follow-up period.
+#'
+#' @examples
+#' \dontrun{
+#' # Calculate true effect from simulated data
+#' trajectories <- simulate_trajectories(baseline_data, lp_function = my_lp)
+#' effect_summary <- calc_time_in_state_diff(trajectories, target_state = 1)
+#'
+#' # View results
+#' print(effect_summary)
+#' }
+#'
+#' @importFrom dplyr group_by summarise filter select mutate ungroup pull
+#' @importFrom tidyr pivot_wider
+#' @importFrom stats sd
+#'
+#' @export
+calc_time_in_state_diff <- function(data, target_state = 1) {
+  # Input validation
+  required_cols <- c("id", "y", "tx", "time")
+  missing_cols <- setdiff(required_cols, names(data))
+  if (length(missing_cols) > 0) {
+    stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
+  }
+
+  # Calculate state occupation probabilities
+  sops <- data |>
+    dplyr::group_by(y, tx, time) |>
+    dplyr::summarise(count = n(), .groups = "drop") |>
+    dplyr::group_by(tx, time) |>
+    dplyr::mutate(sop = count / sum(count)) |>
+    dplyr::ungroup()
+
+  # Calculate estimand (difference in probability of being in target state)
+  estimand <- sops |>
+    dplyr::filter(y == target_state) |>
+    dplyr::select(tx, time, sop) |>
+    tidyr::pivot_wider(
+      names_from = tx,
+      values_from = sop,
+      names_prefix = "tx_"
+    ) |>
+    dplyr::summarise(true_effect = sum(tx_1) - sum(tx_0)) |>
+    dplyr::pull(true_effect)
+
+  # Calculate time spent in target state for each group
+  time_in_state <- data |>
+    dplyr::filter(y == target_state) |>
+    dplyr::group_by(id, tx) |>
+    dplyr::summarise(time_in_state = n(), .groups = "drop") |>
+    dplyr::group_by(tx) |>
+    dplyr::summarise(
+      mean_time = mean(time_in_state),
+      sd_time = sd(time_in_state),
+      .groups = "drop"
+    )
+
+  # Extract values for each treatment group
+  tx0_mean <- time_in_state |> dplyr::filter(tx == 0) |> dplyr::pull(mean_time)
+  tx0_sd <- time_in_state |> dplyr::filter(tx == 0) |> dplyr::pull(sd_time)
+  tx1_mean <- time_in_state |> dplyr::filter(tx == 1) |> dplyr::pull(mean_time)
+  tx1_sd <- time_in_state |> dplyr::filter(tx == 1) |> dplyr::pull(sd_time)
+
+  return(tibble::tibble(
+    true_effect = estimand,
+    tx0_mean_time = tx0_mean,
+    tx0_sd_time = tx0_sd,
+    tx1_mean_time = tx1_mean,
+    tx1_sd_time = tx1_sd
+  ))
+}

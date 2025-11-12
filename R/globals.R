@@ -8,5 +8,14 @@ utils::globalVariables(c(
   "yprev",
   "last_not_home",
   "dead",
-  "drs"
+  "drs",
+  "n",
+  "count",
+  "sop",
+  "tx_1",
+  "tx_0",
+  "true_effect",
+  "sd",
+  "mean_time",
+  "sd_time"
 ))
