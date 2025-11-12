@@ -17,5 +17,18 @@ utils::globalVariables(c(
   "true_effect",
   "sd",
   "mean_time",
-  "sd_time"
+  "sd_time",
+  "Estimate",
+  "Pr(>|z|)",
+  "Std. Error",
+  "analysis",
+  "conf_high",
+  "conf_low",
+  "estimate",
+  "mean_estimate",
+  "p_value",
+  "statistic",
+  "std_error",
+  "term",
+  "z value"
 ))
