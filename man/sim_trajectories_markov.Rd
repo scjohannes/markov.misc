@@ -8,7 +8,7 @@ sim_trajectories_markov(
   baseline_data = violet_baseline,
   follow_up_time = 60,
   intercepts = c(-9.353417, -4.294121, -1.389221, -0.555688, 3.127056),
-  lp_function,
+  lp_function = lp_violet,
   extra_params = c(time = -0.738194, `time'` = 0.7464006, age = 0.010321, sofa =
     0.046901, `yprev=1` = -8.518344, `yprev=3` = 0, `yprev=4` = 1.315332, `yprev=5` =
     6.576662, `yprev=1 * time` = 0, `yprev=3 * time` = 0, `yprev=4 * time` = 0,
@@ -43,6 +43,8 @@ patient at each time point. Should accept parameters:
 \item parameter: treatment effect (log odds ratio)
 \item extra_params: named vector of coefficients
 Must return a numeric value representing the linear predictor.
+Default is \code{lp_violet}, which implements the VIOLET study model
+(see \code{?lp_violet} for details).
 }}
 
 \item{extra_params}{Named numeric vector of model coefficients used by
@@ -94,46 +96,13 @@ more severe health states.
 }
 \examples{
 \dontrun{
-# Using default VIOLET baseline data and parameters
-# (uses built-in violet_baseline dataset)
-
-# Define a simple linear predictor function
-my_lp <- function(yprev, t, age, sofa, tx, parameter = 0, extra_params) {
-  tx_effect <- parameter * tx
-  sofa_effect <- extra_params["sofa"] * sofa
-  age_effect <- extra_params["age"] * age
-  time_effect <- extra_params["time"] * t
-  time_2_effect <- extra_params["time'"] * pmax(t - 2, 0)
-
-  yprev_effect <- 0
-  yprev_time_effect <- 0
-  if (yprev != 2) {
-    yprev_coef_name <- paste0('yprev=', yprev)
-    if (yprev_coef_name \%in\% names(extra_params)) {
-      yprev_effect <- extra_params[[yprev_coef_name]]
-    }
-    yprev_time_name <- paste0('yprev=', yprev, ' * time')
-    if (yprev_time_name \%in\% names(extra_params)) {
-      yprev_time_effect <- extra_params[[yprev_time_name]] * t
-    }
-  }
-
-  lp <- as.numeric(tx_effect + sofa_effect + age_effect +
-                   time_effect + time_2_effect +
-                   yprev_effect + yprev_time_effect)
-  return(lp)
-}
-
-# Simulate with default baseline data
+# Using all defaults (violet_baseline data, lp_violet function, VIOLET params)
 trajectories <- sim_trajectories_markov(
-  baseline_data = violet_baseline,
-  follow_up_time = 30,
-  lp_function = my_lp,
-  parameter = log(0.8),  # OR = 0.8
+  parameter = log(0.8),  # OR = 0.8 for treatment effect
   seed = 12345
 )
 
-# Or use custom baseline data
+# Using default function with custom baseline data
 custom_baseline <- data.frame(
   id = 1:100,
   yprev = sample(2:5, 100, replace = TRUE),
@@ -145,9 +114,28 @@ custom_baseline <- data.frame(
 trajectories_custom <- sim_trajectories_markov(
   baseline_data = custom_baseline,
   follow_up_time = 30,
-  lp_function = my_lp,
+  seed = 12345
+)
+
+# Define a custom linear predictor function
+my_custom_lp <- function(yprev, t, age, sofa, tx, parameter = 0, extra_params) {
+  # Custom implementation
+  tx_effect <- parameter * tx
+  time_effect <- extra_params["time"] * t
+  # ... your custom logic ...
+  return(tx_effect + time_effect)
+}
+
+trajectories_custom_lp <- sim_trajectories_markov(
+  lp_function = my_custom_lp,
+  parameter = log(0.75),
   seed = 12345
 )
 }
 
+}
+\seealso{
+\code{\link{lp_violet}} for the default linear predictor function
+
+\code{\link{violet_baseline}} for the default baseline dataset
 }
