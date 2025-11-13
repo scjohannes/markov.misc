@@ -30,5 +30,9 @@ utils::globalVariables(c(
   "statistic",
   "std_error",
   "term",
-  "z value"
+  "z value",
+  "treatment",
+  "t",
+  "x",
+  "covers_truth"
 ))
