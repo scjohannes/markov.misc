@@ -11,13 +11,16 @@ RoxygenNote: 7.3.3
 Imports: 
     arrow,
     dplyr,
+    furrr,
+    future,
     ggplot2,
+    Hmisc,
     rlang,
+    rms,
+    rsample,
     stats,
     tibble,
     tidyr
-Suggests:
-    Hmisc
 Depends: 
     R (>= 3.5)
 LazyData: true

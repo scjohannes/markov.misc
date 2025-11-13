@@ -35,5 +35,6 @@ utils::globalVariables(c(
   "t",
   "x",
   "covers_truth",
-  "violet_baseline"
+  "violet_baseline",
+  "splits"
 ))
