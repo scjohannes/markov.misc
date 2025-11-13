@@ -2,6 +2,7 @@
 
 export(calc_time_in_state_diff)
 export(jackknife_mcse)
+export(lp_violet)
 export(plot_sops)
 export(prepare_markov_data)
 export(run_power_iteration)
