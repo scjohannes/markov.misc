@@ -4,7 +4,7 @@
 #' over time, with optional faceting by a grouping variable (typically treatment).
 #'
 #' @param data A data frame containing trajectory data, typically from
-#'   `simulate_trajectories()`.
+#'   `sim_trajectories_markov()` or `sim_trajectories_brownian()`.
 #' @param time_var Character string. Name of the time variable column (default: "time").
 #' @param y_var Character string. Name of the state variable column (default: "y").
 #' @param facet_var Character string. Name of the variable to facet by (default: "tx").
@@ -20,7 +20,7 @@
 #' @examples
 #' \dontrun{
 #' # After simulating trajectories
-#' trajectories <- simulate_trajectories(baseline_data, lp_function = my_lp)
+#' trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
 #'
 #' # Basic plot
 #' plot_sops(trajectories)

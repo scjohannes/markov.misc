@@ -16,3 +16,8 @@ Imports:
     stats,
     tibble,
     tidyr
+Suggests:
+    Hmisc
+Depends: 
+    R (>= 3.5)
+LazyData: true

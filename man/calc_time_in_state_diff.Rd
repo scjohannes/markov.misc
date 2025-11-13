@@ -47,7 +47,7 @@ the target state over the follow-up period.
 \examples{
 \dontrun{
 # Calculate true effect from simulated data
-trajectories <- simulate_trajectories(baseline_data, lp_function = my_lp)
+trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
 effect_summary <- calc_time_in_state_diff(trajectories, target_state = 1)
 
 # View results

@@ -55,7 +55,7 @@ jackknife_mcse <- function(estimates, statistic = mean) {
 }
 
 
-#' Convert Markov Trajectory Data to T-Test Format
+#' Convert State Trajectory Data to T-Test Format
 #'
 #' This function summarizes patient trajectories by counting the number of time
 #' periods each patient spent in a specific state (typically state 1 = Home/Discharged).
@@ -63,7 +63,8 @@ jackknife_mcse <- function(estimates, statistic = mean) {
 #' treatment groups.
 #'
 #' @param data A data frame containing trajectory data, typically the output from
-#'   `simulate_trajectories()`. Must contain columns: `id`, `y` (state), and `tx` (treatment).
+#'   `sim_trajectories_markov()` or `sim_trajectories_brownian()`. Must contain
+#'   columns: `id`, `y` (state), and `tx` (treatment).
 #' @param target_state Integer. The state to count (default: 1, representing Home/Discharged).
 #'
 #' @return A data frame with columns:
@@ -79,14 +80,14 @@ jackknife_mcse <- function(estimates, statistic = mean) {
 #' @examples
 #' \dontrun{
 #' # After simulating trajectories
-#' trajectories <- simulate_trajectories(baseline_data, lp_function = my_lp)
-#' t_data <- markov_to_ttest(trajectories, target_state = 1)
+#' trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
+#' t_data <- states_to_ttest(trajectories, target_state = 1)
 #' }
 #'
 #' @importFrom dplyr group_by summarise first
 #'
 #' @export
-markov_to_ttest <- function(data, target_state = 1) {
+states_to_ttest <- function(data, target_state = 1) {
   # Input validation
   required_cols <- c("id", "y", "tx")
   missing_cols <- setdiff(required_cols, names(data))
@@ -107,7 +108,7 @@ markov_to_ttest <- function(data, target_state = 1) {
 }
 
 
-#' Convert Markov Trajectory Data to Days Returned to Baseline (DRS) Format
+#' Convert State Trajectory Data to Days Returned to Baseline (DRS) Format
 #'
 #' This function calculates "Days Returned to Baseline" (or "Days at Home") for
 #' each patient. This is defined as the number of days spent in the target state
@@ -115,8 +116,8 @@ markov_to_ttest <- function(data, target_state = 1) {
 #' receive a score of -1.
 #'
 #' @param data A data frame containing trajectory data, typically the output from
-#'   `simulate_trajectories()`. Must contain columns: `id`, `time`, `y` (state),
-#'   and `tx` (treatment).
+#'   `sim_trajectories_markov()` or `sim_trajectories_brownian()`. Must contain
+#'   columns: `id`, `time`, `y` (state), and `tx` (treatment).
 #' @param follow_up_time Integer. Total follow-up time used in the simulation.
 #'   This is needed to calculate days at home from the last discharge.
 #' @param target_state Integer. The state representing "home" or "baseline" (default: 1).
@@ -145,19 +146,19 @@ markov_to_ttest <- function(data, target_state = 1) {
 #' @examples
 #' \dontrun{
 #' # After simulating trajectories
-#' trajectories <- simulate_trajectories(baseline_data, follow_up_time = 60,
-#'                                       lp_function = my_lp)
-#' drs_data <- markov_to_drs(trajectories, follow_up_time = 60)
+#' trajectories <- sim_trajectories_markov(baseline_data, follow_up_time = 60,
+#'                                         lp_function = my_lp)
+#' drs_data <- states_to_drs(trajectories, follow_up_time = 60)
 #'
 #' # With different covariates
-#' drs_data <- markov_to_drs(trajectories, follow_up_time = 60,
+#' drs_data <- states_to_drs(trajectories, follow_up_time = 60,
 #'                           covariates = c("age", "sofa", "baseline_severity"))
 #' }
 #'
 #' @importFrom dplyr group_by arrange summarise if_else select across all_of left_join mutate
 #'
 #' @export
-markov_to_drs <- function(
+states_to_drs <- function(
   data,
   follow_up_time,
   target_state = 1,
@@ -241,7 +242,7 @@ markov_to_drs <- function(
 #' @examples
 #' \dontrun{
 #' # Calculate true effect from simulated data
-#' trajectories <- simulate_trajectories(baseline_data, lp_function = my_lp)
+#' trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
 #' effect_summary <- calc_time_in_state_diff(trajectories, target_state = 1)
 #'
 #' # View results

@@ -7,6 +7,8 @@
 #' @param baseline_data A data frame containing baseline patient characteristics.
 #'   Must include columns: `id`, `yprev` (initial state), and any covariates
 #'   needed by `lp_function`. Typically includes `tx`, `age`, `sofa`, etc.
+#'   Default is `violet_baseline`, a dataset of 10,000 patients derived from
+#'   the VIOLET trial (see `?violet_baseline` for details).
 #' @param follow_up_time Integer. Number of time periods to simulate (default: 60).
 #' @param intercepts Numeric vector of intercepts for the proportional odds model.
 #'   Should have length = (number of states - 1). Default values are from VIOLET
@@ -56,14 +58,8 @@
 #'
 #' @examples
 #' \dontrun{
-#' # Using default VIOLET parameters
-#' baseline <- data.frame(
-#'   id = 1:100,
-#'   yprev = sample(2:5, 100, replace = TRUE),
-#'   tx = rbinom(100, 1, 0.5),
-#'   age = rnorm(100, 60, 15),
-#'   sofa = rpois(100, 5)
-#' )
+#' # Using default VIOLET baseline data and parameters
+#' # (uses built-in violet_baseline dataset)
 #'
 #' # Define a simple linear predictor function
 #' my_lp <- function(yprev, t, age, sofa, tx, parameter = 0, extra_params) {
@@ -92,11 +88,28 @@
 #'   return(lp)
 #' }
 #'
-#' trajectories <- simulate_trajectories(
-#'   baseline_data = baseline,
+#' # Simulate with default baseline data
+#' trajectories <- sim_trajectories_markov(
+#'   baseline_data = violet_baseline,
 #'   follow_up_time = 30,
 #'   lp_function = my_lp,
 #'   parameter = log(0.8),  # OR = 0.8
+#'   seed = 12345
+#' )
+#'
+#' # Or use custom baseline data
+#' custom_baseline <- data.frame(
+#'   id = 1:100,
+#'   yprev = sample(2:5, 100, replace = TRUE),
+#'   tx = rbinom(100, 1, 0.5),
+#'   age = rnorm(100, 60, 15),
+#'   sofa = rpois(100, 5)
+#' )
+#'
+#' trajectories_custom <- sim_trajectories_markov(
+#'   baseline_data = custom_baseline,
+#'   follow_up_time = 30,
+#'   lp_function = my_lp,
 #'   seed = 12345
 #' )
 #' }
@@ -107,8 +120,8 @@
 #' @importFrom stats plogis
 #'
 #' @export
-simulate_trajectories <- function(
-  baseline_data,
+sim_trajectories_markov <- function(
+  baseline_data = violet_baseline,
   follow_up_time = 60,
   intercepts = c(-9.353417, -4.294121, -1.389221, -0.555688, 3.127056),
   lp_function,
@@ -117,9 +130,9 @@ simulate_trajectories <- function(
     "time'" = 0.7464006,
     "age" = 0.010321,
     "sofa" = 0.046901,
-    "yprev=1" = -9.464827,
-    "yprev=3" = 0.438444,
-    "yprev=4" = 0.657666,
+    "yprev=1" = -8.518344,
+    "yprev=3" = 0,
+    "yprev=4" = 1.315332,
     "yprev=5" = 6.576662,
     "yprev=1 * time" = 0,
     "yprev=3 * time" = 0,
@@ -314,9 +327,9 @@ simulate_trajectories <- function(
 #'
 #' @return A data frame (tibble) with columns:
 #'   - id: patient identifier
-#'   - t: time/day (1 to n_days)
-#'   - treatment: treatment assignment (0 = control, 1 = treatment)
-#'   - y: observed ordinal state at time t
+#'   - time: time/day (1 to n_days)
+#'   - tx: treatment assignment (0 = control, 1 = treatment)
+#'   - y: observed ordinal state at time
 #'   - x: latent continuous severity (NA after entering absorbing state)
 #'
 #' @details
@@ -334,28 +347,28 @@ simulate_trajectories <- function(
 #' treatment effects or natural recovery plateaus.
 #'
 #' **Difference from Markov model**: Unlike the standard Markov transition model
-#' (see `simulate_trajectories()`), this approach uses a continuous latent variable
+#' (see `sim_trajectories_markov()`), this approach uses a continuous latent variable
 #' rather than direct state-to-state transitions. This provides an alternative
 #' data generating mechanism useful for testing model robustness.
 #'
 #' @examples
 #' \dontrun{
 #' # Simulate with default parameters (null hypothesis: no treatment effect)
-#' trajectories <- simulate_trajectories_brownian(
+#' trajectories <- sim_trajectories_brownian(
 #'   n_patients = 1000,
 #'   n_days = 60,
 #'   seed = 12345
 #' )
 #'
 #' # Simulate with treatment effect (faster improvement)
-#' trajectories_tx <- simulate_trajectories_brownian(
+#' trajectories_tx <- sim_trajectories_brownian(
 #'   n_patients = 1000,
 #'   mu_treatment_effect = -0.05,  # Treatment accelerates improvement
 #'   seed = 12345
 #' )
 #'
 #' # Custom thresholds for different severity distribution
-#' trajectories_custom <- simulate_trajectories_brownian(
+#' trajectories_custom <- sim_trajectories_brownian(
 #'   n_patients = 500,
 #'   thresholds = c(-4, -1, 0, 2, 5),
 #'   sigma_rw = 0.2,  # More variability
@@ -368,7 +381,7 @@ simulate_trajectories <- function(
 #' @importFrom dplyr mutate
 #'
 #' @export
-simulate_trajectories_brownian <- function(
+sim_trajectories_brownian <- function(
   n_patients = 1000,
   n_days = 60,
   n_states = 6,
@@ -490,14 +503,14 @@ simulate_trajectories_brownian <- function(
   dat_latent <- dat_latent |>
     dplyr::mutate(
       id = seq_len(n_patients),
-      treatment = treatment
+      tx = treatment
     ) |>
     tidyr::pivot_longer(
-      cols = -c(id, treatment),
-      names_to = "t",
+      cols = -c(id, tx),
+      names_to = "time",
       values_to = "x"
     ) |>
-    dplyr::mutate(t = as.integer(t))
+    dplyr::mutate(time = as.integer(time))
 
   # Create data frame for observed Y
   dat_observed <- as.data.frame(Y)
@@ -505,22 +518,22 @@ simulate_trajectories_brownian <- function(
   dat_observed <- dat_observed |>
     dplyr::mutate(
       id = seq_len(n_patients),
-      treatment = treatment
+      tx = treatment
     ) |>
     tidyr::pivot_longer(
-      cols = -c(id, treatment),
-      names_to = "t",
+      cols = -c(id, tx),
+      names_to = "time",
       values_to = "y"
     ) |>
-    dplyr::mutate(t = as.integer(t))
+    dplyr::mutate(time = as.integer(time))
 
   # Combine latent and observed data
   result <- dat_observed |>
     dplyr::left_join(
-      dat_latent |> dplyr::select(id, t, x),
-      by = c("id", "t")
+      dat_latent |> dplyr::select(id, time, x),
+      by = c("id", "time")
     ) |>
-    dplyr::arrange(id, t)
+    dplyr::arrange(id, time)
 
   return(tibble::tibble(result))
 }

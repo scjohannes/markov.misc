@@ -34,5 +34,6 @@ utils::globalVariables(c(
   "treatment",
   "t",
   "x",
-  "covers_truth"
+  "covers_truth",
+  "violet_baseline"
 ))
