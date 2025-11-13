@@ -8,7 +8,7 @@ plot_sops(data, time_var = "time", y_var = "y", facet_var = "tx")
 }
 \arguments{
 \item{data}{A data frame containing trajectory data, typically from
-\code{simulate_trajectories()}.}
+\code{sim_trajectories_markov()} or \code{sim_trajectories_brownian()}.}
 
 \item{time_var}{Character string. Name of the time variable column (default: "time").}
 
@@ -32,7 +32,7 @@ between groups (e.g., treatment vs. control).
 \examples{
 \dontrun{
 # After simulating trajectories
-trajectories <- simulate_trajectories(baseline_data, lp_function = my_lp)
+trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
 
 # Basic plot
 plot_sops(trajectories)

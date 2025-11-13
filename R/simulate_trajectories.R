@@ -7,6 +7,8 @@
 #' @param baseline_data A data frame containing baseline patient characteristics.
 #'   Must include columns: `id`, `yprev` (initial state), and any covariates
 #'   needed by `lp_function`. Typically includes `tx`, `age`, `sofa`, etc.
+#'   Default is `violet_baseline`, a dataset of 10,000 patients derived from
+#'   the VIOLET trial (see `?violet_baseline` for details).
 #' @param follow_up_time Integer. Number of time periods to simulate (default: 60).
 #' @param intercepts Numeric vector of intercepts for the proportional odds model.
 #'   Should have length = (number of states - 1). Default values are from VIOLET
@@ -56,14 +58,8 @@
 #'
 #' @examples
 #' \dontrun{
-#' # Using default VIOLET parameters
-#' baseline <- data.frame(
-#'   id = 1:100,
-#'   yprev = sample(2:5, 100, replace = TRUE),
-#'   tx = rbinom(100, 1, 0.5),
-#'   age = rnorm(100, 60, 15),
-#'   sofa = rpois(100, 5)
-#' )
+#' # Using default VIOLET baseline data and parameters
+#' # (uses built-in violet_baseline dataset)
 #'
 #' # Define a simple linear predictor function
 #' my_lp <- function(yprev, t, age, sofa, tx, parameter = 0, extra_params) {
@@ -92,11 +88,28 @@
 #'   return(lp)
 #' }
 #'
-#' trajectories <- simulate_trajectories(
-#'   baseline_data = baseline,
+#' # Simulate with default baseline data
+#' trajectories <- sim_trajectories_markov(
+#'   baseline_data = violet_baseline,
 #'   follow_up_time = 30,
 #'   lp_function = my_lp,
 #'   parameter = log(0.8),  # OR = 0.8
+#'   seed = 12345
+#' )
+#'
+#' # Or use custom baseline data
+#' custom_baseline <- data.frame(
+#'   id = 1:100,
+#'   yprev = sample(2:5, 100, replace = TRUE),
+#'   tx = rbinom(100, 1, 0.5),
+#'   age = rnorm(100, 60, 15),
+#'   sofa = rpois(100, 5)
+#' )
+#'
+#' trajectories_custom <- sim_trajectories_markov(
+#'   baseline_data = custom_baseline,
+#'   follow_up_time = 30,
+#'   lp_function = my_lp,
 #'   seed = 12345
 #' )
 #' }
@@ -107,8 +120,8 @@
 #' @importFrom stats plogis
 #'
 #' @export
-simulate_trajectories <- function(
-  baseline_data,
+sim_trajectories_markov <- function(
+  baseline_data = violet_baseline,
   follow_up_time = 60,
   intercepts = c(-9.353417, -4.294121, -1.389221, -0.555688, 3.127056),
   lp_function,
@@ -117,9 +130,9 @@ simulate_trajectories <- function(
     "time'" = 0.7464006,
     "age" = 0.010321,
     "sofa" = 0.046901,
-    "yprev=1" = -9.464827,
-    "yprev=3" = 0.438444,
-    "yprev=4" = 0.657666,
+    "yprev=1" = -8.518344,
+    "yprev=3" = 0,
+    "yprev=4" = 1.315332,
     "yprev=5" = 6.576662,
     "yprev=1 * time" = 0,
     "yprev=3 * time" = 0,
@@ -278,4 +291,249 @@ simulate_trajectories <- function(
     dplyr::filter(time > 0) # Remove time 0 (initial state)
 
   return(result)
+}
+
+
+#' Simulate Patient Trajectories Using Brownian Motion Latent Ordinal Model
+#'
+#' Generates individual patient trajectories based on a latent continuous severity
+#' variable that evolves as a Gaussian random walk (Brownian motion) with drift.
+#' Observed states are determined by thresholding the latent variable using an
+#' ordered logistic model. This provides an alternative data generating mechanism
+#' for testing the robustness of Markov models.
+#'
+#' @param n_patients Integer. Number of patients to simulate (default: 1000).
+#' @param n_days Integer. Number of days to simulate per patient (default: 60).
+#' @param n_states Integer. Number of ordered states/categories (default: 6).
+#' @param mu_drift Numeric. Baseline drift per day for control group (default: -0.18).
+#'   Negative values indicate improvement (movement toward lower severity).
+#' @param mu_treatment_effect Numeric. Additional drift for treatment group
+#'   (default: 0). Negative values indicate faster improvement with treatment.
+#' @param sigma_rw Numeric. Random walk innovation standard deviation per day
+#'   (default: 0.12). Lower values create stronger autocorrelation.
+#' @param x0_sd Numeric. Standard deviation for baseline latent severity
+#'   (default: 1.0).
+#' @param thresholds Numeric vector of K-1 cutpoints for the ordered logistic
+#'   model (default: c(-3.5, 0, 1, 3, 4.5) for 6 states). Higher values
+#'   represent more severe states.
+#' @param treatment_prob Numeric. Probability of assignment to treatment group
+#'   (default: 0.5).
+#' @param absorbing_state Integer. State number that represents death or other
+#'   absorbing state (default: 6). Once entered, patients remain there.
+#' @param drift_change_times Numeric vector of length 2 specifying when drift
+#'   begins to decline and when it reaches zero (default: c(25, 50)).
+#'   Drift is constant until first time, then linearly declines to 0 by second time.
+#' @param seed Integer. Random seed for reproducibility (default: NULL).
+#'
+#' @return A data frame (tibble) with columns:
+#'   - id: patient identifier
+#'   - time: time/day (1 to n_days)
+#'   - tx: treatment assignment (0 = control, 1 = treatment)
+#'   - y: observed ordinal state at time
+#'   - x: latent continuous severity (NA after entering absorbing state)
+#'
+#' @details
+#' This function implements a latent variable model where:
+#' 1. Each patient has an unobserved continuous "severity" X(t) that evolves
+#'    as a Gaussian random walk: X(t) = X(t-1) + μ(t) + ε, where ε ~ N(0, σ²)
+#' 2. The drift μ(t) depends on treatment assignment and time
+#' 3. Observed states Y(t) are generated by thresholding X(t) using an ordered
+#'    logistic model: P(Y ≤ k) = logit⁻¹(c_k - X)
+#' 4. Once a patient enters the absorbing state (death), they remain there
+#'
+#' **Time-varying drift**: The drift parameter changes over time to model
+#' recovery dynamics. It remains constant until `drift_change_times[1]`, then
+#' linearly decreases to 0 by `drift_change_times[2]`, representing diminishing
+#' treatment effects or natural recovery plateaus.
+#'
+#' **Difference from Markov model**: Unlike the standard Markov transition model
+#' (see `sim_trajectories_markov()`), this approach uses a continuous latent variable
+#' rather than direct state-to-state transitions. This provides an alternative
+#' data generating mechanism useful for testing model robustness.
+#'
+#' @examples
+#' \dontrun{
+#' # Simulate with default parameters (null hypothesis: no treatment effect)
+#' trajectories <- sim_trajectories_brownian(
+#'   n_patients = 1000,
+#'   n_days = 60,
+#'   seed = 12345
+#' )
+#'
+#' # Simulate with treatment effect (faster improvement)
+#' trajectories_tx <- sim_trajectories_brownian(
+#'   n_patients = 1000,
+#'   mu_treatment_effect = -0.05,  # Treatment accelerates improvement
+#'   seed = 12345
+#' )
+#'
+#' # Custom thresholds for different severity distribution
+#' trajectories_custom <- sim_trajectories_brownian(
+#'   n_patients = 500,
+#'   thresholds = c(-4, -1, 0, 2, 5),
+#'   sigma_rw = 0.2,  # More variability
+#'   seed = 12345
+#' )
+#' }
+#'
+#' @importFrom stats rnorm plogis
+#' @importFrom tibble tibble
+#' @importFrom dplyr mutate
+#'
+#' @export
+sim_trajectories_brownian <- function(
+  n_patients = 1000,
+  n_days = 60,
+  n_states = 6,
+  mu_drift = -0.18,
+  mu_treatment_effect = 0,
+  sigma_rw = 0.12,
+  x0_sd = 1.0,
+  thresholds = c(-3.5, 0, 1, 3, 4.5),
+  treatment_prob = 0.5,
+  absorbing_state = 6,
+  drift_change_times = c(25, 50),
+  seed = NULL
+) {
+  # Input validation
+  if (n_patients < 1 || !is.numeric(n_patients)) {
+    stop("n_patients must be a positive integer")
+  }
+
+  if (n_days < 1 || !is.numeric(n_days)) {
+    stop("n_days must be a positive integer")
+  }
+
+  if (n_states < 2 || !is.numeric(n_states)) {
+    stop("n_states must be at least 2")
+  }
+
+  if (length(thresholds) != (n_states - 1)) {
+    stop(
+      "thresholds must have length n_states - 1 (",
+      n_states - 1,
+      "), but has length ",
+      length(thresholds)
+    )
+  }
+
+  if (!is.numeric(thresholds) || !all(diff(thresholds) > 0)) {
+    stop("thresholds must be a strictly increasing numeric vector")
+  }
+
+  if (treatment_prob < 0 || treatment_prob > 1) {
+    stop("treatment_prob must be between 0 and 1")
+  }
+
+  if (absorbing_state < 1 || absorbing_state > n_states) {
+    stop("absorbing_state must be between 1 and n_states")
+  }
+
+  if (
+    length(drift_change_times) != 2 ||
+      drift_change_times[1] >= drift_change_times[2]
+  ) {
+    stop(
+      "drift_change_times must be a vector of length 2 with increasing values"
+    )
+  }
+
+  # Set seed if provided
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
+
+  # Randomly assign treatment
+  treatment <- sample(
+    c(0, 1),
+    n_patients,
+    replace = TRUE,
+    prob = c(1 - treatment_prob, treatment_prob)
+  )
+
+  # Initialize matrices for latent X and observed Y
+  X <- matrix(NA_real_, n_patients, n_days)
+  Y <- matrix(NA_integer_, n_patients, n_days)
+
+  # Simulate trajectories for each patient
+  for (i in 1:n_patients) {
+    # Initialize latent severity at day 1
+    X[i, 1] <- rnorm(1, 0, x0_sd)
+
+    # Generate observation at day 1 using ordered logistic
+    pcat <- diff(c(0, plogis(thresholds - X[i, 1]), 1))
+    Y[i, 1] <- sample.int(n_states, 1, prob = pcat)
+
+    # Simulate remaining days
+    for (t in 2:n_days) {
+      # Check if patient is in absorbing state
+      if (Y[i, t - 1] == absorbing_state) {
+        Y[i, t] <- absorbing_state
+        X[i, t] <- NA_real_ # Latent variable no longer evolves
+      } else {
+        # Calculate individual-specific drift
+        mu_i <- mu_drift + treatment[i] * mu_treatment_effect
+
+        # Apply time-varying drift
+        if (t <= drift_change_times[1]) {
+          mu_t <- mu_i
+        } else if (t <= drift_change_times[2]) {
+          # Linear decline from mu_i to 0
+          mu_t <- mu_i *
+            (drift_change_times[2] - t) /
+            (drift_change_times[2] - drift_change_times[1])
+        } else {
+          mu_t <- 0
+        }
+
+        # Update latent severity (random walk with drift)
+        X[i, t] <- rnorm(1, mean = X[i, t - 1] + mu_t, sd = sigma_rw)
+
+        # Generate observation using ordered logistic
+        pcat <- diff(c(0, plogis(thresholds - X[i, t]), 1))
+        Y[i, t] <- sample.int(n_states, 1, prob = pcat)
+      }
+    }
+  }
+
+  # Convert matrices to long format data frame
+  # Create data frame for latent X
+  dat_latent <- as.data.frame(X)
+  colnames(dat_latent) <- as.character(1:n_days)
+  dat_latent <- dat_latent |>
+    dplyr::mutate(
+      id = seq_len(n_patients),
+      tx = treatment
+    ) |>
+    tidyr::pivot_longer(
+      cols = -c(id, tx),
+      names_to = "time",
+      values_to = "x"
+    ) |>
+    dplyr::mutate(time = as.integer(time))
+
+  # Create data frame for observed Y
+  dat_observed <- as.data.frame(Y)
+  colnames(dat_observed) <- as.character(1:n_days)
+  dat_observed <- dat_observed |>
+    dplyr::mutate(
+      id = seq_len(n_patients),
+      tx = treatment
+    ) |>
+    tidyr::pivot_longer(
+      cols = -c(id, tx),
+      names_to = "time",
+      values_to = "y"
+    ) |>
+    dplyr::mutate(time = as.integer(time))
+
+  # Combine latent and observed data
+  result <- dat_observed |>
+    dplyr::left_join(
+      dat_latent |> dplyr::select(id, time, x),
+      by = c("id", "time")
+    ) |>
+    dplyr::arrange(id, time)
+
+  return(tibble::tibble(result))
 }
