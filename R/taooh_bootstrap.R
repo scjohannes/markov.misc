@@ -1,13 +1,15 @@
 #' Compute time in target state(s) for treatment groups
 #'
 #' Calculates the expected time spent in specified target state(s) for treatment
-#' and control groups using a proportional odds Markov model. The function fits
-#' an ordinal regression model and uses state occupancy probabilities to estimate
-#' the total time in the target state(s).
+#' and control groups using a proportional odds Markov model. Uses an existing
+#' fitted model and state occupancy probabilities to estimate the total time in
+#' the target state(s).
 #'
-#' @param data A data frame containing patient trajectory data, or an rsample
-#'   splits object from bootstrap resampling
-#' @param formula Model formula for orm (ordinal regression model)
+#' @param model A fitted model object from \code{rms::orm}. The model is used
+#'   as-is without refitting.
+#' @param data A data frame containing patient trajectory data. If NULL, attempts
+#'   to extract data from the model object (requires model fitted with
+#'   \code{x = TRUE, y = TRUE}).
 #' @param times Time points in the data. Default is \code{1:max(data[["time"]])}
 #' @param ylevels States in the data (e.g., 1:6)
 #' @param absorb Absorbing state (e.g., 6 for death)
@@ -32,30 +34,32 @@
 #' @details
 #' The function:
 #' \enumerate{
-#'   \item Fits a proportional odds model to the trajectory data
+#'   \item Takes a pre-fitted model (no refitting occurs in this function)
 #'   \item Computes state occupancy probabilities for each individual at each time point
 #'   \item Sums probabilities across target states and time points
 #'   \item Averages within treatment groups to get expected time in target state(s)
 #' }
 #'
-#' When data is an rsample splits object (from bootstrap), it extracts the
-#' analysis set and creates unique IDs for each resample. When data is a regular
-#' data frame, it uses the IDs as provided.
+#' This function assumes the model has already been fitted on the appropriate
+#' data. For bootstrap inference, see \code{\link{taooh_bootstrap}}, which handles
+#' model refitting for each bootstrap sample.
 #'
 #' @keywords time alive out of hospital state occupancy
 #'
-#' @importFrom rms orm
 #' @importFrom Hmisc soprobMarkovOrdm
-#' @importFrom rsample analysis
-#' @importFrom stats ave
 #' @importFrom stats aggregate
 #'
 #' @examples
 #' \dontrun{
+#' # Fit initial model
+#' d <- rms::datadist(my_data)
+#' options(datadist = "d")
+#' m <- orm(y ~ tx + yprev + time, data = my_data, x = TRUE, y = TRUE)
+#'
 #' # Calculate time at home (state 1) for a dataset
 #' result <- taooh(
+#'   model = m,
 #'   data = my_data,
-#'   formula = y ~ tx + yprev + time,
 #'   ylevels = 1:6,
 #'   absorb = 6,
 #'   target_states = 1
@@ -63,8 +67,8 @@
 #'
 #' # Calculate time in states 1 or 2 combined
 #' result <- taooh(
+#'   model = m,
 #'   data = my_data,
-#'   formula = y ~ tx + yprev + time,
 #'   target_states = c(1, 2)
 #' )
 #' }
@@ -72,54 +76,47 @@
 
 # Planned extensions:
 # - If beta == TRUE, stop the function and return beta treatment (for beta bootstrapping)
-# - Handle missing states in the data (change ylevels and absorb depanding on the data)
-# - Use different bootstrapping procedure.
-#     - Up to now, some resamples contain less unique IDs than the original data.
-#       Unclear, why this can happen.
+# - Handle missing states in the data (change ylevels and absorb depending on the data)
+# - Expand to support vgam models in addition to orm
 
 taooh <- function(
-  data,
-  formula,
+  model,
+  data = NULL,
   times = NULL,
   ylevels = 1:6,
   absorb = 6,
   target_states = 1,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 ) {
-  # Check if data is a splits object (bootstrap) or regular data frame
-  if (inherits(data, "rsplit")) {
-    data <- analysis(data)
-
-    # Define new id variable (unique to each bootstrap draw)
-    data$block_count <- ave(
-      data[[varnames$id]],
-      data[[varnames$id]],
-      data[[varnames$tvarname]],
-      FUN = seq_along
+  # Check model class
+  if (!inherits(model, "orm")) {
+    stop(
+      "model must be an orm object from rms package. vgam support coming soon."
     )
-    data$new_id <- factor(paste(
-      data[[varnames$id]],
-      data$block_count,
-      sep = "_"
-    ))
-    id_var <- "new_id"
-  } else {
-    # Use original ID for regular data frame
-    id_var <- varnames$id
   }
+
+  # If no data provided, extract from model
+  if (is.null(data)) {
+    data <- model$x
+    if (is.null(data)) {
+      stop("No data provided and model was not fitted with x=TRUE")
+    }
+    # Add response variable
+    data$y <- model$y
+  }
+
+  # Determine id variable
+  id_var <- varnames$id
 
   # Set times if not provided
   if (is.null(times)) {
     times <- 1:max(data[[varnames$tvarname]])
   }
 
-  # 1. Fit model
-  m <- orm(formula, data = data)
-
-  # 2. Generate covariate data.frame to predict on
+  # Generate covariate data.frame to predict on
   X <- data[!duplicated(data[[id_var]]), ] # first row of each individual
 
-  # 3. Run soprobMarkovOrdm to get state probability predictions for each individual
+  # Run soprobMarkovOrdm to get state probability predictions for each individual
   n_ids <- length(unique(data[[id_var]]))
   n_times <- max(times)
   n_states <- length(target_states)
@@ -132,7 +129,7 @@ taooh <- function(
 
   for (i in 1:n_ids) {
     sop_full <- soprobMarkovOrdm(
-      object = m,
+      object = model,
       data = X[i, ],
       times = times,
       ylevels = ylevels,
@@ -153,7 +150,7 @@ taooh <- function(
   sop_mat <- apply(sop_array, c(1, 2), sum)
   colnames(sop_mat) <- unique(data[[id_var]])
 
-  # 4. Indicate treatment and control ids
+  # Indicate treatment and control ids
   id_tx <- aggregate(
     data[[varnames$tx]],
     by = list(data[[id_var]]),
@@ -161,7 +158,7 @@ taooh <- function(
     simplify = TRUE
   )
 
-  # 5. Compute time in target state(s) by treatment group
+  # Compute time in target state(s) by treatment group
   SOP_tx <- sum(rowMeans(sop_mat[,
     colnames(sop_mat) %in% id_tx[id_tx[, 2] == 1, 1],
     drop = FALSE
@@ -185,9 +182,10 @@ taooh <- function(
 #' time spent in specified target state(s). Uses parallel computation via
 #' future.callr for efficiency.
 #'
+#' @param model A fitted model object from \code{rms::orm}. Should be fitted
+#'   with \code{x = TRUE, y = TRUE} to enable model updating with bootstrap samples.
 #' @param data A data frame containing the patient data
 #' @param n_boot Number of bootstrap samples
-#' @param formula Model formula for orm
 #' @param workers Number of workers used for parallelization. Default is
 #'   parallel::detectCores() - 1
 #' @param parallel Whether parallelization should be used (default TRUE)
@@ -204,33 +202,47 @@ taooh <- function(
 #'
 #' @details
 #' Uses group bootstrap resampling (resampling by patient ID) to preserve the
-#' within-patient correlation structure. Parallelization is handled via
-#' future.callr::callr strategy, which provides better isolation and stability
-#' than multisession.
+#' within-patient correlation structure. For each bootstrap iteration:
+#' \enumerate{
+#'   \item Extracts the bootstrap sample and creates unique IDs
+#'   \item Updates the datadist in the global environment (safe with future.callr)
+#'   \item Refits the model using \code{update()} with the bootstrap sample
+#'   \item Passes the refitted model to \code{\link{taooh}} to calculate the estimand
+#' }
+#'
+#' Parallelization is handled via future.callr::callr strategy, which provides
+#' isolated R processes for each worker, making it safe to modify the global
+#' environment (for datadist) without conflicts.
 #'
 #' @keywords bootstrap time alive and out of hospital
 #'
-#' @importFrom rsample group_bootstraps
+#' @importFrom rsample group_bootstraps analysis
 #' @importFrom future.callr callr
 #' @importFrom future plan
 #' @importFrom furrr future_map
-#' @importFrom stats as.formula
+#' @importFrom rms datadist
+#' @importFrom stats ave update
 #'
 #' @examples
 #' \dontrun{
+#' # Fit initial model
+#' d <- rms::datadist(my_data)
+#' options(datadist = "d")
+#' m <- orm(y ~ tx + yprev + time, data = my_data, x = TRUE, y = TRUE)
+#'
 #' # Bootstrap for time at home (state 1)
 #' bs_results <- taooh_bootstrap(
+#'   model = m,
 #'   data = my_data,
 #'   n_boot = 1000,
-#'   formula = y ~ tx + yprev + time,
 #'   target_states = 1
 #' )
 #'
 #' # Bootstrap for time in states 1 or 2
 #' bs_results <- taooh_bootstrap(
+#'   model = m,
 #'   data = my_data,
 #'   n_boot = 1000,
-#'   formula = y ~ tx + yprev + time,
 #'   target_states = c(1, 2)
 #' )
 #' }
@@ -239,14 +251,12 @@ taooh <- function(
 # Planned extensions:
 # - If beta == TRUE, stop the function and return beta treatment (for beta bootstrapping)
 # - Handle missing states in the data (change ylevels and absorb depending on the data)
-# - Use different bootstrapping procedure.
-#     - Up to now, some resamples contain less unique IDs than the original data.
-#       Unclear, why this can happen.
+# - Expand to support vgam models in addition to orm
 
 taooh_bootstrap <- function(
+  model,
   data,
   n_boot,
-  formula,
   workers = NULL,
   parallel = TRUE,
   ylevels = 1:6,
@@ -255,6 +265,13 @@ taooh_bootstrap <- function(
   target_states = 1,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 ) {
+  # Check model class
+  if (!inherits(model, "orm")) {
+    stop(
+      "model must be an orm object from rms package. vgam support coming soon."
+    )
+  }
+
   # Bootstrap samples
   resample <- group_bootstraps(
     data,
@@ -264,7 +281,6 @@ taooh_bootstrap <- function(
   )
 
   # Arguments
-  formula <- as.formula(formula)
   if (is.null(workers)) {
     workers <- parallel::detectCores() - 1
   }
@@ -283,14 +299,45 @@ taooh_bootstrap <- function(
   bs_SOP <- resample |>
     dplyr::mutate(
       models = future_map(splits, \(.x) {
+        # Extract bootstrap sample
+        boot_data <- analysis(.x)
+
+        # Define new id variable (unique to each bootstrap draw)
+        boot_data$block_count <- ave(
+          boot_data[[varnames$id]],
+          boot_data[[varnames$id]],
+          boot_data[[varnames$tvarname]],
+          FUN = seq_along
+        )
+        boot_data$new_id <- factor(paste(
+          boot_data[[varnames$id]],
+          boot_data$block_count,
+          sep = "_"
+        ))
+
+        # Update datadist and assign to global environment
+        # This works because we use future.callr which has isolated processes
+        dd <- rms::datadist(boot_data)
+        assign("dd", dd, envir = .GlobalEnv)
+        options(datadist = "dd")
+
+        # Refit model with bootstrap data
+        m_boot <- update(model, data = boot_data)
+
+        # Calculate taooh with refitted model
         taooh(
-          .x,
-          formula = formula,
+          model = m_boot,
+          data = boot_data,
           times = times,
           ylevels = ylevels,
           absorb = absorb,
           target_states = target_states,
-          varnames = varnames
+          varnames = list(
+            tvarname = varnames$tvarname,
+            pvarname = varnames$pvarname,
+            id = "new_id", # Use the new_id for bootstrap samples
+            tx = varnames$tx
+          )
         )[1]
       })
     )
