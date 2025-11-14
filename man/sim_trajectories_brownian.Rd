@@ -6,7 +6,7 @@
 \usage{
 sim_trajectories_brownian(
   n_patients = 1000,
-  n_days = 60,
+  follow_up_time = 60,
   n_states = 6,
   mu_drift = -0.18,
   mu_treatment_effect = 0,
@@ -22,7 +22,7 @@ sim_trajectories_brownian(
 \arguments{
 \item{n_patients}{Integer. Number of patients to simulate (default: 1000).}
 
-\item{n_days}{Integer. Number of days to simulate per patient (default: 60).}
+\item{follow_up_time}{Integer. Number of days to simulate per patient (default: 60).}
 
 \item{n_states}{Integer. Number of ordered states/categories (default: 6).}
 
@@ -58,7 +58,7 @@ Drift is constant until first time, then linearly declines to 0 by second time.}
 A data frame (tibble) with columns:
 \itemize{
 \item id: patient identifier
-\item time: time/day (1 to n_days)
+\item time: time/day (1 to follow_up_time)
 \item tx: treatment assignment (0 = control, 1 = treatment)
 \item y: observed ordinal state at time
 \item x: latent continuous severity (NA after entering absorbing state)
@@ -97,7 +97,7 @@ data generating mechanism useful for testing model robustness.
 # Simulate with default parameters (null hypothesis: no treatment effect)
 trajectories <- sim_trajectories_brownian(
   n_patients = 1000,
-  n_days = 60,
+  follow_up_time = 60,
   seed = 12345
 )
 

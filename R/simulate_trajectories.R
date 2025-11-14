@@ -291,7 +291,7 @@ sim_trajectories_markov <- function(
 #' for testing the robustness of Markov models.
 #'
 #' @param n_patients Integer. Number of patients to simulate (default: 1000).
-#' @param n_days Integer. Number of days to simulate per patient (default: 60).
+#' @param follow_up_time Integer. Number of days to simulate per patient (default: 60).
 #' @param n_states Integer. Number of ordered states/categories (default: 6).
 #' @param mu_drift Numeric. Baseline drift per day for control group (default: -0.18).
 #'   Negative values indicate improvement (movement toward lower severity).
@@ -315,7 +315,7 @@ sim_trajectories_markov <- function(
 #'
 #' @return A data frame (tibble) with columns:
 #'   - id: patient identifier
-#'   - time: time/day (1 to n_days)
+#'   - time: time/day (1 to follow_up_time)
 #'   - tx: treatment assignment (0 = control, 1 = treatment)
 #'   - y: observed ordinal state at time
 #'   - x: latent continuous severity (NA after entering absorbing state)
@@ -344,7 +344,7 @@ sim_trajectories_markov <- function(
 #' # Simulate with default parameters (null hypothesis: no treatment effect)
 #' trajectories <- sim_trajectories_brownian(
 #'   n_patients = 1000,
-#'   n_days = 60,
+#'   follow_up_time = 60,
 #'   seed = 12345
 #' )
 #'
@@ -371,7 +371,7 @@ sim_trajectories_markov <- function(
 #' @export
 sim_trajectories_brownian <- function(
   n_patients = 1000,
-  n_days = 60,
+  follow_up_time = 60,
   n_states = 6,
   mu_drift = -0.18,
   mu_treatment_effect = 0,
@@ -388,8 +388,8 @@ sim_trajectories_brownian <- function(
     stop("n_patients must be a positive integer")
   }
 
-  if (n_days < 1 || !is.numeric(n_days)) {
-    stop("n_days must be a positive integer")
+  if (follow_up_time < 1 || !is.numeric(follow_up_time)) {
+    stop("follow_up_time must be a positive integer")
   }
 
   if (n_states < 2 || !is.numeric(n_states)) {
@@ -440,20 +440,21 @@ sim_trajectories_brownian <- function(
   )
 
   # Initialize matrices for latent X and observed Y
-  X <- matrix(NA_real_, n_patients, n_days)
-  Y <- matrix(NA_integer_, n_patients, n_days)
+  # Need follow_up_time + 1 columns to include time 0
+  X <- matrix(NA_real_, n_patients, follow_up_time + 1)
+  Y <- matrix(NA_integer_, n_patients, follow_up_time + 1)
 
   # Simulate trajectories for each patient
   for (i in 1:n_patients) {
-    # Initialize latent severity at day 1
+    # Initialize latent severity at day 0 (baseline)
     X[i, 1] <- rnorm(1, 0, x0_sd)
 
-    # Generate observation at day 1 using ordered logistic
+    # Generate observation at day 0 using ordered logistic
     pcat <- diff(c(0, plogis(thresholds - X[i, 1]), 1))
     Y[i, 1] <- sample.int(n_states, 1, prob = pcat)
 
-    # Simulate remaining days
-    for (t in 2:n_days) {
+    # Simulate remaining days (1 to follow_up_time)
+    for (t in 2:(follow_up_time + 1)) {
       # Check if patient is in absorbing state
       if (Y[i, t - 1] == absorbing_state) {
         Y[i, t] <- absorbing_state
@@ -487,7 +488,7 @@ sim_trajectories_brownian <- function(
   # Convert matrices to long format data frame
   # Create data frame for latent X
   dat_latent <- as.data.frame(X)
-  colnames(dat_latent) <- as.character(1:n_days)
+  colnames(dat_latent) <- as.character(0:follow_up_time)
   dat_latent <- dat_latent |>
     dplyr::mutate(
       id = seq_len(n_patients),
@@ -502,7 +503,7 @@ sim_trajectories_brownian <- function(
 
   # Create data frame for observed Y
   dat_observed <- as.data.frame(Y)
-  colnames(dat_observed) <- as.character(1:n_days)
+  colnames(dat_observed) <- as.character(0:follow_up_time)
   dat_observed <- dat_observed |>
     dplyr::mutate(
       id = seq_len(n_patients),
@@ -513,7 +514,11 @@ sim_trajectories_brownian <- function(
       names_to = "time",
       values_to = "y"
     ) |>
-    dplyr::mutate(time = as.integer(time))
+    dplyr::mutate(time = as.integer(time)) |>
+    dplyr::group_by(id) |>
+    dplyr::mutate(yprev = lag(y, 1)) |>
+    dplyr::ungroup() |>
+    dplyr::filter(time > 0)
 
   # Combine latent and observed data
   result <- dat_observed |>
