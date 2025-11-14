@@ -37,5 +37,7 @@ utils::globalVariables(c(
   "covers_truth",
   "violet_baseline",
   "splits",
-  "models"
+  "models",
+  "boot_id",
+  "coefs"
 ))

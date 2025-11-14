@@ -5,8 +5,8 @@
 \title{Compute time in target state(s) for treatment groups}
 \usage{
 taooh(
-  data,
-  formula,
+  model,
+  data = NULL,
   times = NULL,
   ylevels = 1:6,
   absorb = 6,
@@ -15,10 +15,12 @@ taooh(
 )
 }
 \arguments{
-\item{data}{A data frame containing patient trajectory data, or an rsample
-splits object from bootstrap resampling}
+\item{model}{A fitted model object from \code{rms::orm}. The model is used
+as-is without refitting.}
 
-\item{formula}{Model formula for orm (ordinal regression model)}
+\item{data}{A data frame containing patient trajectory data. If NULL, attempts
+to extract data from the model object (requires model fitted with
+\code{x = TRUE, y = TRUE}).}
 
 \item{times}{Time points in the data. Default is \code{1:max(data[["time"]])}}
 
@@ -48,29 +50,34 @@ A named numeric vector with three elements:
 }
 \description{
 Calculates the expected time spent in specified target state(s) for treatment
-and control groups using a proportional odds Markov model. The function fits
-an ordinal regression model and uses state occupancy probabilities to estimate
-the total time in the target state(s).
+and control groups using a proportional odds Markov model. Uses an existing
+fitted model and state occupancy probabilities to estimate the total time in
+the target state(s).
 }
 \details{
 The function:
 \enumerate{
-\item Fits a proportional odds model to the trajectory data
+\item Takes a pre-fitted model (no refitting occurs in this function)
 \item Computes state occupancy probabilities for each individual at each time point
 \item Sums probabilities across target states and time points
 \item Averages within treatment groups to get expected time in target state(s)
 }
 
-When data is an rsample splits object (from bootstrap), it extracts the
-analysis set and creates unique IDs for each resample. When data is a regular
-data frame, it uses the IDs as provided.
+This function assumes the model has already been fitted on the appropriate
+data. For bootstrap inference, see \code{\link{taooh_bootstrap}}, which handles
+model refitting for each bootstrap sample.
 }
 \examples{
 \dontrun{
+# Fit initial model
+d <- rms::datadist(my_data)
+options(datadist = "d")
+m <- orm(y ~ tx + yprev + time, data = my_data, x = TRUE, y = TRUE)
+
 # Calculate time at home (state 1) for a dataset
 result <- taooh(
+  model = m,
   data = my_data,
-  formula = y ~ tx + yprev + time,
   ylevels = 1:6,
   absorb = 6,
   target_states = 1
@@ -78,8 +85,8 @@ result <- taooh(
 
 # Calculate time in states 1 or 2 combined
 result <- taooh(
+  model = m,
   data = my_data,
-  formula = y ~ tx + yprev + time,
   target_states = c(1, 2)
 )
 }
