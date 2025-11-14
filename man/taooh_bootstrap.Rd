@@ -2,50 +2,105 @@
 % Please edit documentation in R/taooh_bootstrap.R
 \name{taooh_bootstrap}
 \alias{taooh_bootstrap}
-\title{Use bootstrap to compute confidence intervals for the time alive and out of
-hospital}
+\title{Use bootstrap to compute confidence intervals for the time in target state(s)}
 \usage{
 taooh_bootstrap(
+  model,
   data,
   n_boot,
-  formula,
   workers = NULL,
   parallel = TRUE,
   ylevels = 1:6,
   absorb = 6,
-  times = 1:max(data[["time"]]),
+  times = NULL,
+  target_states = 1,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 )
 }
 \arguments{
+\item{model}{A fitted model object from \code{rms::orm}. Should be fitted
+with \code{x = TRUE, y = TRUE} to enable model updating with bootstrap samples.}
+
 \item{data}{A data frame containing the patient data}
 
 \item{n_boot}{Number of bootstrap samples}
 
-\item{formula}{Model formula for orm}
+\item{workers}{Number of workers used for parallelization. Default is
+parallel::detectCores() - 1}
 
-\item{workers}{Number of workers used for parallelization. Default is availableCores()-1}
-
-\item{parallel}{Whether parallelization should be used}
+\item{parallel}{Whether parallelization should be used (default TRUE)}
 
 \item{ylevels}{States in the data}
 
 \item{absorb}{Absorbing state}
 
-\item{times}{Time points in the data. Default is the maximum time observed in the data}
+\item{times}{Time points in the data. Default is \code{1:max(data[["time"]])}}
+
+\item{target_states}{Integer vector of target state(s) to calculate time in.
+Default is 1 (typically "home" or baseline state). Can specify multiple
+states, e.g., c(1, 2) to sum time across states 1 and 2.}
 
 \item{varnames}{List of variable names in the data}
 }
+\value{
+An rsample bootstrap object with an additional column containing the
+bootstrap estimates of time in target state(s)
+}
 \description{
-Details...
+Performs group bootstrap resampling and computes confidence intervals for the
+time spent in specified target state(s). Uses parallel computation via
+future.callr for efficiency.
 }
 \details{
-Output is the sample estimate of time alive and out of hospital, and an upper
-and lower confidence bound for the estimate.
+Uses group bootstrap resampling (resampling by patient ID) to preserve the
+within-patient correlation structure. For each bootstrap iteration:
+\enumerate{
+\item Extracts the bootstrap sample and creates unique IDs
+\item Checks which states are present and relevels factors to consecutive integers
+\item Adjusts \code{ylevels} and \code{absorb} parameters if states are missing
+\item Updates the datadist in the global environment (safe with future.callr)
+\item Refits the model using \code{update()} with the bootstrap sample
+\item Passes the refitted model to \code{\link{taooh}} to calculate the estimand
+}
+
+\strong{Handling missing states:} When certain states are absent from a
+bootstrap sample (e.g., if state 3 is missing), the function automatically:
+\itemize{
+\item Relevels \code{y} and \code{yprev} to consecutive integers (1, 2, 4, 5, 6 becomes 1, 2, 3, 4, 5)
+\item Updates \code{ylevels} to the new consecutive sequence
+\item Adjusts the \code{absorb} parameter to the new position of the absorbing state
+}
+This prevents model fitting failures while maintaining the ordinal structure.
+
+Parallelization is handled via future.callr::callr strategy, which provides
+isolated R processes for each worker, making it safe to modify the global
+environment (for datadist) without conflicts.
+
+\strong{Important:} The \code{yprev} variable should be a factor before
+fitting the model for proper handling of state levels.
 }
 \examples{
 \dontrun{
-taooh_bootstraps()
+# Fit initial model
+d <- rms::datadist(my_data)
+options(datadist = "d")
+m <- orm(y ~ tx + yprev + time, data = my_data, x = TRUE, y = TRUE)
+
+# Bootstrap for time at home (state 1)
+bs_results <- taooh_bootstrap(
+  model = m,
+  data = my_data,
+  n_boot = 1000,
+  target_states = 1
+)
+
+# Bootstrap for time in states 1 or 2
+bs_results <- taooh_bootstrap(
+  model = m,
+  data = my_data,
+  n_boot = 1000,
+  target_states = c(1, 2)
+)
 }
 }
 \keyword{alive}
