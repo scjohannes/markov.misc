@@ -205,6 +205,83 @@ states_to_drs <- function(
   return(result)
 }
 
+
+
+#' Convert State Trajectory Data to Time-to-event data
+#'
+#' This function calculates time-to-event for usage in Cox or recurrent event
+#' models.
+#'
+#' @param data A data frame containing trajectory data, typically the output from
+#'   `sim_trajectories_markov()` or `sim_trajectories_brownian()`. Must contain
+#'   columns: `id`, `time`, `y` (state), and `tx` (treatment).
+#' @param covariates Character vector of additional covariate names to include in
+#'   the output (default: c("age", "sofa")). The first value of each covariate
+#'   per patient will be retained.
+#'
+#' @return A data frame with columns:
+#'   - id: patient identifier
+#'   - tx: treatment assignment
+#'   - start: start of the interval, first value per participant is zero
+#'   - stop: end of the interval
+#'   - y: state at the end of the interval
+#'   - any additional covariates specified
+#'
+#' @details
+#' Each event change within a participant concludes a time interval indicated by
+#' start and stop and the state at the end of the interval. Columns given in
+#' covariates will be kept in the output.
+#'
+#' @examples
+#' \dontrun{
+#' # After simulating trajectories
+#' trajectories <- sim_trajectories_markov(baseline_data, follow_up_time = 60,
+#'                                         lp_function = my_lp)
+#' tte_data <- states_to_tte(trajectories, follow_up_time = 60)
+#'
+#' # With different covariates
+#' tte_data <- states_to_tte(trajectories, follow_up_time = 60,
+#'                           covariates = c("age", "sofa", "baseline_severity"))
+#' }
+#'
+#' @importFrom dplyr group_by arrange summarise if_else select across all_of left_join mutate
+#'
+#' @export
+states_to_tte <- function(
+    data,
+    covariates = c("age", "sofa")
+) {
+  # Input validation
+  required_cols <- c("id", "time", "y", "tx")
+  missing_cols <- setdiff(required_cols, names(data))
+  if (length(missing_cols) > 0) {
+    stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
+  }
+
+  # Calculate Andersen-Gill count data format
+  data$state_change <- ave(data[["y"]], data[["id"]],
+                           FUN = function(x) c(0, diff(x)))
+
+  data <- data[data$state_change != 0, ]
+
+  data[["start"]] <- lag(data[["time"]], default = 0)
+  data[["stop"]] <- data[["time"]]
+  data <- data[, !(colnames(data) %in% c("state_change", "time"))]
+
+  # Add covariates if specified
+  if (!is.null(covariates)) {
+    available_covs <- intersect(covariates, colnames(data))
+    data <- data[, colnames(data) %in% c(
+      c("id", "y", "tx", "start", "stop", "yprev"),
+      available_covs)
+    ]
+  }
+
+  return(result = data)
+}
+
+
+
 #' Calculate Difference in Time Alive and Out Of Hospital
 #'
 #' Computes the true treatment effect as the difference in time spent in a
