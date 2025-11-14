@@ -215,9 +215,6 @@ states_to_drs <- function(
 #' @param data A data frame containing trajectory data, typically the output from
 #'   `sim_trajectories_markov()` or `sim_trajectories_brownian()`. Must contain
 #'   columns: `id`, `time`, `y` (state), and `tx` (treatment).
-#' @param follow_up_time Integer. Total follow-up time used in the simulation.
-#' @param target_state Integer. The state representing "home" or "baseline" (default: 1).
-#' @param death_state Integer. The state representing death (default: 6).
 #' @param covariates Character vector of additional covariate names to include in
 #'   the output (default: c("age", "sofa")). The first value of each covariate
 #'   per patient will be retained.
@@ -225,11 +222,15 @@ states_to_drs <- function(
 #' @return A data frame with columns:
 #'   - id: patient identifier
 #'   - tx: treatment assignment
-#'   -
+#'   - start: start of the interval, first value per participant is zero
+#'   - stop: end of the interval
+#'   - y: state at the end of the interval
 #'   - any additional covariates specified
 #'
 #' @details
-#'
+#' Each event change within a participant concludes a time interval indicated by
+#' start and stop and the state at the end of the interval. Columns given in
+#' covariates will be kept in the output.
 #'
 #' @examples
 #' \dontrun{

@@ -71,6 +71,20 @@ plot_sops <- function(
 #' @return A ggplot or cowplot
 #'
 #' @details
+#' The input is typically a data frame where in each row the operating characteristics
+#' of a strategy in a certain scenario are contained.
+#'
+#' ... specifies what to plot on the y-axis, which can be different inputs -
+#' typically operating characteristics - and a separate plot for each input is generated.
+#'
+#' x determines the column of values to be plotted on the x-axis.
+#'
+#' group will typically be the analysis strategies compared and will be lines in
+#' different colours. When combined = TRUE, the single plots and a cowplot::plot_grid
+#' with all plots is returned.
+#'
+#' ggplot_options is integrated into a list of ggplot options and directly passed
+#' to the ggplot calls.
 #'
 #' @import ggplot2
 #' @importFrom cowplot plot_grid
