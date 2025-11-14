@@ -2,8 +2,7 @@
 % Please edit documentation in R/taooh_bootstrap.R
 \name{taooh_bootstrap}
 \alias{taooh_bootstrap}
-\title{Use bootstrap to compute confidence intervals for the time alive and out of
-hospital}
+\title{Use bootstrap to compute confidence intervals for the time in target state(s)}
 \usage{
 taooh_bootstrap(
   data,
@@ -13,7 +12,8 @@ taooh_bootstrap(
   parallel = TRUE,
   ylevels = 1:6,
   absorb = 6,
-  times = 1:max(data[["time"]]),
+  times = NULL,
+  target_states = 1,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 )
 }
@@ -24,28 +24,55 @@ taooh_bootstrap(
 
 \item{formula}{Model formula for orm}
 
-\item{workers}{Number of workers used for parallelization. Default is availableCores()-1}
+\item{workers}{Number of workers used for parallelization. Default is
+parallel::detectCores() - 1}
 
-\item{parallel}{Whether parallelization should be used}
+\item{parallel}{Whether parallelization should be used (default TRUE)}
 
 \item{ylevels}{States in the data}
 
 \item{absorb}{Absorbing state}
 
-\item{times}{Time points in the data. Default is the maximum time observed in the data}
+\item{times}{Time points in the data. Default is \code{1:max(data[["time"]])}}
+
+\item{target_states}{Integer vector of target state(s) to calculate time in.
+Default is 1 (typically "home" or baseline state). Can specify multiple
+states, e.g., c(1, 2) to sum time across states 1 and 2.}
 
 \item{varnames}{List of variable names in the data}
 }
+\value{
+An rsample bootstrap object with an additional column containing the
+bootstrap estimates of time in target state(s)
+}
 \description{
-Details...
+Performs group bootstrap resampling and computes confidence intervals for the
+time spent in specified target state(s). Uses parallel computation via
+future.callr for efficiency.
 }
 \details{
-Output is the sample estimate of time alive and out of hospital, and an upper
-and lower confidence bound for the estimate.
+Uses group bootstrap resampling (resampling by patient ID) to preserve the
+within-patient correlation structure. Parallelization is handled via
+future.callr::callr strategy, which provides better isolation and stability
+than multisession.
 }
 \examples{
 \dontrun{
-taooh_bootstraps()
+# Bootstrap for time at home (state 1)
+bs_results <- taooh_bootstrap(
+  data = my_data,
+  n_boot = 1000,
+  formula = y ~ tx + yprev + time,
+  target_states = 1
+)
+
+# Bootstrap for time in states 1 or 2
+bs_results <- taooh_bootstrap(
+  data = my_data,
+  n_boot = 1000,
+  formula = y ~ tx + yprev + time,
+  target_states = c(1, 2)
+)
 }
 }
 \keyword{alive}

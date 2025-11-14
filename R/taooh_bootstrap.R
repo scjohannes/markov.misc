@@ -1,39 +1,72 @@
-#' Use bootstrap to compute confidence intervals for the time alive and out of
-#' hospital
+#' Compute time in target state(s) for treatment groups
 #'
-#' Details...
+#' Calculates the expected time spent in specified target state(s) for treatment
+#' and control groups using a proportional odds Markov model. The function fits
+#' an ordinal regression model and uses state occupancy probabilities to estimate
+#' the total time in the target state(s).
 #'
-#' Output is the sample estimate of time alive and out of hospital, and an upper
-#' and lower confidence bound for the estimate.
+#' @param data A data frame containing patient trajectory data, or an rsample
+#'   splits object from bootstrap resampling
+#' @param formula Model formula for orm (ordinal regression model)
+#' @param times Time points in the data. Default is \code{1:max(data[["time"]])}
+#' @param ylevels States in the data (e.g., 1:6)
+#' @param absorb Absorbing state (e.g., 6 for death)
+#' @param target_states Integer vector of target state(s) to calculate time in.
+#'   Default is 1 (typically "home" or baseline state). Can specify multiple
+#'   states, e.g., c(1, 2) to sum time across states 1 and 2.
+#' @param varnames List of variable names in the data with components:
+#'   \itemize{
+#'     \item tvarname: time variable name (default "time")
+#'     \item pvarname: previous state variable name (default "yprev")
+#'     \item id: patient identifier (default "id")
+#'     \item tx: treatment indicator (default "tx")
+#'   }
 #'
-#' @param data  A data frame containing the patient data
-#' @param n_boot Number of bootstrap samples
-#' @param formula Model formula for orm
-#' @param workers Number of workers used for parallelization. Default is availableCores()-1
-#' @param parallel Whether parallelization should be used
-#' @param ylevels States in the data
-#' @param absorb Absorbing state
-#' @param times Time points in the data. Default is the maximum time observed in the data
-#' @param varnames List of variable names in the data
+#' @return A named numeric vector with three elements:
+#'   \itemize{
+#'     \item delta_taooh: difference in time in target state(s) (treatment - control)
+#'     \item SOP_tx: expected time in target state(s) for treatment group
+#'     \item SOP_ctrl: expected time in target state(s) for control group
+#'   }
 #'
-#' @keywords bootstrap time alive and out of hospital
+#' @details
+#' The function:
+#' \enumerate{
+#'   \item Fits a proportional odds model to the trajectory data
+#'   \item Computes state occupancy probabilities for each individual at each time point
+#'   \item Sums probabilities across target states and time points
+#'   \item Averages within treatment groups to get expected time in target state(s)
+#' }
+#'
+#' When data is an rsample splits object (from bootstrap), it extracts the
+#' analysis set and creates unique IDs for each resample. When data is a regular
+#' data frame, it uses the IDs as provided.
+#'
+#' @keywords time alive out of hospital state occupancy
 #'
 #' @importFrom rms orm
 #' @importFrom Hmisc soprobMarkovOrdm
-#' @importFrom rsample group_bootstraps
 #' @importFrom rsample analysis
-#' @importFrom future plan
-#' @importFrom future availableCores
-#' @importFrom future multisession
-#' @importFrom future sequential
-#' @importFrom furrr future_map
 #' @importFrom stats ave
 #' @importFrom stats aggregate
-#' @importFrom stats as.formula
 #'
 #' @examples
 #' \dontrun{
-#' taooh_bootstraps()
+#' # Calculate time at home (state 1) for a dataset
+#' result <- taooh(
+#'   data = my_data,
+#'   formula = y ~ tx + yprev + time,
+#'   ylevels = 1:6,
+#'   absorb = 6,
+#'   target_states = 1
+#' )
+#'
+#' # Calculate time in states 1 or 2 combined
+#' result <- taooh(
+#'   data = my_data,
+#'   formula = y ~ tx + yprev + time,
+#'   target_states = c(1, 2)
+#' )
 #' }
 #' @export
 
@@ -44,27 +77,17 @@
 #     - Up to now, some resamples contain less unique IDs than the original data.
 #       Unclear, why this can happen.
 
-taooh_bootstrap <- function(
+taooh <- function(
   data,
-  n_boot,
   formula,
-  workers = NULL,
-  parallel = TRUE,
+  times = NULL,
   ylevels = 1:6,
   absorb = 6,
-  times = 1:max(data[["time"]]),
+  target_states = 1,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 ) {
-  # Function to compute time alive and out of hospital
-  taooh <- function(
-    data,
-    formula,
-    times,
-    ylevels = 1:6,
-    absorb = 6,
-    varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
-  ) {
-    # Convert splits object to data.frame
+  # Check if data is a splits object (bootstrap) or regular data frame
+  if (inherits(data, "rsplit")) {
     data <- analysis(data)
 
     # Define new id variable (unique to each bootstrap draw)
@@ -79,52 +102,159 @@ taooh_bootstrap <- function(
       data$block_count,
       sep = "_"
     ))
-
-    # 1. Fit model
-    m <- orm(formula, data = data)
-
-    # 2. Generate covariate data.frame to predict on
-    X <- data[!duplicated(data$new_id), ] # first row of each individual
-
-    # 2. Run soprobMarkovOrdm to get state probability predictions of each individual
-    sop_mat <- matrix(nrow = max(times), ncol = length(unique(data$new_id)))
-    for (i in 1:length(unique(data$new_id))) {
-      sop_mat[, i] <- soprobMarkovOrdm(
-        object = m,
-        data = X[i, ],
-        times = times,
-        ylevels = ylevels,
-        absorb = absorb,
-        tvarname = varnames$tvarname,
-        pvarname = varnames$pvarname,
-        gap = 1
-      )[, 1] # only save state 1 SOPs
-    }
-    colnames(sop_mat) <- unique(data$new_id)
-
-    # 3. Indicate treatment and control ids: First col := IDs, Second col := Treatment indicator
-    id_tx <- aggregate(
-      data[[varnames$tx]],
-      by = list(data$new_id),
-      FUN = unique,
-      simplify = TRUE
-    )
-
-    # 4. Compute TAOOH estimate by treatment group
-    SOP_tx <- sum(rowMeans(sop_mat[,
-      colnames(sop_mat) %in% id_tx[id_tx[, 2] == 1, 1]
-    ]))
-    SOP_ctrl <- sum(rowMeans(sop_mat[,
-      colnames(sop_mat) %in% id_tx[id_tx[, 2] == 0, 1]
-    ]))
-
-    return(c(
-      delta_taooh = SOP_tx - SOP_ctrl,
-      SOP_tx = SOP_tx,
-      SOP_ctrl = SOP_ctrl
-    ))
+    id_var <- "new_id"
+  } else {
+    # Use original ID for regular data frame
+    id_var <- varnames$id
   }
 
+  # Set times if not provided
+  if (is.null(times)) {
+    times <- 1:max(data[[varnames$tvarname]])
+  }
+
+  # 1. Fit model
+  m <- orm(formula, data = data)
+
+  # 2. Generate covariate data.frame to predict on
+  X <- data[!duplicated(data[[id_var]]), ] # first row of each individual
+
+  # 3. Run soprobMarkovOrdm to get state probability predictions for each individual
+  n_ids <- length(unique(data[[id_var]]))
+  n_times <- max(times)
+  n_states <- length(target_states)
+
+  # Initialize array to store SOPs for target states
+  sop_array <- array(
+    dim = c(n_times, n_ids, n_states),
+    dimnames = list(NULL, unique(data[[id_var]]), target_states)
+  )
+
+  for (i in 1:n_ids) {
+    sop_full <- soprobMarkovOrdm(
+      object = m,
+      data = X[i, ],
+      times = times,
+      ylevels = ylevels,
+      absorb = absorb,
+      tvarname = varnames$tvarname,
+      pvarname = varnames$pvarname,
+      gap = 1
+    )
+
+    # Extract SOPs for target states
+    for (s_idx in seq_along(target_states)) {
+      state <- target_states[s_idx]
+      sop_array[, i, s_idx] <- sop_full[, state]
+    }
+  }
+
+  # Sum across target states to get total time in any target state
+  sop_mat <- apply(sop_array, c(1, 2), sum)
+  colnames(sop_mat) <- unique(data[[id_var]])
+
+  # 4. Indicate treatment and control ids
+  id_tx <- aggregate(
+    data[[varnames$tx]],
+    by = list(data[[id_var]]),
+    FUN = unique,
+    simplify = TRUE
+  )
+
+  # 5. Compute time in target state(s) by treatment group
+  SOP_tx <- sum(rowMeans(sop_mat[,
+    colnames(sop_mat) %in% id_tx[id_tx[, 2] == 1, 1],
+    drop = FALSE
+  ]))
+  SOP_ctrl <- sum(rowMeans(sop_mat[,
+    colnames(sop_mat) %in% id_tx[id_tx[, 2] == 0, 1],
+    drop = FALSE
+  ]))
+
+  return(c(
+    delta_taooh = SOP_tx - SOP_ctrl,
+    SOP_tx = SOP_tx,
+    SOP_ctrl = SOP_ctrl
+  ))
+}
+
+
+#' Use bootstrap to compute confidence intervals for the time in target state(s)
+#'
+#' Performs group bootstrap resampling and computes confidence intervals for the
+#' time spent in specified target state(s). Uses parallel computation via
+#' future.callr for efficiency.
+#'
+#' @param data A data frame containing the patient data
+#' @param n_boot Number of bootstrap samples
+#' @param formula Model formula for orm
+#' @param workers Number of workers used for parallelization. Default is
+#'   parallel::detectCores() - 1
+#' @param parallel Whether parallelization should be used (default TRUE)
+#' @param ylevels States in the data
+#' @param absorb Absorbing state
+#' @param times Time points in the data. Default is \code{1:max(data[["time"]])}
+#' @param target_states Integer vector of target state(s) to calculate time in.
+#'   Default is 1 (typically "home" or baseline state). Can specify multiple
+#'   states, e.g., c(1, 2) to sum time across states 1 and 2.
+#' @param varnames List of variable names in the data
+#'
+#' @return An rsample bootstrap object with an additional column containing the
+#'   bootstrap estimates of time in target state(s)
+#'
+#' @details
+#' Uses group bootstrap resampling (resampling by patient ID) to preserve the
+#' within-patient correlation structure. Parallelization is handled via
+#' future.callr::callr strategy, which provides better isolation and stability
+#' than multisession.
+#'
+#' @keywords bootstrap time alive and out of hospital
+#'
+#' @importFrom rsample group_bootstraps
+#' @importFrom future.callr callr
+#' @importFrom future plan
+#' @importFrom furrr future_map
+#' @importFrom stats as.formula
+#'
+#' @examples
+#' \dontrun{
+#' # Bootstrap for time at home (state 1)
+#' bs_results <- taooh_bootstrap(
+#'   data = my_data,
+#'   n_boot = 1000,
+#'   formula = y ~ tx + yprev + time,
+#'   target_states = 1
+#' )
+#'
+#' # Bootstrap for time in states 1 or 2
+#' bs_results <- taooh_bootstrap(
+#'   data = my_data,
+#'   n_boot = 1000,
+#'   formula = y ~ tx + yprev + time,
+#'   target_states = c(1, 2)
+#' )
+#' }
+#' @export
+
+# Planned extensions:
+# - If beta == TRUE, stop the function and return beta treatment (for beta bootstrapping)
+# - Handle missing states in the data (change ylevels and absorb depending on the data)
+# - Use different bootstrapping procedure.
+#     - Up to now, some resamples contain less unique IDs than the original data.
+#       Unclear, why this can happen.
+
+taooh_bootstrap <- function(
+  data,
+  n_boot,
+  formula,
+  workers = NULL,
+  parallel = TRUE,
+  ylevels = 1:6,
+  absorb = 6,
+  times = NULL,
+  target_states = 1,
+  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
+) {
   # Bootstrap samples
   resample <- group_bootstraps(
     data,
@@ -136,18 +266,22 @@ taooh_bootstrap <- function(
   # Arguments
   formula <- as.formula(formula)
   if (is.null(workers)) {
-    workers <- availableCores() - 1
+    workers <- parallel::detectCores() - 1
+  }
+
+  if (is.null(times)) {
+    times <- 1:max(data[[varnames$tvarname]])
   }
 
   # Apply the taooh() function to the bootstrap samples in parallel.
   if (parallel) {
-    plan(multisession, workers = workers)
+    plan(callr, workers = workers)
   } else {
     plan(sequential)
   }
 
   bs_SOP <- resample |>
-    mutate(
+    dplyr::mutate(
       models = future_map(splits, \(.x) {
         taooh(
           .x,
@@ -155,6 +289,7 @@ taooh_bootstrap <- function(
           times = times,
           ylevels = ylevels,
           absorb = absorb,
+          target_states = target_states,
           varnames = varnames
         )[1]
       })
