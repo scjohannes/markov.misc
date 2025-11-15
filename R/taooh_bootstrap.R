@@ -938,7 +938,7 @@ bootstrap_model_coefs <- function(
 #'   \item Expands results back to original state space, padding with zeros for missing states
 #' }
 #'
-#' \strong{Handling missing states:} This is the key feature of this function.
+#' \strong{Handling missing states:}
 #' When a state (e.g., state 3) is missing from a bootstrap sample:
 #' \itemize{
 #'   \item The model is fit on releveled data (states 1,2,4,5,6 become 1,2,3,4,5)
@@ -948,9 +948,7 @@ bootstrap_model_coefs <- function(
 #' }
 #'
 #' This ensures that all bootstrap iterations return SOPs for all original states,
-#' which is required for computing valid confidence intervals. The zero padding
-#' is mathematically correct: if a state never appears in the bootstrap sample,
-#' the probability of occupying that state is truly zero.
+#' which is required for computing valid confidence intervals.
 #'
 #' \strong{Output format:} The function returns a single long-format tibble
 #' containing both treatment and control SOPs across all bootstrap iterations.
@@ -971,7 +969,7 @@ bootstrap_model_coefs <- function(
 #' @importFrom rsample group_bootstraps analysis
 #' @importFrom future.callr callr
 #' @importFrom future plan
-#' @importFrom furrr future_map
+#' @importFrom furrr future_map furrr_options
 #' @importFrom rms datadist
 #' @importFrom stats ave update
 #' @importFrom dplyr mutate select row_number bind_rows filter
@@ -1078,117 +1076,135 @@ bootstrap_standardized_sops <- function(
   bs_results <- resample |>
     dplyr::mutate(
       boot_id = dplyr::row_number(),
-      sops = future_map(splits, \(.x) {
-        # Extract bootstrap sample
-        boot_data <- analysis(.x)
+      sops = future_map(
+        splits,
+        \(.x) {
+          # Extract bootstrap sample
+          boot_data <- analysis(.x)
 
-        # Define new id variable (unique to each bootstrap draw)
-        boot_data$block_count <- ave(
-          boot_data[[varnames$id]],
-          boot_data[[varnames$id]],
-          boot_data[[varnames$tvarname]],
-          FUN = seq_along
-        )
-        boot_data$new_id <- factor(paste(
-          boot_data[[varnames$id]],
-          boot_data$block_count,
-          sep = "_"
-        ))
-
-        # Relevel factors to handle missing states
-        releveled <- relevel_factors_consecutive(
-          data = boot_data,
-          factor_cols = c("y", varnames$pvarname),
-          original_data = data,
-          ylevels = ylevels,
-          absorb = absorb
-        )
-
-        boot_data <- releveled$data
-        boot_ylevels <- releveled$ylevels
-        boot_absorb <- releveled$absorb
-        missing_states <- releveled$missing_levels
-
-        # Get states present in original numbering (for mapping back later)
-        states_present <- setdiff(ylevels, as.numeric(missing_states))
-
-        # Update datadist
-        dd <- rms::datadist(boot_data)
-        assign("dd", dd, envir = .GlobalEnv)
-        options(datadist = "dd")
-
-        # Refit model
-        m_boot <- tryCatch(
-          update(model, data = boot_data),
-          error = function(e) {
-            warning("Bootstrap iteration failed: ", e$message)
-            return(NULL)
-          }
-        )
-
-        if (is.null(m_boot)) {
-          return(NULL)
-        }
-
-        # Compute standardized SOPs on releveled states
-        sop_result <- tryCatch(
-          standardize_sops(
-            model = m_boot,
-            data = boot_data,
-            times = times,
-            ylevels = boot_ylevels,
-            absorb = boot_absorb,
-            varnames = list(
-              tvarname = varnames$tvarname,
-              pvarname = varnames$pvarname,
-              id = "new_id",
-              tx = varnames$tx
-            )
-          ),
-          error = function(e) {
-            warning("standardize_sops failed: ", e$message)
-            return(NULL)
-          }
-        )
-
-        if (is.null(sop_result)) {
-          return(NULL)
-        }
-
-        # Expand back to original state space with zeros for missing states
-        if (length(missing_states) > 0) {
-          # Initialize full matrices with zeros
-          sop_tx_full <- matrix(0, nrow = n_times, ncol = n_states)
-          sop_ctrl_full <- matrix(0, nrow = n_times, ncol = n_states)
-          colnames(sop_tx_full) <- as.character(ylevels)
-          colnames(sop_ctrl_full) <- as.character(ylevels)
-
-          # Fill in states that were present
-          for (i in seq_along(states_present)) {
-            original_state <- states_present[i]
-            sop_tx_full[, as.character(original_state)] <- sop_result$sop_tx[,
-              i
-            ]
-            sop_ctrl_full[, as.character(
-              original_state
-            )] <- sop_result$sop_ctrl[, i]
-          }
-
-          return(list(
-            sop_tx = sop_tx_full,
-            sop_ctrl = sop_ctrl_full
+          # Define new id variable (unique to each bootstrap draw)
+          boot_data$block_count <- ave(
+            boot_data[[varnames$id]],
+            boot_data[[varnames$id]],
+            boot_data[[varnames$tvarname]],
+            FUN = seq_along
+          )
+          boot_data$new_id <- factor(paste(
+            boot_data[[varnames$id]],
+            boot_data$block_count,
+            sep = "_"
           ))
-        } else {
-          # All states present - return as is
-          return(sop_result)
-        }
-      })
+
+          # Relevel factors to handle missing states
+          releveled <- relevel_factors_consecutive(
+            data = boot_data,
+            factor_cols = c("y", varnames$pvarname),
+            original_data = data,
+            ylevels = ylevels,
+            absorb = absorb
+          )
+
+          boot_data <- releveled$data
+          boot_ylevels <- releveled$ylevels
+          boot_absorb <- releveled$absorb
+          missing_states <- releveled$missing_levels
+
+          # Get states present in original numbering (for mapping back later)
+          states_present <- setdiff(ylevels, as.numeric(missing_states))
+
+          # Update datadist
+          dd <- rms::datadist(boot_data)
+          assign("dd", dd, envir = .GlobalEnv)
+          options(datadist = "dd")
+
+          # Refit model
+          m_boot <- tryCatch(
+            update(model, data = boot_data),
+            error = function(e) {
+              warning("Bootstrap iteration failed: ", e$message)
+              return(NULL)
+            }
+          )
+
+          if (is.null(m_boot)) {
+            return(NULL)
+          }
+
+          # Compute standardized SOPs on releveled states
+          sop_result <- tryCatch(
+            standardize_sops(
+              model = m_boot,
+              data = boot_data,
+              times = times,
+              ylevels = boot_ylevels,
+              absorb = boot_absorb,
+              varnames = list(
+                tvarname = varnames$tvarname,
+                pvarname = varnames$pvarname,
+                id = "new_id",
+                tx = varnames$tx
+              )
+            ),
+            error = function(e) {
+              warning("standardize_sops failed: ", e$message)
+              return(NULL)
+            }
+          )
+
+          if (is.null(sop_result)) {
+            return(NULL)
+          }
+
+          # Expand back to original state space with zeros for missing states
+          if (length(missing_states) > 0) {
+            # Initialize full matrices with zeros
+            sop_tx_full <- matrix(0, nrow = n_times, ncol = n_states)
+            sop_ctrl_full <- matrix(0, nrow = n_times, ncol = n_states)
+            colnames(sop_tx_full) <- as.character(ylevels)
+            colnames(sop_ctrl_full) <- as.character(ylevels)
+
+            # Fill in states that were present
+            for (i in seq_along(states_present)) {
+              original_state <- states_present[i]
+              sop_tx_full[, as.character(original_state)] <- sop_result$sop_tx[,
+                i
+              ]
+              sop_ctrl_full[, as.character(
+                original_state
+              )] <- sop_result$sop_ctrl[, i]
+            }
+
+            return(list(
+              sop_tx = sop_tx_full,
+              sop_ctrl = sop_ctrl_full
+            ))
+          } else {
+            # All states present - return as is
+            return(sop_result)
+          }
+        },
+        .options = furrr::furrr_options(
+          packages = c("rms", "VGAM", "Hmisc", "dplyr", "stats"),
+          globals = c(
+            "standardize_sops",
+            "relevel_factors_consecutive",
+            "model",
+            "data",
+            "times",
+            "ylevels",
+            "absorb",
+            "varnames",
+            "n_times",
+            "n_states"
+          )
+        )
+      )
     )
 
   plan("sequential")
 
   # Extract and reshape results into long format
-  # Format: boot_id | time | tx | state_1 | state_2 | ... | state_n
+  # Format: boot_id | time | tx | state_1 | state_2 | ... | state_k
   result_list <- list()
 
   for (i in seq_len(nrow(bs_results))) {

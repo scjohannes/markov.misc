@@ -76,7 +76,7 @@ by releveling to consecutive integers and updating ylevels/absorb
 \item Expands results back to original state space, padding with zeros for missing states
 }
 
-\strong{Handling missing states:} This is the key feature of this function.
+\strong{Handling missing states:}
 When a state (e.g., state 3) is missing from a bootstrap sample:
 \itemize{
 \item The model is fit on releveled data (states 1,2,4,5,6 become 1,2,3,4,5)
@@ -86,9 +86,7 @@ When a state (e.g., state 3) is missing from a bootstrap sample:
 }
 
 This ensures that all bootstrap iterations return SOPs for all original states,
-which is required for computing valid confidence intervals. The zero padding
-is mathematically correct: if a state never appears in the bootstrap sample,
-the probability of occupying that state is truly zero.
+which is required for computing valid confidence intervals.
 
 \strong{Output format:} The function returns a single long-format tibble
 containing both treatment and control SOPs across all bootstrap iterations.
