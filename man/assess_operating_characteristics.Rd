@@ -72,8 +72,11 @@ use_bootstrap = TRUE or inference_type = "state").}
 
 \item{id_var}{Character. Name of the ID variable for group bootstrap (default: "id").}
 
-\item{workers}{Integer. Number of parallel workers for bootstrap (default: NULL,
-uses detectCores() - 1).}
+\item{workers}{Integer. Number of parallel workers for bootstrap (default: NULL).
+When NULL, bootstrap runs sequentially. Set to > 1 to parallelize bootstrap
+within a single iteration (useful when running a single analysis, not when
+parallelizing across iterations). \strong{Note}: Typically you parallelize across
+calls to \code{assess_operating_characteristics()} rather than within each call.}
 
 \item{ylevels}{Integer vector. State levels for state-based inference (default: 1:6).}
 
@@ -140,6 +143,20 @@ the function performs group bootstrap resampling. This is particularly useful fo
 \item State-based inference (only way to get CIs on state occupancy differences)
 \item Accounting for within-patient correlation in coefficient estimates
 }
+
+\strong{Parallelization strategy}: The typical workflow is to parallelize across
+simulation iterations, not within them:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{# Recommended: Parallelize across iterations
+library(furrr)
+plan(multisession, workers = 8)
+results <- future_map_dfr(1:1000, ~assess_operating_characteristics(
+  iter_num = ., ...
+))
+}\if{html}{\out{</div>}}
+
+Only set \code{workers > 1} when running a single analysis with many bootstrap samples
+and NOT parallelizing across iterations.
 }
 \examples{
 \dontrun{
