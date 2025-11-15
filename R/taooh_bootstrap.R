@@ -371,15 +371,13 @@ taooh_bootstrap <- function(
           if (absorb %in% states_present) {
             boot_absorb <- state_mapping[as.character(absorb)]
           } else {
-            # If absorbing state is missing, use the highest state
-            boot_absorb <- max(boot_ylevels)
+            # If absorbing state is missing, absorbing state becomes NULL
+            boot_absorb <- NULL
             warning(
               "Absorbing state ",
               absorb,
               " not present in bootstrap sample. ",
-              "Using state ",
-              boot_absorb,
-              " as absorbing state."
+              "Set to NULL."
             )
           }
         } else {
