@@ -15,8 +15,8 @@ taooh(
 )
 }
 \arguments{
-\item{model}{A fitted model object from \code{rms::orm}. The model is used
-as-is without refitting.}
+\item{model}{A fitted model object from \code{rms::orm} or \code{VGAM::vglm}.
+The model is used as-is without refitting.}
 
 \item{data}{A data frame containing patient trajectory data. If NULL, attempts
 to extract data from the model object (requires model fitted with

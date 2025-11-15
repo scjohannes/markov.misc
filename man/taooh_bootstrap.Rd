@@ -18,8 +18,9 @@ taooh_bootstrap(
 )
 }
 \arguments{
-\item{model}{A fitted model object from \code{rms::orm}. Should be fitted
-with \code{x = TRUE, y = TRUE} to enable model updating with bootstrap samples.}
+\item{model}{A fitted model object from \code{rms::orm} or \code{VGAM::vglm}.
+For \code{orm}, should be fitted with \code{x = TRUE, y = TRUE} to enable
+model updating with bootstrap samples.}
 
 \item{data}{A data frame containing the patient data}
 

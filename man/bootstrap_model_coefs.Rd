@@ -14,8 +14,9 @@ bootstrap_model_coefs(
 )
 }
 \arguments{
-\item{model}{A fitted model object from \code{rms::orm}. Should be fitted
-with \code{x = TRUE, y = TRUE} to enable model updating with bootstrap samples.}
+\item{model}{A fitted model object from \code{rms::orm} or \code{VGAM::vglm}.
+For \code{orm}, should be fitted with \code{x = TRUE, y = TRUE} to enable
+model updating with bootstrap samples.}
 
 \item{data}{A data frame containing the patient data. This is required (cannot be NULL)
 because the ID variable is needed for group bootstrap but is typically not included
@@ -41,7 +42,7 @@ iteration and contains:
 \description{
 Performs group bootstrap resampling to compute confidence intervals for all
 model parameters (intercepts and coefficients). This is a general-purpose
-bootstrap function that works with any \code{rms::orm} model.
+bootstrap function that works with any \code{rms::orm} or \code{VGAM::vglm} model.
 }
 \details{
 Uses group bootstrap resampling (resampling by patient ID) to preserve the

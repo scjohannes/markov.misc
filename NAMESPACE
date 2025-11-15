@@ -2,6 +2,7 @@
 
 export(assess_operating_characteristics)
 export(bootstrap_model_coefs)
+export(bootstrap_standardized_sops)
 export(calc_time_in_state_diff)
 export(jackknife_mcse)
 export(lp_violet)
@@ -77,4 +78,5 @@ importFrom(tibble,rownames_to_column)
 importFrom(tibble,tibble)
 importFrom(tidyr,pivot_longer)
 importFrom(tidyr,pivot_wider)
+importFrom(tidyr,starts_with)
 importFrom(tidyr,unnest_wider)
