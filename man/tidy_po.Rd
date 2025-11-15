@@ -11,7 +11,10 @@ tidy_po(fit, se_type = c("naive", "robust"), conf_level = 0.95)
 "vglm" (VGAM), "orm" (rms), "clm" (ordinal).}
 
 \item{se_type}{Character. Type of standard errors: "naive" or "robust"
-(default: "naive"). Robust SEs only available for rms::orm with robcov.}
+(default: "naive"). Robust SEs only available for rms::orm with robcov.
+\strong{Important}: VGAM and ordinal packages do not support robust SEs; use
+bootstrap inference instead (see \code{assess_operating_characteristics()} with
+\code{use_bootstrap = TRUE}).}
 
 \item{conf_level}{Numeric. Confidence level for intervals (default: 0.95).}
 }
@@ -20,7 +23,7 @@ A tibble with columns:
 \itemize{
 \item term: Coefficient name (standardized: "tx", "yprev2", etc.)
 \item estimate: Point estimate (log odds ratio scale)
-\item std_error: Standard error
+\item std_error: Standard error (naive unless robust specified for orm)
 \item statistic: Test statistic (z-score)
 \item p_value: Two-sided p-value
 \item conf_low: Lower confidence limit
@@ -30,38 +33,44 @@ A tibble with columns:
 \description{
 Extracts coefficients with standard errors, p-values, and confidence intervals
 from various proportional odds model objects, with standardized output format.
+Supports both VGAM::vglm, rms::orm, and ordinal::clm models.
 }
 \details{
 This function provides a standardized interface for extracting coefficients
 across different proportional odds packages:
 \itemize{
-\item \strong{VGAM::vglm}: Extracts from vglm objects (no robust SEs)
-\item \strong{rms::orm}: Extracts from orm objects (robust SEs if robcov was applied)
-\item \strong{ordinal::clm}: Extracts from clm objects (no robust SEs)
+\item \strong{VGAM::vglm}: Extracts naive SEs. For robust inference accounting for
+clustering, use bootstrap via \code{assess_operating_characteristics()}.
+\item \strong{rms::orm}: Extracts naive or robust SEs (if \code{robcov()} was applied to fit).
+\item \strong{ordinal::clm}: Extracts naive SEs. Use bootstrap for robust inference.
 }
 
 Intercepts are automatically excluded. Previous state coefficients are
 standardized (e.g., "yprev2" for all packages).
+
+\strong{Recommendation}: When accounting for within-patient correlation is
+critical, use bootstrap-based inference rather than relying
+on naive standard errors.
 }
 \examples{
 \dontrun{
-# VGAM
+# VGAM (naive SEs only)
 library(VGAM)
 fit <- vglm(y ~ tx + yprev,
-            family = cumulative(parallel = TRUE),
+            family = cumulative(parallel = TRUE, reverse = TRUE),
             data = model_data)
-tidy_po(fit)
+tidy_po(fit)  # Naive SEs; consider bootstrap for robust inference
 
 # rms with robust SEs
 library(rms)
-fit <- orm(y ~ tx + yprev, data = model_data)
+fit <- orm(y ~ tx + yprev, data = model_data, x = TRUE, y = TRUE)
 fit_robust <- robcov(fit, cluster = model_data$id)
-tidy_po(fit_robust, se_type = "robust")
+tidy_po(fit_robust)  # Uses robust SEs from robcov
 
-# ordinal
+# ordinal (naive SEs only)
 library(ordinal)
 fit <- clm(y ~ tx + yprev, data = model_data)
-tidy_po(fit)
+tidy_po(fit)  # Naive SEs; consider bootstrap for robust inference
 }
 
 }

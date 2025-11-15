@@ -1,3 +1,166 @@
+#' Relevel Factors to Consecutive Integers
+#'
+#' Handles missing factor levels in data by releveling ordered factors to
+#' consecutive integers. This is useful when bootstrap samples or subsets
+#' are missing certain levels, which can cause model fitting failures.
+#'
+#' @param data A data frame containing the data to relevel.
+#' @param factor_cols Character vector of column names to relevel. Only columns
+#'   that are factors with numeric-coercible levels will be releveled.
+#' @param original_data Optional data frame containing the original data before
+#'   subsetting. Used to determine which levels are present in the full dataset.
+#' @param ylevels Optional integer vector of original state levels (e.g., 1:6).
+#'   If provided along with absorb, these will be updated to match the new levels.
+#' @param absorb Optional integer specifying the absorbing state in the original
+#'   levels. Will be updated to the new position if provided.
+#'
+#' @return A list with components:
+#'   - data: The data frame with releveled factors
+#'   - ylevels: Updated ylevels (if provided as input), or NULL
+#'   - absorb: Updated absorb (if provided as input), or NULL
+#'   - missing_levels: Character vector of levels that were missing
+#'
+#' @details
+#' When certain factor levels are absent from a dataset (e.g., in bootstrap
+#' samples), this function:
+#' 1. Identifies which levels are present
+#' 2. Creates a mapping from old to new consecutive integers
+#' 3. Relevels the specified factor columns
+#' 4. Updates ylevels and absorb parameters if provided
+#'
+#' This is particularly useful for ordered factors representing health states
+#' in Markov models, where missing states would otherwise cause model fitting
+#' failures.
+#'
+#' @examples
+#' \dontrun{
+#' # Relevel y and yprev in bootstrap sample
+#' releveled <- relevel_factors_consecutive(
+#'   data = boot_data,
+#'   factor_cols = c("y", "yprev"),
+#'   original_data = full_data,
+#'   ylevels = 1:6,
+#'   absorb = 6
+#' )
+#'
+#' boot_data <- releveled$data
+#' boot_ylevels <- releveled$ylevels
+#' boot_absorb <- releveled$absorb
+#' }
+#'
+#' @export
+relevel_factors_consecutive <- function(
+  data,
+  factor_cols = c("y", "yprev"),
+  original_data = NULL,
+  ylevels = NULL,
+  absorb = NULL
+) {
+  # Determine original levels
+  if (!is.null(original_data)) {
+    original_levels <- sort(unique(unlist(lapply(
+      factor_cols,
+      function(col) {
+        if (col %in% names(original_data)) {
+          if (is.factor(original_data[[col]])) {
+            as.numeric(levels(original_data[[col]]))
+          } else {
+            unique(original_data[[col]])
+          }
+        }
+      }
+    ))))
+  } else if (!is.null(ylevels)) {
+    original_levels <- ylevels
+  } else {
+    # Infer from data
+    original_levels <- sort(unique(unlist(lapply(
+      factor_cols,
+      function(col) {
+        if (col %in% names(data)) {
+          unique(data[[col]])
+        }
+      }
+    ))))
+  }
+
+  # Get levels present in current data
+  states_present <- sort(unique(unlist(lapply(
+    factor_cols,
+    function(col) {
+      if (col %in% names(data)) {
+        if (is.factor(data[[col]])) {
+          as.numeric(as.character(data[[col]]))
+        } else {
+          unique(data[[col]])
+        }
+      }
+    }
+  ))))
+
+  missing_levels <- setdiff(original_levels, states_present)
+
+  # If no levels are missing, return data as-is
+  if (length(missing_levels) == 0) {
+    return(list(
+      data = data,
+      ylevels = ylevels,
+      absorb = absorb,
+      missing_levels = character(0)
+    ))
+  }
+
+  # Create mapping from old to new state numbers
+  state_mapping <- setNames(seq_along(states_present), states_present)
+
+  # Relevel each factor column
+  for (col in factor_cols) {
+    if (col %in% names(data)) {
+      # Convert to numeric if factor
+      if (is.factor(data[[col]])) {
+        data[[col]] <- as.numeric(as.character(data[[col]]))
+      }
+
+      # Apply mapping
+      data[[col]] <- state_mapping[as.character(data[[col]])]
+
+      # Convert back to factor with new levels
+      data[[col]] <- factor(data[[col]], levels = seq_along(states_present))
+    }
+  }
+
+  # Update ylevels if provided
+  new_ylevels <- if (!is.null(ylevels)) {
+    seq_along(states_present)
+  } else {
+    NULL
+  }
+
+  # Update absorbing state if provided and present
+  new_absorb <- if (!is.null(absorb)) {
+    if (absorb %in% states_present) {
+      state_mapping[as.character(absorb)]
+    } else {
+      warning(
+        "Absorbing state ",
+        absorb,
+        " not present in data. Set to NULL."
+      )
+      NULL
+    }
+  } else {
+    NULL
+  }
+
+  return(list(
+    data = data,
+    ylevels = new_ylevels,
+    absorb = new_absorb,
+    missing_levels = as.character(missing_levels)
+  ))
+}
+
+
 #' Calculate Jackknife Monte Carlo Standard Error
 #'
 #' Computes the Monte Carlo standard error (MCSE) of a statistic using the
@@ -206,7 +369,6 @@ states_to_drs <- function(
 }
 
 
-
 #' Convert State Trajectory Data to Time-to-event data
 #'
 #' This function calculates time-to-event for usage in Cox or recurrent event
@@ -248,8 +410,8 @@ states_to_drs <- function(
 #'
 #' @export
 states_to_tte <- function(
-    data,
-    covariates = c("age", "sofa")
+  data,
+  covariates = c("age", "sofa")
 ) {
   # Input validation
   required_cols <- c("id", "time", "y", "tx")
@@ -259,8 +421,9 @@ states_to_tte <- function(
   }
 
   # Calculate Andersen-Gill count data format
-  data$state_change <- ave(data[["y"]], data[["id"]],
-                           FUN = function(x) c(0, diff(x)))
+  data$state_change <- ave(data[["y"]], data[["id"]], FUN = function(x) {
+    c(0, diff(x))
+  })
 
   data <- data[data$state_change != 0, ]
 
@@ -271,15 +434,17 @@ states_to_tte <- function(
   # Add covariates if specified
   if (!is.null(covariates)) {
     available_covs <- intersect(covariates, colnames(data))
-    data <- data[, colnames(data) %in% c(
-      c("id", "y", "tx", "start", "stop", "yprev"),
-      available_covs)
+    data <- data[,
+      colnames(data) %in%
+        c(
+          c("id", "y", "tx", "start", "stop", "yprev"),
+          available_covs
+        )
     ]
   }
 
   return(result = data)
 }
-
 
 
 #' Calculate Difference in Time Alive and Out Of Hospital
