@@ -15,6 +15,7 @@ Imports:
     future,
     future.callr,
     ggplot2,
+    patchwork,
     Hmisc,
     rlang,
     rms,

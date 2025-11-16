@@ -115,10 +115,10 @@ plot_sops <- function(
 #' @param group Typically different analysis strategies
 #' @param ggplot_options List of further options passed to ggplot
 #' @param combine Should the plots for different operating characteristics
-#                     be combined into a plot grid (using cowplot)?
+#                     be combined into a grid?
 #'
 #'
-#' @return A ggplot or cowplot
+#' @return A ggplot list and optionally a patchwork object
 #'
 #' @details
 #' The input is typically a data frame where in each row the operating characteristics
@@ -130,14 +130,14 @@ plot_sops <- function(
 #' x determines the column of values to be plotted on the x-axis.
 #'
 #' group will typically be the analysis strategies compared and will be lines in
-#' different colours. When combined = TRUE, the single plots and a cowplot::plot_grid
+#' different colours. When combined = TRUE, the single plots and a patchwork::wrap_plots
 #' with all plots is returned.
 #'
 #' ggplot_options is integrated into a list of ggplot options and directly passed
 #' to the ggplot calls.
 #'
 #' @import ggplot2
-#' @importFrom cowplot plot_grid
+#' @importFrom patchwork wrap_plots
 #'
 #'
 #' @examples
@@ -217,7 +217,7 @@ plot_results <- function(
   }
 
   if (combine == TRUE) {
-    grid <- cowplot::plot_grid(plotlist = plots)
+    grid <- patchwork::wrap_plots(plotlist = plots)
   } else {
     grid <- NULL
   }

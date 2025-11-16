@@ -20,7 +20,7 @@ plot_results(data, ..., x, group, ggplot_options = list(), combine = TRUE)
 \item{combine}{Should the plots for different operating characteristics}
 }
 \value{
-A ggplot or cowplot
+A ggplot list and optionally a patchwork object
 }
 \description{
 A result data frame with operating chracteristic estimates is plotted in a
@@ -36,7 +36,7 @@ typically operating characteristics - and a separate plot for each input is gene
 x determines the column of values to be plotted on the x-axis.
 
 group will typically be the analysis strategies compared and will be lines in
-different colours. When combined = TRUE, the single plots and a cowplot::plot_grid
+different colours. When combined = TRUE, the single plots and a patchwork::wrap_plots
 with all plots is returned.
 
 ggplot_options is integrated into a list of ggplot options and directly passed
