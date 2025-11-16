@@ -9,7 +9,7 @@ bootstrap_model_coefs(
   data = NULL,
   n_boot,
   workers = NULL,
-  parallel = TRUE,
+  parallel = FALSE,
   id_var = "id"
 )
 }
