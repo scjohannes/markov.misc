@@ -64,6 +64,11 @@ and unbiased.
 For highly skewed or biased bootstrap distributions, consider using
 bias-corrected and accelerated (BCa) intervals instead (not currently
 implemented in this function).
+
+\strong{Usage with assess_operating_characteristics()}: When using this function
+within fitting functions for \code{\link{assess_operating_characteristics}},
+you'll need to add additional columns and rename \code{lower}/\code{upper}
+to \code{conf_low}/\code{conf_high}. See examples below.
 }
 \examples{
 \dontrun{
@@ -95,6 +100,26 @@ tidy_boot <- tidy_bootstrap_coefs(
   boot_coefs,
   na.rm = TRUE
 )
+
+# Format for assess_operating_characteristics()
+tidy_boot <- tidy_bootstrap_coefs(
+  boot_coefs,
+  probs = c(0.025, 0.975),
+  estimate = "median"
+) |>
+  mutate(
+    iter = 1,
+    analysis = "markov",
+    se_type = "boot",
+    std_error = NULL,
+    statistic = NULL,
+    p_value = NULL,
+    conf_low = lower,
+    conf_high = upper,
+    .before = 1
+  ) |>
+  select(iter, analysis, se_type, term, estimate, std_error,
+         statistic, p_value, conf_low, conf_high)
 }
 
 }

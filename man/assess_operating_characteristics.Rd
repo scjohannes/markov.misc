@@ -11,16 +11,7 @@ assess_operating_characteristics(
   sample_size = 250,
   allocation_ratio = 0.5,
   seed = 123,
-  fit_functions,
-  inference_type = c("coef", "state"),
-  use_bootstrap = FALSE,
-  n_bootstrap = NULL,
-  id_var = "id",
-  workers = NULL,
-  ylevels = 1:6,
-  absorb = 6,
-  target_states = 1,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
+  fit_functions
 )
 
 run_power_iteration(
@@ -29,23 +20,14 @@ run_power_iteration(
   sample_size = 250,
   allocation_ratio = 0.5,
   seed = 123,
-  fit_functions,
-  inference_type = c("coef", "state"),
-  use_bootstrap = FALSE,
-  n_bootstrap = NULL,
-  id_var = "id",
-  workers = NULL,
-  ylevels = 1:6,
-  absorb = 6,
-  target_states = 1,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
+  fit_functions
 )
 }
 \arguments{
 \item{iter_num}{Integer. Iteration number for tracking.}
 
-\item{data_paths}{Named list of paths to datasets. Must include "markov" and
-optionally "t_test" and "drs". Example:
+\item{data_paths}{Named list of paths to datasets. Names must match those in
+fit_functions. Example:
 \code{list(markov = "ha_or_0.8.parquet", t_test = "t_data_or_0.8.parquet")}.}
 
 \item{sample_size}{Integer. Total number of patients to sample (default: 250).}
@@ -56,42 +38,19 @@ optionally "t_test" and "drs". Example:
 \code{seed + iter_num}.}
 
 \item{fit_functions}{Named list of functions that fit models and return tidy
-results. Each function should accept \code{data} and \code{iter} arguments and return
-a tibble with columns: \code{iter}, \code{analysis}, \code{term}, \code{estimate}, \code{std_error},
-\code{p_value}, \code{conf_low}, \code{conf_high}.}
-
-\item{inference_type}{Character. Type of inference: "coef" for coefficient-based
-(default) or "state" for state-occupancy-based. State-based inference always
-uses bootstrap and requires additional parameters (see below).}
-
-\item{use_bootstrap}{Logical. Whether to use bootstrap for coefficient-based
-inference (default: FALSE). Always TRUE for state-based inference.}
-
-\item{n_bootstrap}{Integer. Number of bootstrap samples (required when
-use_bootstrap = TRUE or inference_type = "state").}
-
-\item{id_var}{Character. Name of the ID variable for group bootstrap (default: "id").}
-
-\item{workers}{Integer. Number of parallel workers for bootstrap (default: NULL).
-When NULL, bootstrap runs sequentially. Set to > 1 to parallelize bootstrap
-within a single iteration (useful when running a single analysis, not when
-parallelizing across iterations). \strong{Note}: Typically you parallelize across
-calls to \code{assess_operating_characteristics()} rather than within each call.}
-
-\item{ylevels}{Integer vector. State levels for state-based inference (default: 1:6).}
-
-\item{absorb}{Integer. Absorbing state for state-based inference (default: 6).}
-
-\item{target_states}{Integer vector. Target states for state-based inference (default: 1).}
-
-\item{varnames}{List. Variable names for state-based inference (default:
-list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")).}
+results. Each function receives \code{data} (sampled data) and \code{iter} (iteration
+number) arguments. Must return a tibble with columns: \code{iter}, \code{analysis},
+\code{se_type}, \code{term}, \code{estimate}, \code{std_error}, \code{statistic}, \code{p_value},
+\code{conf_low}, \code{conf_high}. For bootstrap-based inference, \code{std_error} should
+be the bootstrap standard error, and confidence limits should be renamed
+from \code{lower}/\code{upper} to \code{conf_low}/\code{conf_high}.}
 }
 \value{
 A tibble combining results from all analysis functions with columns:
 \itemize{
 \item iter: Iteration number
 \item analysis: Analysis type
+\item se_type: Type of standard error ("naive", "boot", etc.)
 \item term: Coefficient name
 \item estimate: Point estimate
 \item std_error: Standard error
@@ -101,102 +60,132 @@ A tibble combining results from all analysis functions with columns:
 }
 }
 \description{
-Executes a complete simulation iteration: sampling patients, fitting models,
-and extracting treatment effects across multiple analysis methods. This function
-can be used to assess both power (when true effect ≠ 0) and Type I error
-(when true effect = 0).
+Executes a complete simulation iteration by sampling patients once, then
+applying multiple fitting functions to the same sample. Bootstrap inference
+is handled within individual fitting functions, not by this orchestrator.
 }
 \details{
-This function provides a flexible framework for assessing operating characteristics
-(power, Type I error, bias, coverage) by accepting custom fitting functions.
-This allows complete control over model specification, package choice, and
-fitting options.
+This function implements the correct simulation structure for assessing
+operating characteristics (power, Type I error, bias, coverage):
+\enumerate{
+\item \strong{Iteration-level sampling}: Draws a fixed sample of patients from the
+superpopulation for this iteration (using \code{seed + iter_num})
+\item \strong{Multiple analyses}: Applies all fitting functions to the \emph{same} sample
+\item \strong{Within-analysis inference}: Individual fitting functions handle their
+own inference strategy (naive SEs, robust SEs, bootstrap, etc.)
+}
 
-Each fitting function should:
+\strong{Key principle}: Each iteration gets a different sample from the superpopulation,
+but all analyses within an iteration see the same sample. This allows fair
+comparison of different methods on identical data.
+
+\strong{Fitting function requirements}:
+Each function should:
 \enumerate{
 \item Accept \code{data} (the sampled dataset) and \code{iter} (iteration number)
-\item Fit the model
-\item Return a tibble with results in standardized format
+\item Perform any necessary data preparation
+\item Fit the model (with or without bootstrap, as appropriate)
+\item Return a tibble with standardized columns
 }
 
-\strong{Inference types}:
-\enumerate{
-\item \strong{Coefficient-based} (inference_type = "coef", default):
+\strong{Bootstrap handling}: Bootstrap inference (if needed) should be implemented
+within individual fitting functions, not by this orchestrator. This design:
 \itemize{
-\item Fits models using fit_functions and extracts coefficients
-\item Can use bootstrap or naive SEs depending on use_bootstrap
-\item Suitable for testing treatment effects via regression coefficients
-}
-\item \strong{State-based} (inference_type = "state"):
-\itemize{
-\item Calculates treatment effect as difference in time spent in target state(s)
-\item Always uses bootstrap (required for CIs on state occupancy differences)
-\item Requires a fitted model in fit_functions that returns a model object
-\item Uses state occupancy probabilities via soprobMarkovOrdm (for orm) or similar
-}
-}
-
-\strong{Bootstrap inference}: When \code{use_bootstrap = TRUE} or \code{inference_type = "state"},
-the function performs group bootstrap resampling. This is particularly useful for:
-\itemize{
-\item vglm models (VGAM package) which don't support robust standard errors
-\item State-based inference (only way to get CIs on state occupancy differences)
-\item Accounting for within-patient correlation in coefficient estimates
+\item Keeps parallelization simple (across iterations only)
+\item Allows complete control over inference within each analysis
+\item Avoids nested parallelization issues
 }
 
 \strong{Parallelization strategy}: The typical workflow is to parallelize across
-simulation iterations, not within them:
+simulation iterations:
 
-\if{html}{\out{<div class="sourceCode r">}}\preformatted{# Recommended: Parallelize across iterations
-library(furrr)
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{library(furrr)
 plan(multisession, workers = 8)
-results <- future_map_dfr(1:1000, ~assess_operating_characteristics(
-  iter_num = ., ...
-))
+results <- future_map_dfr(
+  1:1000,
+  ~assess_operating_characteristics(iter_num = ., ...),
+  .options = furrr_options(seed = TRUE)
+)
 }\if{html}{\out{</div>}}
-
-Only set \code{workers > 1} when running a single analysis with many bootstrap samples
-and NOT parallelizing across iterations.
 }
 \examples{
 \dontrun{
-# Coefficient-based inference (default)
-fit_markov <- function(data, iter) {
-  model_data <- prepare_markov_data(data)
-  fit <- vglm(y ~ tx + rcs(time, 4) + yprev,
-              family = cumulative(parallel = TRUE, reverse = TRUE),
-              data = model_data)
-  tidy_po(fit) |>
+# Define fitting functions that receive sampled data
+
+# Markov analysis with bootstrap
+fit_markov_boot <- function(data, iter) {
+  model_data <- prepare_markov_data(data, absorbing_state = 6)
+
+  # Fit model
+  fit <- vglm(
+    y ~ tx + rcs(time, 4) + yprev,
+    family = cumulative(parallel = TRUE, reverse = TRUE),
+    data = model_data
+  )
+
+  # Bootstrap within this function
+  boot_coef <- bootstrap_model_coefs(
+    fit,
+    data = model_data,
+    n_boot = 100,
+    id_var = "id"
+  )
+
+  # Tidy bootstrap results and add required columns
+  tidy_bootstrap_coefs(boot_coef, probs = c(0.025, 0.975), estimate = "median") |>
     filter(term == "tx") |>
-    mutate(iter = iter, analysis = "markov", .before = 1)
+    mutate(
+      iter = iter,
+      analysis = "markov",
+      se_type = "boot",
+      # Calculate bootstrap SE from confidence limits (approximate)
+      std_error = (upper - lower) / (2 * qnorm(0.975)),
+      statistic = estimate / std_error,
+      p_value = 2 * pnorm(-abs(statistic)),
+      conf_low = lower,
+      conf_high = upper,
+      .before = 1
+    ) |>
+    select(iter, analysis, se_type, term, estimate, std_error,
+           statistic, p_value, conf_low, conf_high)
 }
 
-result_coef <- assess_operating_characteristics(
-  iter_num = 1,
-  data_paths = list(markov = "sim_data/ha_or_0.8.parquet"),
-  sample_size = 200,
-  fit_functions = list(markov = fit_markov),
-  inference_type = "coef",
-  use_bootstrap = TRUE,
-  n_bootstrap = 500
-)
-
-# State-based inference (always uses bootstrap)
-fit_markov_model <- function(data, iter) {
-  model_data <- prepare_markov_data(data)
-  d <- datadist(model_data)
-  options(datadist = "d")
-  orm(y ~ tx + rcs(time, 4) + yprev, data = model_data, x = TRUE, y = TRUE)
+# T-test analysis (no bootstrap needed)
+fit_ttest <- function(data, iter) {
+  t_result <- t.test(y ~ tx, data = data)
+  tibble(
+    iter = iter,
+    analysis = "t_test",
+    se_type = "naive",
+    term = "tx",
+    estimate = -diff(t_result$estimate),
+    std_error = t_result$stderr,
+    statistic = t_result$statistic,
+    p_value = t_result$p.value,
+    conf_low = -t_result$conf.int[2],
+    conf_high = -t_result$conf.int[1]
+  )
 }
 
-result_state <- assess_operating_characteristics(
-  iter_num = 1,
-  data_paths = list(markov = "sim_data/ha_or_0.8.parquet"),
-  sample_size = 200,
-  fit_functions = list(markov = fit_markov_model),
-  inference_type = "state",
-  n_bootstrap = 500,
-  target_states = 1
+# Parallelize across iterations - each gets different sample
+library(furrr)
+plan(multisession, workers = 8)
+results <- future_map_dfr(
+  1:1000,
+  ~assess_operating_characteristics(
+    iter_num = .,
+    data_paths = list(
+      markov = "ha_or_0.8.parquet",
+      t_test = "t_data_or_0.8.parquet"
+    ),
+    sample_size = 250,
+    fit_functions = list(
+      markov = fit_markov_boot,
+      t_test = fit_ttest
+    ),
+    seed = 123
+  ),
+  .options = furrr_options(seed = TRUE, packages = c("rms", "VGAM", "dplyr"))
 )
 }
 

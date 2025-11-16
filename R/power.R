@@ -411,45 +411,30 @@ tidy_po <- function(
 
 #' Assess Operating Characteristics for One Iteration
 #'
-#' Executes a complete simulation iteration: sampling patients, fitting models,
-#' and extracting treatment effects across multiple analysis methods. This function
-#' can be used to assess both power (when true effect ≠ 0) and Type I error
-#' (when true effect = 0).
+#' Executes a complete simulation iteration by sampling patients once, then
+#' applying multiple fitting functions to the same sample. Bootstrap inference
+#' is handled within individual fitting functions, not by this orchestrator.
 #'
 #' @param iter_num Integer. Iteration number for tracking.
-#' @param data_paths Named list of paths to datasets. Must include "markov" and
-#'   optionally "t_test" and "drs". Example:
+#' @param data_paths Named list of paths to datasets. Names must match those in
+#'   fit_functions. Example:
 #'   `list(markov = "ha_or_0.8.parquet", t_test = "t_data_or_0.8.parquet")`.
 #' @param sample_size Integer. Total number of patients to sample (default: 250).
 #' @param allocation_ratio Numeric. Proportion assigned to treatment (default: 0.5).
 #' @param seed Integer. Base random seed (default: 123). Actual seed will be
 #'   `seed + iter_num`.
 #' @param fit_functions Named list of functions that fit models and return tidy
-#'   results. Each function should accept `data` and `iter` arguments and return
-#'   a tibble with columns: `iter`, `analysis`, `term`, `estimate`, `std_error`,
-#'   `p_value`, `conf_low`, `conf_high`.
-#' @param inference_type Character. Type of inference: "coef" for coefficient-based
-#'   (default) or "state" for state-occupancy-based. State-based inference always
-#'   uses bootstrap and requires additional parameters (see below).
-#' @param use_bootstrap Logical. Whether to use bootstrap for coefficient-based
-#'   inference (default: FALSE). Always TRUE for state-based inference.
-#' @param n_bootstrap Integer. Number of bootstrap samples (required when
-#'   use_bootstrap = TRUE or inference_type = "state").
-#' @param id_var Character. Name of the ID variable for group bootstrap (default: "id").
-#' @param workers Integer. Number of parallel workers for bootstrap (default: NULL).
-#'   When NULL, bootstrap runs sequentially. Set to > 1 to parallelize bootstrap
-#'   within a single iteration (useful when running a single analysis, not when
-#'   parallelizing across iterations). **Note**: Typically you parallelize across
-#'   calls to `assess_operating_characteristics()` rather than within each call.
-#' @param ylevels Integer vector. State levels for state-based inference (default: 1:6).
-#' @param absorb Integer. Absorbing state for state-based inference (default: 6).
-#' @param target_states Integer vector. Target states for state-based inference (default: 1).
-#' @param varnames List. Variable names for state-based inference (default:
-#'   list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")).
+#'   results. Each function receives `data` (sampled data) and `iter` (iteration
+#'   number) arguments. Must return a tibble with columns: `iter`, `analysis`,
+#'   `se_type`, `term`, `estimate`, `std_error`, `statistic`, `p_value`,
+#'   `conf_low`, `conf_high`. For bootstrap-based inference, `std_error` should
+#'   be the bootstrap standard error, and confidence limits should be renamed
+#'   from `lower`/`upper` to `conf_low`/`conf_high`.
 #'
 #' @return A tibble combining results from all analysis functions with columns:
 #'   - iter: Iteration number
 #'   - analysis: Analysis type
+#'   - se_type: Type of standard error ("naive", "boot", etc.)
 #'   - term: Coefficient name
 #'   - estimate: Point estimate
 #'   - std_error: Standard error
@@ -458,95 +443,126 @@ tidy_po <- function(
 #'   - conf_low, conf_high: Confidence interval
 #'
 #' @details
-#' This function provides a flexible framework for assessing operating characteristics
-#' (power, Type I error, bias, coverage) by accepting custom fitting functions.
-#' This allows complete control over model specification, package choice, and
-#' fitting options.
+#' This function implements the correct simulation structure for assessing
+#' operating characteristics (power, Type I error, bias, coverage):
 #'
-#' Each fitting function should:
+#' 1. **Iteration-level sampling**: Draws a fixed sample of patients from the
+#'    superpopulation for this iteration (using `seed + iter_num`)
+#' 2. **Multiple analyses**: Applies all fitting functions to the *same* sample
+#' 3. **Within-analysis inference**: Individual fitting functions handle their
+#'    own inference strategy (naive SEs, robust SEs, bootstrap, etc.)
+#'
+#' **Key principle**: Each iteration gets a different sample from the superpopulation,
+#' but all analyses within an iteration see the same sample. This allows fair
+#' comparison of different methods on identical data.
+#'
+#' **Fitting function requirements**:
+#' Each function should:
 #' 1. Accept `data` (the sampled dataset) and `iter` (iteration number)
-#' 2. Fit the model
-#' 3. Return a tibble with results in standardized format
+#' 2. Perform any necessary data preparation
+#' 3. Fit the model (with or without bootstrap, as appropriate)
+#' 4. Return a tibble with standardized columns
 #'
-#' **Inference types**:
-#' 1. **Coefficient-based** (inference_type = "coef", default):
-#'    - Fits models using fit_functions and extracts coefficients
-#'    - Can use bootstrap or naive SEs depending on use_bootstrap
-#'    - Suitable for testing treatment effects via regression coefficients
-#'
-#' 2. **State-based** (inference_type = "state"):
-#'    - Calculates treatment effect as difference in time spent in target state(s)
-#'    - Always uses bootstrap (required for CIs on state occupancy differences)
-#'    - Requires a fitted model in fit_functions that returns a model object
-#'    - Uses state occupancy probabilities via soprobMarkovOrdm (for orm) or similar
-#'
-#' **Bootstrap inference**: When `use_bootstrap = TRUE` or `inference_type = "state"`,
-#' the function performs group bootstrap resampling. This is particularly useful for:
-#' - vglm models (VGAM package) which don't support robust standard errors
-#' - State-based inference (only way to get CIs on state occupancy differences)
-#' - Accounting for within-patient correlation in coefficient estimates
+#' **Bootstrap handling**: Bootstrap inference (if needed) should be implemented
+#' within individual fitting functions, not by this orchestrator. This design:
+#' - Keeps parallelization simple (across iterations only)
+#' - Allows complete control over inference within each analysis
+#' - Avoids nested parallelization issues
 #'
 #' **Parallelization strategy**: The typical workflow is to parallelize across
-#' simulation iterations, not within them:
+#' simulation iterations:
 #' ```r
-#' # Recommended: Parallelize across iterations
 #' library(furrr)
 #' plan(multisession, workers = 8)
-#' results <- future_map_dfr(1:1000, ~assess_operating_characteristics(
-#'   iter_num = ., ...
-#' ))
+#' results <- future_map_dfr(
+#'   1:1000,
+#'   ~assess_operating_characteristics(iter_num = ., ...),
+#'   .options = furrr_options(seed = TRUE)
+#' )
 #' ```
-#' Only set `workers > 1` when running a single analysis with many bootstrap samples
-#' and NOT parallelizing across iterations.
 #'
 #' @examples
 #' \dontrun{
-#' # Coefficient-based inference (default)
-#' fit_markov <- function(data, iter) {
-#'   model_data <- prepare_markov_data(data)
-#'   fit <- vglm(y ~ tx + rcs(time, 4) + yprev,
-#'               family = cumulative(parallel = TRUE, reverse = TRUE),
-#'               data = model_data)
-#'   tidy_po(fit) |>
+#' # Define fitting functions that receive sampled data
+#'
+#' # Markov analysis with bootstrap
+#' fit_markov_boot <- function(data, iter) {
+#'   model_data <- prepare_markov_data(data, absorbing_state = 6)
+#'
+#'   # Fit model
+#'   fit <- vglm(
+#'     y ~ tx + rcs(time, 4) + yprev,
+#'     family = cumulative(parallel = TRUE, reverse = TRUE),
+#'     data = model_data
+#'   )
+#'
+#'   # Bootstrap within this function
+#'   boot_coef <- bootstrap_model_coefs(
+#'     fit,
+#'     data = model_data,
+#'     n_boot = 100,
+#'     id_var = "id"
+#'   )
+#'
+#'   # Tidy bootstrap results and add required columns
+#'   tidy_bootstrap_coefs(boot_coef, probs = c(0.025, 0.975), estimate = "median") |>
 #'     filter(term == "tx") |>
-#'     mutate(iter = iter, analysis = "markov", .before = 1)
+#'     mutate(
+#'       iter = iter,
+#'       analysis = "markov",
+#'       se_type = "boot",
+#'       # Calculate bootstrap SE from confidence limits (approximate)
+#'       std_error = (upper - lower) / (2 * qnorm(0.975)),
+#'       statistic = estimate / std_error,
+#'       p_value = 2 * pnorm(-abs(statistic)),
+#'       conf_low = lower,
+#'       conf_high = upper,
+#'       .before = 1
+#'     ) |>
+#'     select(iter, analysis, se_type, term, estimate, std_error,
+#'            statistic, p_value, conf_low, conf_high)
 #' }
 #'
-#' result_coef <- assess_operating_characteristics(
-#'   iter_num = 1,
-#'   data_paths = list(markov = "sim_data/ha_or_0.8.parquet"),
-#'   sample_size = 200,
-#'   fit_functions = list(markov = fit_markov),
-#'   inference_type = "coef",
-#'   use_bootstrap = TRUE,
-#'   n_bootstrap = 500
+#' # T-test analysis (no bootstrap needed)
+#' fit_ttest <- function(data, iter) {
+#'   t_result <- t.test(y ~ tx, data = data)
+#'   tibble(
+#'     iter = iter,
+#'     analysis = "t_test",
+#'     se_type = "naive",
+#'     term = "tx",
+#'     estimate = -diff(t_result$estimate),
+#'     std_error = t_result$stderr,
+#'     statistic = t_result$statistic,
+#'     p_value = t_result$p.value,
+#'     conf_low = -t_result$conf.int[2],
+#'     conf_high = -t_result$conf.int[1]
+#'   )
+#' }
+#'
+#' # Parallelize across iterations - each gets different sample
+#' library(furrr)
+#' plan(multisession, workers = 8)
+#' results <- future_map_dfr(
+#'   1:1000,
+#'   ~assess_operating_characteristics(
+#'     iter_num = .,
+#'     data_paths = list(
+#'       markov = "ha_or_0.8.parquet",
+#'       t_test = "t_data_or_0.8.parquet"
+#'     ),
+#'     sample_size = 250,
+#'     fit_functions = list(
+#'       markov = fit_markov_boot,
+#'       t_test = fit_ttest
+#'     ),
+#'     seed = 123
+#'   ),
+#'   .options = furrr_options(seed = TRUE, packages = c("rms", "VGAM", "dplyr"))
 #' )
-#'
-#' # State-based inference (always uses bootstrap)
-#' fit_markov_model <- function(data, iter) {
-#'   model_data <- prepare_markov_data(data)
-#'   d <- datadist(model_data)
-#'   options(datadist = "d")
-#'   orm(y ~ tx + rcs(time, 4) + yprev, data = model_data, x = TRUE, y = TRUE)
 #' }
 #'
-#' result_state <- assess_operating_characteristics(
-#'   iter_num = 1,
-#'   data_paths = list(markov = "sim_data/ha_or_0.8.parquet"),
-#'   sample_size = 200,
-#'   fit_functions = list(markov = fit_markov_model),
-#'   inference_type = "state",
-#'   n_bootstrap = 500,
-#'   target_states = 1
-#' )
-#' }
-#'
-#' @importFrom dplyr bind_rows group_by summarise mutate
-#' @importFrom rsample group_bootstraps analysis
-#' @importFrom future.callr callr
-#' @importFrom future plan
-#' @importFrom furrr future_map
-#' @importFrom stats ave pnorm quantile
+#' @importFrom dplyr bind_rows
 #'
 #' @export
 assess_operating_characteristics <- function(
@@ -555,35 +571,13 @@ assess_operating_characteristics <- function(
   sample_size = 250,
   allocation_ratio = 0.5,
   seed = 123,
-  fit_functions,
-  inference_type = c("coef", "state"),
-  use_bootstrap = FALSE,
-  n_bootstrap = NULL,
-  id_var = "id",
-  workers = NULL,
-  ylevels = 1:6,
-  absorb = 6,
-  target_states = 1,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
+  fit_functions
 ) {
-  inference_type <- match.arg(inference_type)
   set.seed(seed + iter_num)
-
-  # State-based inference always requires bootstrap
-  if (inference_type == "state") {
-    use_bootstrap <- TRUE
-  }
-
-  # Validate bootstrap parameters
-  if (use_bootstrap && is.null(n_bootstrap)) {
-    stop(
-      "n_bootstrap must be specified when use_bootstrap = TRUE or inference_type = 'state'"
-    )
-  }
 
   results_list <- list()
 
-  # Iterate over each analysis
+  # Sample data once per analysis type and apply fitting function
   for (analysis_name in names(fit_functions)) {
     if (!analysis_name %in% names(data_paths)) {
       warning(
@@ -594,211 +588,19 @@ assess_operating_characteristics <- function(
       next
     }
 
-    # Sample data
+    # Sample data once for this iteration
     sampled_data <- sample_from_arrow(
       data_path = data_paths[[analysis_name]],
       sample_size = sample_size,
       allocation_ratio = allocation_ratio
+      # Note: No seed argument - uses set.seed() from above
     )
 
-    if (inference_type == "state") {
-      # State-based inference using bootstrap
-      # Fit model on original sample
-      fitted_model <- fit_functions[[analysis_name]](
-        data = sampled_data,
-        iter = iter_num
-      )
-
-      # Create bootstrap samples
-      bs_samples <- rsample::group_bootstraps(
-        sampled_data,
-        group = !!rlang::sym(id_var),
-        times = n_bootstrap,
-        apparent = FALSE
-      )
-
-      # Set up parallel processing (only if workers specified)
-      if (!is.null(workers) && workers > 1) {
-        future::plan(future.callr::callr, workers = workers)
-      } else {
-        future::plan("sequential")
-      }
-
-      # Bootstrap state occupancy calculations
-      bs_results <- bs_samples |>
-        dplyr::mutate(
-          state_diff = furrr::future_map(splits, \(.x) {
-            boot_data <- rsample::analysis(.x)
-
-            # Create unique IDs
-            boot_data$block_count <- stats::ave(
-              boot_data[[id_var]],
-              boot_data[[id_var]],
-              FUN = seq_along
-            )
-            boot_data$new_id <- factor(paste(
-              boot_data[[id_var]],
-              boot_data$block_count,
-              sep = "_"
-            ))
-
-            # Relevel factors
-            releveled <- relevel_factors_consecutive(
-              data = boot_data,
-              factor_cols = c("y", varnames$pvarname),
-              original_data = sampled_data,
-              ylevels = ylevels,
-              absorb = absorb
-            )
-
-            boot_data <- releveled$data
-            boot_ylevels <- releveled$ylevels
-            boot_absorb <- releveled$absorb
-
-            # Update datadist for orm models
-            if (inherits(fitted_model, "orm")) {
-              dd <- rms::datadist(boot_data)
-              assign("dd", dd, envir = .GlobalEnv)
-              options(datadist = "dd")
-            }
-
-            # Refit model
-            m_boot <- tryCatch(
-              stats::update(fitted_model, data = boot_data),
-              error = function(e) {
-                warning("Bootstrap model fit failed: ", e$message)
-                return(NULL)
-              }
-            )
-
-            # Calculate state occupancy difference
-            if (!is.null(m_boot)) {
-              tryCatch(
-                taooh(
-                  model = m_boot,
-                  data = boot_data,
-                  times = 1:max(boot_data[[varnames$tvarname]]),
-                  ylevels = boot_ylevels,
-                  absorb = boot_absorb,
-                  target_states = target_states,
-                  varnames = list(
-                    tvarname = varnames$tvarname,
-                    pvarname = varnames$pvarname,
-                    id = "new_id",
-                    tx = varnames$tx
-                  )
-                )[1], # Extract delta_taooh
-                error = function(e) {
-                  warning("State occupancy calculation failed: ", e$message)
-                  return(NA_real_)
-                }
-              )
-            } else {
-              return(NA_real_)
-            }
-          })
-        )
-
-      future::plan("sequential")
-
-      # Summarize bootstrap results
-      bs_vector <- unlist(bs_results$state_diff)
-      bs_vector <- bs_vector[!is.na(bs_vector)]
-
-      if (length(bs_vector) > 0) {
-        results_list[[analysis_name]] <- tibble::tibble(
-          iter = iter_num,
-          analysis = analysis_name,
-          term = "state_diff",
-          estimate = mean(bs_vector),
-          std_error = sd(bs_vector),
-          statistic = mean(bs_vector) / sd(bs_vector),
-          p_value = 2 * stats::pnorm(-abs(mean(bs_vector) / sd(bs_vector))),
-          conf_low = quantile(bs_vector, 0.025),
-          conf_high = quantile(bs_vector, 0.975)
-        )
-      }
-    } else if (use_bootstrap) {
-      # Coefficient-based inference with bootstrap
-      # Create bootstrap samples
-      bs_samples <- rsample::group_bootstraps(
-        sampled_data,
-        group = !!rlang::sym(id_var),
-        times = n_bootstrap,
-        apparent = FALSE
-      )
-
-      # Apply fitting function to each bootstrap sample
-      bs_results <- list()
-      for (b in seq_len(nrow(bs_samples))) {
-        boot_data <- rsample::analysis(bs_samples$splits[[b]])
-
-        # Create unique IDs for bootstrap sample
-        boot_data$block_count <- stats::ave(
-          boot_data[[id_var]],
-          boot_data[[id_var]],
-          FUN = seq_along
-        )
-        boot_data$new_id <- factor(paste(
-          boot_data[[id_var]],
-          boot_data$block_count,
-          sep = "_"
-        ))
-
-        # Relevel factors if needed
-        if ("y" %in% names(boot_data) && "yprev" %in% names(boot_data)) {
-          releveled <- relevel_factors_consecutive(
-            data = boot_data,
-            factor_cols = c("y", "yprev"),
-            original_data = sampled_data
-          )
-          boot_data <- releveled$data
-        }
-
-        # Fit model on bootstrap sample
-        bs_results[[b]] <- tryCatch(
-          fit_functions[[analysis_name]](
-            data = boot_data,
-            iter = iter_num
-          ),
-          error = function(e) {
-            warning("Bootstrap iteration ", b, " failed: ", e$message)
-            NULL
-          }
-        )
-      }
-
-      # Combine bootstrap results
-      bs_combined <- dplyr::bind_rows(bs_results)
-
-      # Calculate bootstrap statistics
-      if (nrow(bs_combined) > 0) {
-        bs_summary <- bs_combined |>
-          dplyr::group_by(analysis, term) |>
-          dplyr::summarise(
-            estimate = mean(estimate, na.rm = TRUE),
-            std_error = sd(estimate, na.rm = TRUE),
-            conf_low = stats::quantile(estimate, 0.025, na.rm = TRUE),
-            conf_high = stats::quantile(estimate, 0.975, na.rm = TRUE),
-            .groups = "drop"
-          ) |>
-          dplyr::mutate(
-            statistic = estimate / std_error,
-            p_value = 2 * stats::pnorm(-abs(statistic)),
-            iter = iter_num,
-            .before = 1
-          )
-
-        results_list[[analysis_name]] <- bs_summary
-      }
-    } else {
-      # Standard approach without bootstrap (coefficient-based only)
-      fit_fn <- fit_functions[[analysis_name]]
-      results_list[[analysis_name]] <- fit_fn(
-        data = sampled_data,
-        iter = iter_num
-      )
-    }
+    # Apply fitting function to this specific sample
+    results_list[[analysis_name]] <- fit_functions[[analysis_name]](
+      data = sampled_data,
+      iter = iter_num
+    )
   }
 
   dplyr::bind_rows(results_list)
