@@ -4,17 +4,20 @@
 \alias{tidy_po}
 \title{Extract Tidy Coefficients from Proportional Odds Models}
 \usage{
-tidy_po(fit, se_type = c("naive", "robust"), conf_level = 0.95)
+tidy_po(
+  fit,
+  alternative = c("two.sided", "greater", "less"),
+  conf_level = 0.95
+)
 }
 \arguments{
 \item{fit}{A fitted proportional odds model object. Supported classes:
-"vglm" (VGAM), "orm" (rms), "clm" (ordinal).}
+"vglm" (VGAM), "orm" (rms), "clm" (ordinal). For robust standard errors with
+orm models, apply \code{rms::robcov()} to the model before passing to this function.}
 
-\item{se_type}{Character. Type of standard errors: "naive" or "robust"
-(default: "naive"). Robust SEs only available for rms::orm with robcov.
-\strong{Important}: VGAM and ordinal packages do not support robust SEs; use
-bootstrap inference instead (see \code{assess_operating_characteristics()} with
-\code{use_bootstrap = TRUE}).}
+\item{alternative}{Character. Specifies the alternative hypothesis for p-value
+calculation: "two.sided" (default), "greater" (H₁: β > 0), or "less" (H₁: β < 0).
+Affects both p-values and confidence interval bounds.}
 
 \item{conf_level}{Numeric. Confidence level for intervals (default: 0.95).}
 }
@@ -23,11 +26,11 @@ A tibble with columns:
 \itemize{
 \item term: Coefficient name (standardized: "tx", "yprev2", etc.)
 \item estimate: Point estimate (log odds ratio scale)
-\item std_error: Standard error (naive unless robust specified for orm)
+\item std_error: Standard error (robust if \code{robcov()} was applied to orm model)
 \item statistic: Test statistic (z-score)
-\item p_value: Two-sided p-value
-\item conf_low: Lower confidence limit
-\item conf_high: Upper confidence limit
+\item p_value: P-value (one-sided or two-sided based on \code{alternative})
+\item conf_low: Lower confidence limit (may be -Inf for one-sided tests)
+\item conf_high: Upper confidence limit (may be Inf for one-sided tests)
 }
 }
 \description{
@@ -39,18 +42,22 @@ Supports both VGAM::vglm, rms::orm, and ordinal::clm models.
 This function provides a standardized interface for extracting coefficients
 across different proportional odds packages:
 \itemize{
-\item \strong{VGAM::vglm}: Extracts naive SEs. For robust inference accounting for
-clustering, use bootstrap via \code{assess_operating_characteristics()}.
-\item \strong{rms::orm}: Extracts naive or robust SEs (if \code{robcov()} was applied to fit).
-\item \strong{ordinal::clm}: Extracts naive SEs. Use bootstrap for robust inference.
+\item \strong{VGAM::vglm}: Extracts naive SEs using \code{vcov()}. For robust inference
+accounting for clustering, use bootstrap via \code{assess_operating_characteristics()}.
+\item \strong{rms::orm}: Automatically detects whether \code{robcov()} was applied. If
+\code{fit$var} exists (populated by \code{robcov()}), uses robust SEs. Otherwise,
+uses \code{vcov(fit)} for naive SEs. To get robust SEs:
+\verb{fit_robust <- robcov(fit, cluster = data$id); tidy_po(fit_robust)}
+\item \strong{ordinal::clm}: Extracts naive SEs from model summary. For robust inference
+accounting for clustering, use bootstrap via \code{assess_operating_characteristics()}.
 }
 
 Intercepts are automatically excluded. Previous state coefficients are
 standardized (e.g., "yprev2" for all packages).
 
-\strong{Recommendation}: When accounting for within-patient correlation is
-critical, use bootstrap-based inference rather than relying
-on naive standard errors.
+\strong{Note}: The function automatically determines the SE type for orm models.
+For VGAM and ordinal models, bootstrap-based inference is recommended when
+accounting for within-patient correlation is critical.
 }
 \examples{
 \dontrun{
@@ -59,18 +66,22 @@ library(VGAM)
 fit <- vglm(y ~ tx + yprev,
             family = cumulative(parallel = TRUE, reverse = TRUE),
             data = model_data)
-tidy_po(fit)  # Naive SEs; consider bootstrap for robust inference
+tidy_po(fit)  # Two-sided test (default)
+tidy_po(fit, alternative = "greater")  # One-sided: H₁: β > 0
 
-# rms with robust SEs
+# rms with naive SEs
 library(rms)
 fit <- orm(y ~ tx + yprev, data = model_data, x = TRUE, y = TRUE)
+tidy_po(fit)  # Naive SEs
+
+# rms with robust SEs
 fit_robust <- robcov(fit, cluster = model_data$id)
-tidy_po(fit_robust)  # Uses robust SEs from robcov
+tidy_po(fit_robust)  # Automatically uses robust SEs
 
 # ordinal (naive SEs only)
 library(ordinal)
 fit <- clm(y ~ tx + yprev, data = model_data)
-tidy_po(fit)  # Naive SEs; consider bootstrap for robust inference
+tidy_po(fit, alternative = "less")  # One-sided: H₁: β < 0
 }
 
 }

@@ -175,37 +175,43 @@ prepare_markov_data <- function(
 #' Supports both VGAM::vglm, rms::orm, and ordinal::clm models.
 #'
 #' @param fit A fitted proportional odds model object. Supported classes:
-#'   "vglm" (VGAM), "orm" (rms), "clm" (ordinal).
-#' @param se_type Character. Type of standard errors: "naive" or "robust"
-#'   (default: "naive"). Robust SEs only available for rms::orm with robcov.
-#'   **Important**: VGAM and ordinal packages do not support robust SEs; use
-#'   bootstrap inference instead (see `assess_operating_characteristics()` with
-#'   `use_bootstrap = TRUE`).
+#'   "vglm" (VGAM), "orm" (rms), "clm" (ordinal). For robust standard errors with
+#'   orm models, apply `rms::robcov()` to the model before passing to this function.
+#' @param alternative Character. Specifies the alternative hypothesis for p-value
+#'   calculation: "two.sided" (default), "greater" (H₁: β > 0), or "less" (H₁: β < 0).
+#'   Affects both p-values and confidence interval bounds.
 #' @param conf_level Numeric. Confidence level for intervals (default: 0.95).
 #'
 #' @return A tibble with columns:
 #'   - term: Coefficient name (standardized: "tx", "yprev2", etc.)
 #'   - estimate: Point estimate (log odds ratio scale)
-#'   - std_error: Standard error (naive unless robust specified for orm)
+#'   - std_error: Standard error (robust if `robcov()` was applied to orm model)
 #'   - statistic: Test statistic (z-score)
-#'   - p_value: Two-sided p-value
-#'   - conf_low: Lower confidence limit
-#'   - conf_high: Upper confidence limit
+#'   - p_value: P-value (one-sided or two-sided based on `alternative`)
+#'   - conf_low: Lower confidence limit (may be -Inf for one-sided tests)
+#'   - conf_high: Upper confidence limit (may be Inf for one-sided tests)
 #'
 #' @details
 #' This function provides a standardized interface for extracting coefficients
 #' across different proportional odds packages:
-#' - **VGAM::vglm**: Extracts naive SEs. For robust inference accounting for
-#'   clustering, use bootstrap via `assess_operating_characteristics()`.
-#' - **rms::orm**: Extracts naive or robust SEs (if `robcov()` was applied to fit).
-#' - **ordinal::clm**: Extracts naive SEs. Use bootstrap for robust inference.
+#'
+#' - **VGAM::vglm**: Extracts naive SEs using `vcov()`. For robust inference
+#'   accounting for clustering, use bootstrap via `assess_operating_characteristics()`.
+#'
+#' - **rms::orm**: Automatically detects whether `robcov()` was applied. If
+#'   `fit$var` exists (populated by `robcov()`), uses robust SEs. Otherwise,
+#'   uses `vcov(fit)` for naive SEs. To get robust SEs:
+#'   `fit_robust <- robcov(fit, cluster = data$id); tidy_po(fit_robust)`
+#'
+#' - **ordinal::clm**: Extracts naive SEs from model summary. For robust inference
+#'   accounting for clustering, use bootstrap via `assess_operating_characteristics()`.
 #'
 #' Intercepts are automatically excluded. Previous state coefficients are
 #' standardized (e.g., "yprev2" for all packages).
 #'
-#' **Recommendation**: When accounting for within-patient correlation is
-#' critical, use bootstrap-based inference rather than relying
-#' on naive standard errors.
+#' **Note**: The function automatically determines the SE type for orm models.
+#' For VGAM and ordinal models, bootstrap-based inference is recommended when
+#' accounting for within-patient correlation is critical.
 #'
 #' @examples
 #' \dontrun{
@@ -214,18 +220,22 @@ prepare_markov_data <- function(
 #' fit <- vglm(y ~ tx + yprev,
 #'             family = cumulative(parallel = TRUE, reverse = TRUE),
 #'             data = model_data)
-#' tidy_po(fit)  # Naive SEs; consider bootstrap for robust inference
+#' tidy_po(fit)  # Two-sided test (default)
+#' tidy_po(fit, alternative = "greater")  # One-sided: H₁: β > 0
 #'
-#' # rms with robust SEs
+#' # rms with naive SEs
 #' library(rms)
 #' fit <- orm(y ~ tx + yprev, data = model_data, x = TRUE, y = TRUE)
+#' tidy_po(fit)  # Naive SEs
+#'
+#' # rms with robust SEs
 #' fit_robust <- robcov(fit, cluster = model_data$id)
-#' tidy_po(fit_robust)  # Uses robust SEs from robcov
+#' tidy_po(fit_robust)  # Automatically uses robust SEs
 #'
 #' # ordinal (naive SEs only)
 #' library(ordinal)
 #' fit <- clm(y ~ tx + yprev, data = model_data)
-#' tidy_po(fit)  # Naive SEs; consider bootstrap for robust inference
+#' tidy_po(fit, alternative = "less")  # One-sided: H₁: β < 0
 #' }
 #'
 #' @importFrom dplyr case_when mutate filter
@@ -233,18 +243,23 @@ prepare_markov_data <- function(
 #' @importFrom stats coef vcov pnorm confint
 #'
 #' @export
-tidy_po <- function(fit, se_type = c("naive", "robust"), conf_level = 0.95) {
-  se_type <- match.arg(se_type)
+tidy_po <- function(
+  fit,
+  alternative = c("two.sided", "greater", "less"),
+  conf_level = 0.95
+) {
+  alternative <- match.arg(alternative)
   alpha <- 1 - conf_level
-  z_crit <- stats::qnorm(1 - alpha / 2)
+
+  # Calculate critical value and confidence interval bounds based on alternative
+  if (alternative == "two.sided") {
+    z_crit <- stats::qnorm(1 - alpha / 2)
+  } else {
+    z_crit <- stats::qnorm(1 - alpha)
+  }
 
   # VGAM method
   if (inherits(fit, "vglm")) {
-    if (se_type == "robust") {
-      warning("VGAM does not support robust standard errors. Using naive SEs.")
-      se_type <- "naive"
-    }
-
     coefs <- stats::coef(fit)
     ses <- sqrt(diag(stats::vcov(fit)))
 
@@ -255,38 +270,95 @@ tidy_po <- function(fit, se_type = c("naive", "robust"), conf_level = 0.95) {
       term = names(coefs)[non_intercepts],
       estimate = coefs[non_intercepts],
       std_error = ses[non_intercepts],
-      statistic = estimate / std_error,
-      p_value = 2 * stats::pnorm(-abs(statistic)),
-      conf_low = estimate - z_crit * std_error,
-      conf_high = estimate + z_crit * std_error
+      statistic = estimate / std_error
     )
+
+    # Calculate p-values based on alternative hypothesis
+    result <- result |>
+      dplyr::mutate(
+        p_value = dplyr::case_when(
+          alternative == "two.sided" ~ 2 * stats::pnorm(-abs(statistic)),
+          alternative == "greater" ~ stats::pnorm(
+            statistic,
+            lower.tail = FALSE
+          ),
+          alternative == "less" ~ stats::pnorm(statistic)
+        ),
+        conf_low = dplyr::case_when(
+          alternative == "two.sided" ~ estimate - z_crit * std_error,
+          alternative == "greater" ~ estimate - z_crit * std_error,
+          alternative == "less" ~ -Inf
+        ),
+        conf_high = dplyr::case_when(
+          alternative == "two.sided" ~ estimate + z_crit * std_error,
+          alternative == "greater" ~ Inf,
+          alternative == "less" ~ estimate + z_crit * std_error
+        )
+      )
   } else if (inherits(fit, "orm")) {
     # rms::orm method
-    # Use fit$var instead of vcov() to get full variance-covariance matrix
+    # Note: fit$var is only populated after robcov() is applied
+    # For models without robcov(), fit$var is NULL and we use vcov() instead
     coefs <- fit$coefficients
-    ses <- sqrt(diag(fit$var))
 
-    # Filter out intercepts (they start with 'y>=')
-    non_intercepts <- !grepl("^y>=", names(coefs))
+    if (!is.null(fit$var)) {
+      # Robust SEs available (robcov was applied)
+      # fit$var contains the full covariance matrix for all coefficients
+      vcov_matrix <- fit$var
+      ses <- sqrt(diag(vcov_matrix))
 
-    result <- tibble::tibble(
-      term = names(coefs)[non_intercepts],
-      estimate = coefs[non_intercepts],
-      std_error = ses[non_intercepts],
-      statistic = estimate / std_error,
-      p_value = 2 * stats::pnorm(-abs(statistic)),
-      conf_low = estimate - z_crit * std_error,
-      conf_high = estimate + z_crit * std_error
-    )
-  } else if (inherits(fit, "clm")) {
-    # ordinal::clm method
-    if (se_type == "robust") {
-      warning(
-        "ordinal::clm does not support robust standard errors. Using naive SEs."
+      # Filter out intercepts (they start with 'y>=')
+      non_intercepts <- !grepl("^y>=", names(coefs))
+
+      result <- tibble::tibble(
+        term = names(coefs)[non_intercepts],
+        estimate = coefs[non_intercepts],
+        std_error = ses[non_intercepts],
+        statistic = estimate / std_error
       )
-      se_type <- "naive"
+    } else {
+      # Naive SEs (use vcov)
+      # vcov() for orm returns a reduced matrix that may not include all intercepts
+      # We need to match coefficients to the vcov matrix by names
+      vcov_matrix <- stats::vcov(fit)
+      vcov_names <- rownames(vcov_matrix)
+
+      # Extract only the coefficients that are in the vcov matrix
+      # and exclude intercepts
+      non_intercept_names <- vcov_names[!grepl("^y>=", vcov_names)]
+
+      result <- tibble::tibble(
+        term = non_intercept_names,
+        estimate = coefs[non_intercept_names],
+        std_error = sqrt(diag(vcov_matrix))[non_intercept_names],
+        statistic = estimate / std_error
+      )
     }
 
+    # Calculate p-values based on alternative hypothesis
+    result <- result |>
+      dplyr::mutate(
+        p_value = dplyr::case_when(
+          alternative == "two.sided" ~ 2 * stats::pnorm(-abs(statistic)),
+          alternative == "greater" ~ stats::pnorm(
+            statistic,
+            lower.tail = FALSE
+          ),
+          alternative == "less" ~ stats::pnorm(statistic)
+        ),
+        conf_low = dplyr::case_when(
+          alternative == "two.sided" ~ estimate - z_crit * std_error,
+          alternative == "greater" ~ estimate - z_crit * std_error,
+          alternative == "less" ~ -Inf
+        ),
+        conf_high = dplyr::case_when(
+          alternative == "two.sided" ~ estimate + z_crit * std_error,
+          alternative == "greater" ~ Inf,
+          alternative == "less" ~ estimate + z_crit * std_error
+        )
+      )
+  } else if (inherits(fit, "clm")) {
+    # ordinal::clm method
     summ <- summary(fit)
     coef_table <- summ$coefficients
 
@@ -295,10 +367,30 @@ tidy_po <- function(fit, se_type = c("naive", "robust"), conf_level = 0.95) {
       dplyr::mutate(
         estimate = Estimate,
         std_error = `Std. Error`,
-        statistic = `z value`,
-        p_value = `Pr(>|z|)`,
-        conf_low = estimate - z_crit * std_error,
-        conf_high = estimate + z_crit * std_error
+        statistic = `z value`
+      )
+
+    # Calculate p-values based on alternative hypothesis (override clm's two-sided p-value)
+    result <- result |>
+      dplyr::mutate(
+        p_value = dplyr::case_when(
+          alternative == "two.sided" ~ 2 * stats::pnorm(-abs(statistic)),
+          alternative == "greater" ~ stats::pnorm(
+            statistic,
+            lower.tail = FALSE
+          ),
+          alternative == "less" ~ stats::pnorm(statistic)
+        ),
+        conf_low = dplyr::case_when(
+          alternative == "two.sided" ~ estimate - z_crit * std_error,
+          alternative == "greater" ~ estimate - z_crit * std_error,
+          alternative == "less" ~ -Inf
+        ),
+        conf_high = dplyr::case_when(
+          alternative == "two.sided" ~ estimate + z_crit * std_error,
+          alternative == "greater" ~ Inf,
+          alternative == "less" ~ estimate + z_crit * std_error
+        )
       ) |>
       dplyr::select(
         term,
