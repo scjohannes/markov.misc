@@ -99,7 +99,7 @@ sample_from_arrow <- function(
 #' @param absorbing_state Integer. The absorbing state to filter out (default: 6
 #'   for death). Observations where `yprev` equals this value are removed.
 #' @param ordered_response Logical. Should `y` be converted to ordered factor?
-#'   (default: TRUE). Required for clm and vglm, not requierd for orm.
+#'   (default: TRUE). Required for clm and vglm, not required for orm.
 #' @param factor_previous Logical. Should `yprev` be converted to factor?
 #'   (default: TRUE).
 #'
