@@ -46,7 +46,7 @@
 #'
 #' # Use with parallel processing - data is materialized on each worker
 #' library(furrr)
-#' plan(multisession, workers = 8)
+#' plan(callr)
 #' results <- future_map(boot_ids, function(ids) {
 #'   boot_data <- materialize_bootstrap_sample(ids, my_data, "id")
 #'   analyze_bootstrap(boot_data)
@@ -76,8 +76,7 @@ fast_group_bootstrap <- function(data, id_var = "id", n_boot) {
     # Create a lookup table with the sampled IDs
     # Keep track of how many times each ID appears
     id_table <- data.frame(
-      original_id = sampled_ids,
-      stringsAsFactors = FALSE
+      original_id = sampled_ids
     )
 
     # Add occurrence count for duplicate IDs
@@ -273,7 +272,7 @@ apply_to_bootstrap <- function(
       boot_samples,
       wrapper_fn,
       .options = furrr::furrr_options(
-        packages = c(packages, "markov.misc"), # Include markov.misc for materialize function
+        packages = c(packages),
         globals = c(globals, "data", "id_var", "analysis_fn")
       )
     )

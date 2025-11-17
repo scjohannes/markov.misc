@@ -106,7 +106,7 @@ plot_sops <- function(
 
 #' ggplot wrapper to present simulation results
 #'
-#' A result data frame with operating chracteristic estimates is plotted in a
+#' A result data frame with operating characteristics estimates is plotted in a
 #' unified way.
 #'
 #' @param data A data frame of results.

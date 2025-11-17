@@ -57,7 +57,7 @@ boot_sample <- materialize_bootstrap_sample(boot_ids[[1]], my_data, "id")
 
 # Use with parallel processing - data is materialized on each worker
 library(furrr)
-plan(multisession, workers = 8)
+plan(callr)
 results <- future_map(boot_ids, function(ids) {
   boot_data <- materialize_bootstrap_sample(ids, my_data, "id")
   analyze_bootstrap(boot_data)
