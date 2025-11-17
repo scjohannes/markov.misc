@@ -19,7 +19,7 @@ prepare_markov_data(
 for death). Observations where \code{yprev} equals this value are removed.}
 
 \item{ordered_response}{Logical. Should \code{y} be converted to ordered factor?
-(default: TRUE). Required for clm and vglm, not requierd for orm.}
+(default: TRUE). Required for clm and vglm, not required for orm.}
 
 \item{factor_previous}{Logical. Should \code{yprev} be converted to factor?
 (default: TRUE).}
