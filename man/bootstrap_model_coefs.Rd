@@ -27,7 +27,7 @@ in the model formula.}
 \item{workers}{Number of workers used for parallelization. Default is
 parallel::detectCores() - 1}
 
-\item{parallel}{Whether parallelization should be used (default TRUE)}
+\item{parallel}{Whether parallelization should be used (default FALSE)}
 
 \item{id_var}{Name of the ID variable for group bootstrap (default "id")}
 }
@@ -40,13 +40,21 @@ iteration and contains:
 }
 }
 \description{
-Performs group bootstrap resampling to compute confidence intervals for all
-model parameters (intercepts and coefficients). This is a general-purpose
-bootstrap function that works with any \code{rms::orm} or \code{VGAM::vglm} model.
+Performs fast group bootstrap resampling to compute confidence intervals for
+all model parameters (intercepts and coefficients). This is a general-purpose
+bootstrap function that works with any \code{rms::orm} or \code{VGAM::vglm}
+model. Uses a custom fast bootstrap implementation that is dramatically
+faster than rsample::group_bootstraps() when working with many groups.
 }
 \details{
-Uses group bootstrap resampling (resampling by patient ID) to preserve the
-within-patient correlation structure. For each bootstrap iteration:
+Uses fast group bootstrap resampling (resampling by patient ID) to preserve
+the within-patient correlation structure. This implementation uses a
+memory-efficient just-in-time (JIT) approach that is dramatically faster and
+more scalable than rsample::group_bootstraps() for datasets with many groups.
+Memory usage scales with number of groups (not rows), making it feasible to
+bootstrap large datasets. See GitHub issue tidymodels/rsample#357 for details.
+
+For each bootstrap iteration:
 \enumerate{
 \item Extracts the bootstrap sample and creates unique IDs
 \item Relevels factor variables to handle missing levels (converts to consecutive integers)

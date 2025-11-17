@@ -42,5 +42,7 @@ utils::globalVariables(c(
   "coefs",
   "value",
   "upper",
-  "lower"
+  "lower",
+  "new_id",
+  "block_count"
 ))

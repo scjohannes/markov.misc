@@ -139,9 +139,9 @@ fit_markov_boot <- function(data, iter) {
       analysis = "markov",
       se_type = "boot",
       # Calculate bootstrap SE from confidence limits (approximate)
-      std_error = (upper - lower) / (2 * qnorm(0.975)),
-      statistic = estimate / std_error,
-      p_value = 2 * pnorm(-abs(statistic)),
+      std_error = NA_real_,
+      statistic = NA_real_,
+      p_value = NA_real_,
       conf_low = lower,
       conf_high = upper,
       .before = 1

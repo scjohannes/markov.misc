@@ -60,10 +60,12 @@ Each bootstrap iteration contributes 2 * length(times) rows (one set for
 treatment, one set for control).
 }
 \description{
-Performs group bootstrap resampling to compute confidence intervals for
+Performs fast group bootstrap resampling to compute confidence intervals for
 standardized state occupancy probabilities (SOPs) across all states and time
 points. Uses g-computation to estimate marginal (population-averaged) SOPs
-under treatment and control.
+under treatment and control. Uses a custom fast bootstrap implementation that
+is dramatically faster than rsample::group_bootstraps() when working with
+many groups.
 }
 \details{
 For each bootstrap iteration:
