@@ -9,7 +9,7 @@ taooh_bootstrap(
   data,
   n_boot,
   workers = NULL,
-  parallel = TRUE,
+  parallel = FALSE,
   ylevels = 1:6,
   absorb = 6,
   times = NULL,
@@ -29,7 +29,7 @@ model updating with bootstrap samples.}
 \item{workers}{Number of workers used for parallelization. Default is
 parallel::detectCores() - 1}
 
-\item{parallel}{Whether parallelization should be used (default TRUE)}
+\item{parallel}{Whether parallelization should be used (default FALSE)}
 
 \item{ylevels}{States in the data}
 
@@ -44,19 +44,31 @@ states, e.g., c(1, 2) to sum time across states 1 and 2.}
 \item{varnames}{List of variable names in the data}
 }
 \value{
-An rsample bootstrap object with an additional column containing the
-bootstrap estimates of time in target state(s)
+A tibble with columns:
+\itemize{
+\item id: Bootstrap iteration identifier (e.g., "Bootstrap01", "Bootstrap02", ...)
+\item models: List column containing the bootstrap estimates of time in target state(s)
+}
 }
 \description{
-Performs group bootstrap resampling and computes confidence intervals for the
-time spent in specified target state(s). Uses parallel computation via
-future.callr for efficiency.
+Performs fast group bootstrap resampling and computes confidence intervals for
+the time spent in specified target state(s). Uses a custom fast bootstrap
+implementation that is dramatically faster than rsample::group_bootstraps()
+when working with many groups (e.g., >500 patients).
 }
 \details{
-Uses group bootstrap resampling (resampling by patient ID) to preserve the
-within-patient correlation structure. For each bootstrap iteration:
+Uses fast group bootstrap resampling (resampling by patient ID) to preserve
+the within-patient correlation structure. This implementation uses a
+memory-efficient just-in-time (JIT) approach that is dramatically faster and
+more scalable than rsample::group_bootstraps() for datasets with many groups.
+Memory usage scales with number of groups (not rows), making it feasible to
+bootstrap large datasets (e.g., 250k rows, 1000 groups, 2000 bootstraps).
+See GitHub issue tidymodels/rsample#357 for details on the rsample performance issues.
+
+For each bootstrap iteration:
 \enumerate{
-\item Extracts the bootstrap sample and creates unique IDs
+\item Samples patient IDs with replacement using \code{\link{fast_group_bootstrap}}
+\item Creates unique IDs for resampled patients (e.g., "P001_1", "P001_2")
 \item Checks which states are present and relevels factors to consecutive integers
 \item Adjusts \code{ylevels} and \code{absorb} parameters if states are missing
 \item Updates the datadist in the global environment (safe with future.callr)

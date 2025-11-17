@@ -1,15 +1,17 @@
 #' Use bootstrap to compute confidence intervals for the time in target state(s)
 #'
-#' Performs group bootstrap resampling and computes confidence intervals for the
-#' time spent in specified target state(s). Uses parallel computation via
-#' future.callr for efficiency.
+#' Performs fast group bootstrap resampling and computes confidence intervals for
+#' the time spent in specified target state(s). Uses a custom fast bootstrap
+#' implementation that is dramatically faster than rsample::group_bootstraps()
+#' when working with many groups (e.g., >500 patients).
 #'
 #' @param model A fitted model object from \code{rms::orm} or \code{VGAM::vglm}.
 #'   For \code{orm}, should be fitted with \code{x = TRUE, y = TRUE} to enable
 #'   model updating with bootstrap samples.
 #' @param data A data frame containing the patient data
 #' @param n_boot Number of bootstrap samples
-#' @param workers Number of workers used for parallelization.
+#' @param workers Number of workers used for parallelization. Default is
+#'   parallel::detectCores() - 1
 #' @param parallel Whether parallelization should be used (default FALSE)
 #' @param ylevels States in the data
 #' @param absorb Absorbing state
@@ -19,14 +21,25 @@
 #'   states, e.g., c(1, 2) to sum time across states 1 and 2.
 #' @param varnames List of variable names in the data
 #'
-#' @return An rsample bootstrap object with an additional column containing the
-#'   bootstrap estimates of time in target state(s)
+#' @return A tibble with columns:
+#'   \itemize{
+#'     \item id: Bootstrap iteration identifier (e.g., "Bootstrap01", "Bootstrap02", ...)
+#'     \item models: List column containing the bootstrap estimates of time in target state(s)
+#'   }
 #'
 #' @details
-#' Uses group bootstrap resampling (resampling by patient ID) to preserve the
-#' within-patient correlation structure. For each bootstrap iteration:
+#' Uses fast group bootstrap resampling (resampling by patient ID) to preserve
+#' the within-patient correlation structure. This implementation uses a
+#' memory-efficient just-in-time (JIT) approach that is dramatically faster and
+#' more scalable than rsample::group_bootstraps() for datasets with many groups.
+#' Memory usage scales with number of groups (not rows), making it feasible to
+#' bootstrap large datasets (e.g., 250k rows, 1000 groups, 2000 bootstraps).
+#' See GitHub issue tidymodels/rsample#357 for details on the rsample performance issues.
+#'
+#' For each bootstrap iteration:
 #' \enumerate{
-#'   \item Extracts the bootstrap sample and creates unique IDs
+#'   \item Samples patient IDs with replacement using \code{\link{fast_group_bootstrap}}
+#'   \item Creates unique IDs for resampled patients (e.g., "P001_1", "P001_2")
 #'   \item Checks which states are present and relevels factors to consecutive integers
 #'   \item Adjusts \code{ylevels} and \code{absorb} parameters if states are missing
 #'   \item Updates the datadist in the global environment (safe with future.callr)
@@ -52,12 +65,8 @@
 #'
 #' @keywords bootstrap time alive and out of hospital
 #'
-#' @importFrom rsample group_bootstraps analysis
-#' @importFrom future.callr callr
-#' @importFrom future plan
-#' @importFrom furrr future_map
-#' @importFrom rms datadist
-#' @importFrom stats ave update
+#' @importFrom tibble tibble
+#' @importFrom stats update
 #'
 #' @examples
 #' \dontrun{
@@ -108,135 +117,102 @@ taooh_bootstrap <- function(
     )
   }
 
-  # Bootstrap samples
-  resample <- group_bootstraps(
-    data,
-    group = id,
-    times = n_boot,
-    apparent = FALSE
-  )
-
-  # Arguments
-  if (is.null(workers)) {
-    workers <- parallel::detectCores() - 1
-  }
-
+  # Set times if not provided
   if (is.null(times)) {
     times <- 1:max(data[[varnames$tvarname]])
   }
 
-  # Apply the taooh() function to the bootstrap samples in parallel.
-  if (parallel) {
-    plan(callr, workers = workers)
-  } else {
-    plan("sequential")
-  }
+  # Generate bootstrap ID samples using fast helper (memory-efficient JIT approach)
+  boot_ids <- fast_group_bootstrap(
+    data = data,
+    id_var = varnames$id,
+    n_boot = n_boot
+  )
 
-  bs_SOP <- resample |>
-    dplyr::mutate(
-      models = future_map(
-        splits,
-        \(.x) {
-          # Extract bootstrap sample
-          boot_data <- analysis(.x)
-
-          # Define new id variable (unique to each bootstrap draw)
-          boot_data$block_count <- ave(
-            boot_data[[varnames$id]],
-            boot_data[[varnames$id]],
-            boot_data[[varnames$tvarname]],
-            FUN = seq_along
-          )
-          boot_data$new_id <- factor(paste(
-            boot_data[[varnames$id]],
-            boot_data$block_count,
-            sep = "_"
-          ))
-
-          # Handle missing states in bootstrap sample by releveling
-          # Use relevel_factors_consecutive helper function
-          releveled <- relevel_factors_consecutive(
-            data = boot_data,
-            factor_cols = c("y", varnames$pvarname),
-            original_data = data,
-            ylevels = ylevels,
-            absorb = absorb
-          )
-
-          boot_data <- releveled$data
-          boot_ylevels <- releveled$ylevels
-          boot_absorb <- releveled$absorb
-
-          # Update datadist and assign to global environment
-          # This works because we use future.callr which has isolated processes
-          # Only needed for orm models (current implementation only supports orm)
-          dd <- rms::datadist(boot_data)
-          assign("dd", dd, envir = .GlobalEnv)
-          options(datadist = "dd")
-
-          # Refit model with bootstrap data
-          m_boot <- tryCatch(
-            update(model, data = boot_data),
-            error = function(e) {
-              warning("Bootstrap iteration failed: ", e$message)
-              return(NULL)
-            }
-          )
-
-          # Calculate taooh with refitted model
-          if (!is.null(m_boot)) {
-            tryCatch(
-              taooh(
-                model = m_boot,
-                data = boot_data,
-                times = times,
-                ylevels = boot_ylevels,
-                absorb = boot_absorb,
-                target_states = target_states,
-                varnames = list(
-                  tvarname = varnames$tvarname,
-                  pvarname = varnames$pvarname,
-                  id = "new_id", # Use the new_id for bootstrap samples
-                  tx = varnames$tx
-                )
-              )[1],
-              error = function(e) {
-                warning("taooh calculation failed: ", e$message)
-                return(NA_real_)
-              }
-            )
-          } else {
-            return(NA_real_)
-          }
-        },
-        .options = furrr::furrr_options(
-          packages = c("rms", "Hmisc", "stats", "dplyr"),
-          globals = c(
-            "relevel_factors_consecutive",
-            "taooh",
-            "model",
-            "data",
-            "times",
-            "ylevels",
-            "absorb",
-            "target_states",
-            "varnames"
-          )
-        )
-      )
+  # Define analysis function
+  analysis_fn <- function(boot_data) {
+    # Relevel factors and refit model
+    boot_result <- bootstrap_analysis_wrapper(
+      boot_data = boot_data,
+      model = model,
+      factor_cols = c("y", varnames$pvarname),
+      original_data = data,
+      ylevels = ylevels,
+      absorb = absorb,
+      update_datadist = TRUE
     )
 
-  plan("sequential")
+    m_boot <- boot_result$model
+    boot_data <- boot_result$data
+    boot_ylevels <- boot_result$ylevels
+    boot_absorb <- boot_result$absorb
 
-  return(bs_SOP)
+    # Calculate taooh with refitted model
+    if (!is.null(m_boot)) {
+      tryCatch(
+        taooh(
+          model = m_boot,
+          data = boot_data,
+          times = times,
+          ylevels = boot_ylevels,
+          absorb = boot_absorb,
+          target_states = target_states,
+          varnames = list(
+            tvarname = varnames$tvarname,
+            pvarname = varnames$pvarname,
+            id = "new_id",
+            tx = varnames$tx
+          )
+        )[1],
+        error = function(e) {
+          warning("taooh calculation failed: ", e$message)
+          return(NA_real_)
+        }
+      )
+    } else {
+      return(NA_real_)
+    }
+  }
+
+  # Apply analysis function to bootstrap samples with JIT materialization
+  bs_estimates <- apply_to_bootstrap(
+    boot_samples = boot_ids,
+    analysis_fn = analysis_fn,
+    data = data,
+    id_var = varnames$id,
+    parallel = parallel,
+    workers = workers,
+    packages = c("rms", "Hmisc", "stats", "dplyr"),
+    globals = c(
+      "bootstrap_analysis_wrapper",
+      "relevel_factors_consecutive",
+      "taooh",
+      "model",
+      "times",
+      "ylevels",
+      "absorb",
+      "target_states",
+      "varnames"
+    )
+  )
+
+  # Create result tibble matching original format
+  result <- tibble::tibble(
+    id = paste0("Bootstrap", sprintf("%02d", seq_len(n_boot))),
+    models = bs_estimates
+  )
+
+  return(result)
 }
 
 
 #' Bootstrap confidence intervals for model coefficients
 #'
-#' Performs group bootstrap resampling to compute confidence intervals for all
-#' model parameters (intercepts and coefficients). This is a general-purpose
-#' bootstrap function that works with any \code{rms::orm} or \code{VGAM::vglm} model.
+#' Performs fast group bootstrap resampling to compute confidence intervals for
+#' all model parameters (intercepts and coefficients). This is a general-purpose
+#' bootstrap function that works with any \code{rms::orm} or \code{VGAM::vglm}
+#' model. Uses a custom fast bootstrap implementation that is dramatically
+#' faster than rsample::group_bootstraps() when working with many groups.
 #'
 #' @param model A fitted model object from \code{rms::orm} or \code{VGAM::vglm}.
 #'   For \code{orm}, should be fitted with \code{x = TRUE, y = TRUE} to enable
@@ -247,7 +223,7 @@ taooh_bootstrap <- function(
 #' @param n_boot Number of bootstrap samples
 #' @param workers Number of workers used for parallelization. Default is
 #'   parallel::detectCores() - 1
-#' @param parallel Whether parallelization should be used (default TRUE)
+#' @param parallel Whether parallelization should be used (default FALSE)
 #' @param id_var Name of the ID variable for group bootstrap (default "id")
 #'
 #' @return A tibble with bootstrap results. Each row represents one bootstrap
@@ -258,8 +234,14 @@ taooh_bootstrap <- function(
 #'   }
 #'
 #' @details
-#' Uses group bootstrap resampling (resampling by patient ID) to preserve the
-#' within-patient correlation structure. For each bootstrap iteration:
+#' Uses fast group bootstrap resampling (resampling by patient ID) to preserve
+#' the within-patient correlation structure. This implementation uses a
+#' memory-efficient just-in-time (JIT) approach that is dramatically faster and
+#' more scalable than rsample::group_bootstraps() for datasets with many groups.
+#' Memory usage scales with number of groups (not rows), making it feasible to
+#' bootstrap large datasets. See GitHub issue tidymodels/rsample#357 for details.
+#'
+#' For each bootstrap iteration:
 #' \enumerate{
 #'   \item Extracts the bootstrap sample and creates unique IDs
 #'   \item Relevels factor variables to handle missing levels (converts to consecutive integers)
@@ -285,15 +267,9 @@ taooh_bootstrap <- function(
 #'
 #' @keywords bootstrap coefficients confidence intervals
 #'
-#' @importFrom rsample group_bootstraps analysis
-#' @importFrom future.callr callr
-#' @importFrom future plan
-#' @importFrom furrr future_map
-#' @importFrom rms datadist
-#' @importFrom stats ave update coef
-#' @importFrom dplyr select row_number mutate
+#' @importFrom tibble tibble
+#' @importFrom stats update coef
 #' @importFrom tidyr unnest_wider
-#' @importFrom rlang sym
 #'
 #' @examples
 #' \dontrun{
@@ -355,98 +331,62 @@ bootstrap_model_coefs <- function(
     )
   }
 
-  # Bootstrap samples
-  resample <- group_bootstraps(
-    data,
-    group = !!rlang::sym(id_var),
-    times = n_boot,
-    apparent = FALSE
+  # Identify factor columns
+  factor_cols <- names(data)[sapply(data, is.factor)]
+
+  # Generate bootstrap ID samples using fast helper (memory-efficient JIT approach)
+  boot_ids <- fast_group_bootstrap(
+    data = data,
+    id_var = id_var,
+    n_boot = n_boot
   )
 
-  # Arguments
-  if (is.null(workers)) {
-    workers <- parallel::detectCores() - 1
-  }
-
-  # Apply bootstrap in parallel
-  if (parallel) {
-    plan(callr, workers = workers)
-  } else {
-    plan("sequential")
-  }
-
-  bs_coefs <- resample |>
-    dplyr::mutate(
-      boot_id = dplyr::row_number(),
-      coefs = future_map(
-        splits,
-        \(.x) {
-          # Extract bootstrap sample
-          boot_data <- analysis(.x)
-
-          # Define new id variable (unique to each bootstrap draw)
-          boot_data$block_count <- ave(
-            boot_data[[id_var]],
-            boot_data[[id_var]],
-            FUN = seq_along
-          )
-          boot_data$new_id <- factor(paste(
-            boot_data[[id_var]],
-            boot_data$block_count,
-            sep = "_"
-          ))
-
-          # Handle missing factor levels by releveling to consecutive values
-          # Identify factor columns in original data
-          factor_cols <- names(data)[sapply(data, is.factor)]
-
-          # Use relevel_factors_consecutive helper for numeric factors
-          releveled <- relevel_factors_consecutive(
-            data = boot_data,
-            factor_cols = factor_cols,
-            original_data = data,
-            ylevels = NULL,
-            absorb = NULL
-          )
-
-          boot_data <- releveled$data
-
-          # Update datadist only for orm models
-          # This works because we use future.callr which has isolated processes
-          if (inherits(model, "orm")) {
-            dd <- rms::datadist(boot_data)
-            assign("dd", dd, envir = .GlobalEnv)
-            options(datadist = "dd")
-          }
-
-          # Refit model with bootstrap data
-          m_boot <- tryCatch(
-            update(model, data = boot_data),
-            error = function(e) {
-              warning("Bootstrap iteration failed: ", e$message)
-              return(NULL)
-            }
-          )
-
-          # Extract coefficients
-          if (!is.null(m_boot)) {
-            coefs <- coef(m_boot)
-            return(as.list(coefs))
-          } else {
-            return(NULL)
-          }
-        },
-        .options = furrr::furrr_options(
-          packages = c("rms", "VGAM", "stats", "dplyr"),
-          globals = c("relevel_factors_consecutive", "model", "data", "id_var")
-        )
-      )
+  # Define analysis function
+  analysis_fn <- function(boot_data) {
+    # Relevel factors and refit model
+    boot_result <- bootstrap_analysis_wrapper(
+      boot_data = boot_data,
+      model = model,
+      factor_cols = factor_cols,
+      original_data = data,
+      ylevels = NULL,
+      absorb = NULL,
+      update_datadist = inherits(model, "orm")
     )
-  plan("sequential")
 
-  # Unnest the coefficients into columns
-  result <- bs_coefs |>
-    dplyr::select(boot_id, coefs) |>
+    m_boot <- boot_result$model
+
+    # Extract coefficients
+    if (!is.null(m_boot)) {
+      coefs <- coef(m_boot)
+      return(as.list(coefs))
+    } else {
+      return(NULL)
+    }
+  }
+
+  # Apply analysis function to bootstrap samples with JIT materialization
+  bs_coefs_list <- apply_to_bootstrap(
+    boot_samples = boot_ids,
+    analysis_fn = analysis_fn,
+    data = data,
+    id_var = id_var,
+    parallel = parallel,
+    workers = workers,
+    packages = c("rms", "VGAM", "stats", "dplyr"),
+    globals = c(
+      "bootstrap_analysis_wrapper",
+      "relevel_factors_consecutive",
+      "model",
+      "factor_cols"
+    )
+  )
+
+  # Convert to tibble with boot_id and unnest coefficients
+  result <- tibble::tibble(
+    boot_id = seq_len(n_boot),
+    coefs = bs_coefs_list
+  ) |>
     tidyr::unnest_wider(coefs)
 
   return(result)
@@ -455,10 +395,12 @@ bootstrap_model_coefs <- function(
 
 #' Bootstrap confidence intervals for standardized state occupancy probabilities
 #'
-#' Performs group bootstrap resampling to compute confidence intervals for
+#' Performs fast group bootstrap resampling to compute confidence intervals for
 #' standardized state occupancy probabilities (SOPs) across all states and time
 #' points. Uses g-computation to estimate marginal (population-averaged) SOPs
-#' under treatment and control.
+#' under treatment and control. Uses a custom fast bootstrap implementation that
+#' is dramatically faster than rsample::group_bootstraps() when working with
+#' many groups.
 #'
 #' @param model A fitted model object from \code{rms::orm} or \code{VGAM::vglm}.
 #'   For \code{orm}, should be fitted with \code{x = TRUE, y = TRUE} to enable
@@ -532,16 +474,9 @@ bootstrap_model_coefs <- function(
 #'
 #' @keywords bootstrap standardization state occupancy g-computation
 #'
-#' @importFrom rsample group_bootstraps analysis
-#' @importFrom future.callr callr
-#' @importFrom future plan
-#' @importFrom furrr future_map furrr_options
-#' @importFrom rms datadist
-#' @importFrom stats ave update
-#' @importFrom dplyr mutate select row_number bind_rows filter
-#' @importFrom tidyr pivot_longer starts_with
 #' @importFrom tibble as_tibble
-#' @importFrom rlang sym
+#' @importFrom stats update
+#' @importFrom dplyr select bind_rows
 #'
 #' @examples
 #' \dontrun{
@@ -611,19 +546,6 @@ bootstrap_standardized_sops <- function(
     )
   }
 
-  # Bootstrap samples
-  resample <- group_bootstraps(
-    data,
-    group = !!rlang::sym(varnames$id),
-    times = n_boot,
-    apparent = FALSE
-  )
-
-  # Set up workers
-  if (is.null(workers)) {
-    workers <- parallel::detectCores() - 1
-  }
-
   # Set times if not provided
   if (is.null(times)) {
     times <- 1:max(data[[varnames$tvarname]])
@@ -632,149 +554,120 @@ bootstrap_standardized_sops <- function(
   n_times <- length(times)
   n_states <- length(ylevels)
 
-  # Apply bootstrap in parallel
-  if (parallel) {
-    plan(callr, workers = workers)
-  } else {
-    plan("sequential")
-  }
+  # Generate bootstrap ID samples using fast helper (memory-efficient JIT approach)
+  boot_ids <- fast_group_bootstrap(
+    data = data,
+    id_var = varnames$id,
+    n_boot = n_boot
+  )
 
-  bs_results <- resample |>
-    dplyr::mutate(
-      boot_id = dplyr::row_number(),
-      sops = future_map(
-        splits,
-        \(.x) {
-          # Extract bootstrap sample
-          boot_data <- analysis(.x)
-
-          # Define new id variable (unique to each bootstrap draw)
-          boot_data$block_count <- ave(
-            boot_data[[varnames$id]],
-            boot_data[[varnames$id]],
-            boot_data[[varnames$tvarname]],
-            FUN = seq_along
-          )
-          boot_data$new_id <- factor(paste(
-            boot_data[[varnames$id]],
-            boot_data$block_count,
-            sep = "_"
-          ))
-
-          # Relevel factors to handle missing states
-          releveled <- relevel_factors_consecutive(
-            data = boot_data,
-            factor_cols = c("y", varnames$pvarname),
-            original_data = data,
-            ylevels = ylevels,
-            absorb = absorb
-          )
-
-          boot_data <- releveled$data
-          boot_ylevels <- releveled$ylevels
-          boot_absorb <- releveled$absorb
-          missing_states <- releveled$missing_levels
-
-          # Get states present in original numbering (for mapping back later)
-          states_present <- setdiff(ylevels, as.numeric(missing_states))
-
-          # Update datadist
-          dd <- rms::datadist(boot_data)
-          assign("dd", dd, envir = .GlobalEnv)
-          options(datadist = "dd")
-
-          # Refit model
-          m_boot <- tryCatch(
-            update(model, data = boot_data),
-            error = function(e) {
-              warning("Bootstrap iteration failed: ", e$message)
-              return(NULL)
-            }
-          )
-
-          if (is.null(m_boot)) {
-            return(NULL)
-          }
-
-          # Compute standardized SOPs on releveled states
-          sop_result <- tryCatch(
-            standardize_sops(
-              model = m_boot,
-              data = boot_data,
-              times = times,
-              ylevels = boot_ylevels,
-              absorb = boot_absorb,
-              varnames = list(
-                tvarname = varnames$tvarname,
-                pvarname = varnames$pvarname,
-                id = "new_id",
-                tx = varnames$tx
-              )
-            ),
-            error = function(e) {
-              warning("standardize_sops failed: ", e$message)
-              return(NULL)
-            }
-          )
-
-          if (is.null(sop_result)) {
-            return(NULL)
-          }
-
-          # Expand back to original state space with zeros for missing states
-          if (length(missing_states) > 0) {
-            # Initialize full matrices with zeros
-            sop_tx_full <- matrix(0, nrow = n_times, ncol = n_states)
-            sop_ctrl_full <- matrix(0, nrow = n_times, ncol = n_states)
-            colnames(sop_tx_full) <- as.character(ylevels)
-            colnames(sop_ctrl_full) <- as.character(ylevels)
-
-            # Fill in states that were present
-            for (i in seq_along(states_present)) {
-              original_state <- states_present[i]
-              sop_tx_full[, as.character(original_state)] <- sop_result$sop_tx[,
-                i
-              ]
-              sop_ctrl_full[, as.character(
-                original_state
-              )] <- sop_result$sop_ctrl[, i]
-            }
-
-            return(list(
-              sop_tx = sop_tx_full,
-              sop_ctrl = sop_ctrl_full
-            ))
-          } else {
-            # All states present - return as is
-            return(sop_result)
-          }
-        },
-        .options = furrr::furrr_options(
-          packages = c("rms", "VGAM", "Hmisc", "dplyr", "stats"),
-          globals = c(
-            "standardize_sops",
-            "relevel_factors_consecutive",
-            "model",
-            "data",
-            "times",
-            "ylevels",
-            "absorb",
-            "varnames",
-            "n_times",
-            "n_states"
-          )
-        )
-      )
+  # Define analysis function
+  analysis_fn <- function(boot_data) {
+    # Relevel factors and refit model
+    boot_result <- bootstrap_analysis_wrapper(
+      boot_data = boot_data,
+      model = model,
+      factor_cols = c("y", varnames$pvarname),
+      original_data = data,
+      ylevels = ylevels,
+      absorb = absorb,
+      update_datadist = TRUE
     )
 
-  plan("sequential")
+    m_boot <- boot_result$model
+    boot_data <- boot_result$data
+    boot_ylevels <- boot_result$ylevels
+    boot_absorb <- boot_result$absorb
+    missing_states <- boot_result$missing_states
+
+    if (is.null(m_boot)) {
+      return(NULL)
+    }
+
+    # Get states present in original numbering (for mapping back later)
+    states_present <- setdiff(ylevels, as.numeric(missing_states))
+
+    # Compute standardized SOPs on releveled states
+    sop_result <- tryCatch(
+      standardize_sops(
+        model = m_boot,
+        data = boot_data,
+        times = times,
+        ylevels = boot_ylevels,
+        absorb = boot_absorb,
+        varnames = list(
+          tvarname = varnames$tvarname,
+          pvarname = varnames$pvarname,
+          id = "new_id",
+          tx = varnames$tx
+        )
+      ),
+      error = function(e) {
+        warning("standardize_sops failed: ", e$message)
+        return(NULL)
+      }
+    )
+
+    if (is.null(sop_result)) {
+      return(NULL)
+    }
+
+    # Expand back to original state space with zeros for missing states
+    if (length(missing_states) > 0) {
+      # Initialize full matrices with zeros
+      sop_tx_full <- matrix(0, nrow = n_times, ncol = n_states)
+      sop_ctrl_full <- matrix(0, nrow = n_times, ncol = n_states)
+      colnames(sop_tx_full) <- as.character(ylevels)
+      colnames(sop_ctrl_full) <- as.character(ylevels)
+
+      # Fill in states that were present
+      for (i in seq_along(states_present)) {
+        original_state <- states_present[i]
+        sop_tx_full[, as.character(original_state)] <- sop_result$sop_tx[, i]
+        sop_ctrl_full[, as.character(original_state)] <- sop_result$sop_ctrl[,
+          i
+        ]
+      }
+
+      return(list(
+        sop_tx = sop_tx_full,
+        sop_ctrl = sop_ctrl_full
+      ))
+    } else {
+      # All states present - return as is
+      return(sop_result)
+    }
+  }
+
+  # Apply analysis function to bootstrap samples with JIT materialization
+  sop_results <- apply_to_bootstrap(
+    boot_samples = boot_ids,
+    analysis_fn = analysis_fn,
+    data = data,
+    id_var = varnames$id,
+    parallel = parallel,
+    workers = workers,
+    packages = c("rms", "VGAM", "Hmisc", "dplyr", "stats"),
+    globals = c(
+      "bootstrap_analysis_wrapper",
+      "relevel_factors_consecutive",
+      "standardize_sops",
+      "model",
+      "times",
+      "ylevels",
+      "absorb",
+      "varnames",
+      "n_times",
+      "n_states"
+    )
+  )
 
   # Extract and reshape results into long format
   # Format: boot_id | time | tx | state_1 | state_2 | ... | state_k
   result_list <- list()
 
-  for (i in seq_len(nrow(bs_results))) {
-    sop_i <- bs_results$sops[[i]]
+  for (i in seq_along(sop_results)) {
+    sop_i <- sop_results[[i]]
 
     if (!is.null(sop_i)) {
       # Convert treatment SOPs to tibble with time and state columns
@@ -782,14 +675,14 @@ bootstrap_standardized_sops <- function(
       colnames(tx_df) <- paste0("state_", ylevels)
       tx_df$time <- times
       tx_df$tx <- 1
-      tx_df$boot_id <- bs_results$boot_id[i]
+      tx_df$boot_id <- i
 
       # Convert control SOPs to tibble with time and state columns
       ctrl_df <- tibble::as_tibble(sop_i$sop_ctrl)
       colnames(ctrl_df) <- paste0("state_", ylevels)
       ctrl_df$time <- times
       ctrl_df$tx <- 0
-      ctrl_df$boot_id <- bs_results$boot_id[i]
+      ctrl_df$boot_id <- i
 
       # Combine treatment and control
       result_list[[i]] <- dplyr::bind_rows(tx_df, ctrl_df)

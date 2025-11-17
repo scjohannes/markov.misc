@@ -23,7 +23,7 @@ plot_results(data, ..., x, group, ggplot_options = list(), combine = TRUE)
 A ggplot list and optionally a patchwork object
 }
 \description{
-A result data frame with operating characteristic estimates is plotted in a
+A result data frame with operating chracteristic estimates is plotted in a
 unified way.
 }
 \details{
