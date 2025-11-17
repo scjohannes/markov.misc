@@ -9,9 +9,8 @@
 #'   model updating with bootstrap samples.
 #' @param data A data frame containing the patient data
 #' @param n_boot Number of bootstrap samples
-#' @param workers Number of workers used for parallelization. Default is
-#'   parallel::detectCores() - 1
-#' @param parallel Whether parallelization should be used (default TRUE)
+#' @param workers Number of workers used for parallelization.
+#' @param parallel Whether parallelization should be used (default FALSE)
 #' @param ylevels States in the data
 #' @param absorb Absorbing state
 #' @param times Time points in the data. Default is \code{1:max(data[["time"]])}
@@ -95,7 +94,7 @@ taooh_bootstrap <- function(
   data,
   n_boot,
   workers = NULL,
-  parallel = TRUE,
+  parallel = FALSE,
   ylevels = 1:6,
   absorb = 6,
   times = NULL,
