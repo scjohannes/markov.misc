@@ -1,3 +1,166 @@
+#' Relevel Factors to Consecutive Integers
+#'
+#' Handles missing factor levels in data by releveling ordered factors to
+#' consecutive integers. This is useful when bootstrap samples or subsets
+#' are missing certain levels, which can cause model fitting failures.
+#'
+#' @param data A data frame containing the data to relevel.
+#' @param factor_cols Character vector of column names to relevel. Only columns
+#'   that are factors with numeric-coercible levels will be releveled.
+#' @param original_data Optional data frame containing the original data before
+#'   subsetting. Used to determine which levels are present in the full dataset.
+#' @param ylevels Optional integer vector of original state levels (e.g., 1:6).
+#'   If provided along with absorb, these will be updated to match the new levels.
+#' @param absorb Optional integer specifying the absorbing state in the original
+#'   levels. Will be updated to the new position if provided.
+#'
+#' @return A list with components:
+#'   - data: The data frame with releveled factors
+#'   - ylevels: Updated ylevels (if provided as input), or NULL
+#'   - absorb: Updated absorb (if provided as input), or NULL
+#'   - missing_levels: Character vector of levels that were missing
+#'
+#' @details
+#' When certain factor levels are absent from a dataset (e.g., in bootstrap
+#' samples), this function:
+#' 1. Identifies which levels are present
+#' 2. Creates a mapping from old to new consecutive integers
+#' 3. Relevels the specified factor columns
+#' 4. Updates ylevels and absorb parameters if provided
+#'
+#' This is particularly useful for ordered factors representing health states
+#' in Markov models, where missing states would otherwise cause model fitting
+#' failures.
+#'
+#' @examples
+#' \dontrun{
+#' # Relevel y and yprev in bootstrap sample
+#' releveled <- relevel_factors_consecutive(
+#'   data = boot_data,
+#'   factor_cols = c("y", "yprev"),
+#'   original_data = full_data,
+#'   ylevels = 1:6,
+#'   absorb = 6
+#' )
+#'
+#' boot_data <- releveled$data
+#' boot_ylevels <- releveled$ylevels
+#' boot_absorb <- releveled$absorb
+#' }
+#'
+#' @export
+relevel_factors_consecutive <- function(
+  data,
+  factor_cols = c("y", "yprev"),
+  original_data = NULL,
+  ylevels = NULL,
+  absorb = NULL
+) {
+  # Determine original levels
+  if (!is.null(original_data)) {
+    original_levels <- sort(unique(unlist(lapply(
+      factor_cols,
+      function(col) {
+        if (col %in% names(original_data)) {
+          if (is.factor(original_data[[col]])) {
+            as.numeric(levels(original_data[[col]]))
+          } else {
+            unique(original_data[[col]])
+          }
+        }
+      }
+    ))))
+  } else if (!is.null(ylevels)) {
+    original_levels <- ylevels
+  } else {
+    # Infer from data
+    original_levels <- sort(unique(unlist(lapply(
+      factor_cols,
+      function(col) {
+        if (col %in% names(data)) {
+          unique(data[[col]])
+        }
+      }
+    ))))
+  }
+
+  # Get levels present in current data
+  states_present <- sort(unique(unlist(lapply(
+    factor_cols,
+    function(col) {
+      if (col %in% names(data)) {
+        if (is.factor(data[[col]])) {
+          as.numeric(as.character(data[[col]]))
+        } else {
+          unique(data[[col]])
+        }
+      }
+    }
+  ))))
+
+  missing_levels <- setdiff(original_levels, states_present)
+
+  # If no levels are missing, return data as-is
+  if (length(missing_levels) == 0) {
+    return(list(
+      data = data,
+      ylevels = ylevels,
+      absorb = absorb,
+      missing_levels = character(0)
+    ))
+  }
+
+  # Create mapping from old to new state numbers
+  state_mapping <- setNames(seq_along(states_present), states_present)
+
+  # Relevel each factor column
+  for (col in factor_cols) {
+    if (col %in% names(data)) {
+      # Convert to numeric if factor
+      if (is.factor(data[[col]])) {
+        data[[col]] <- as.numeric(as.character(data[[col]]))
+      }
+
+      # Apply mapping
+      data[[col]] <- state_mapping[as.character(data[[col]])]
+
+      # Convert back to factor with new levels
+      data[[col]] <- factor(data[[col]], levels = seq_along(states_present))
+    }
+  }
+
+  # Update ylevels if provided
+  new_ylevels <- if (!is.null(ylevels)) {
+    seq_along(states_present)
+  } else {
+    NULL
+  }
+
+  # Update absorbing state if provided and present
+  new_absorb <- if (!is.null(absorb)) {
+    if (absorb %in% states_present) {
+      state_mapping[as.character(absorb)]
+    } else {
+      warning(
+        "Absorbing state ",
+        absorb,
+        " not present in data. Set to NULL."
+      )
+      NULL
+    }
+  } else {
+    NULL
+  }
+
+  return(list(
+    data = data,
+    ylevels = new_ylevels,
+    absorb = new_absorb,
+    missing_levels = as.character(missing_levels)
+  ))
+}
+
+
 #' Calculate Jackknife Monte Carlo Standard Error
 #'
 #' Computes the Monte Carlo standard error (MCSE) of a statistic using the
@@ -206,7 +369,6 @@ states_to_drs <- function(
 }
 
 
-
 #' Convert State Trajectory Data to Time-to-event data
 #'
 #' This function calculates time-to-event for usage in Cox or recurrent event
@@ -248,8 +410,8 @@ states_to_drs <- function(
 #'
 #' @export
 states_to_tte <- function(
-    data,
-    covariates = c("age", "sofa")
+  data,
+  covariates = c("age", "sofa")
 ) {
   # Input validation
   required_cols <- c("id", "time", "y", "tx")
@@ -259,8 +421,9 @@ states_to_tte <- function(
   }
 
   # Calculate Andersen-Gill count data format
-  data$state_change <- ave(data[["y"]], data[["id"]],
-                           FUN = function(x) c(0, diff(x)))
+  data$state_change <- ave(data[["y"]], data[["id"]], FUN = function(x) {
+    c(0, diff(x))
+  })
 
   data <- data[data$state_change != 0, ]
 
@@ -271,15 +434,17 @@ states_to_tte <- function(
   # Add covariates if specified
   if (!is.null(covariates)) {
     available_covs <- intersect(covariates, colnames(data))
-    data <- data[, colnames(data) %in% c(
-      c("id", "y", "tx", "start", "stop", "yprev"),
-      available_covs)
+    data <- data[,
+      colnames(data) %in%
+        c(
+          c("id", "y", "tx", "start", "stop", "yprev"),
+          available_covs
+        )
     ]
   }
 
   return(result = data)
 }
-
 
 
 #' Calculate Difference in Time Alive and Out Of Hospital
@@ -384,4 +549,204 @@ calc_time_in_state_diff <- function(data, target_state = 1) {
     tx1_mean_time = tx1_mean,
     tx1_sd_time = tx1_sd
   ))
+}
+
+
+#' Tidy Bootstrap Coefficient Estimates
+#'
+#' Summarizes bootstrap coefficient estimates by computing confidence intervals
+#' and point estimates. Typically used with output from
+#' \code{\link{bootstrap_model_coefs}}.
+#'
+#' @param boot_coefs A data frame or tibble containing bootstrap coefficient
+#'   estimates, typically the output from \code{\link{bootstrap_model_coefs}}.
+#'   Should have a column for bootstrap iteration ID (default: "boot_id") and
+#'   one column per model coefficient.
+#' @param id_col Name of the column containing bootstrap iteration IDs
+#'   (default: "boot_id"). This column will be excluded from the summary.
+#' @param probs Numeric vector of length 2 specifying the lower and upper
+#'   quantiles for confidence intervals. Default is c(0.025, 0.975) for 95% CI.
+#'   Can be changed to other levels, e.g., c(0.05, 0.95) for 90% CI.
+#' @param estimate Character string specifying the point estimate to use:
+#'   "median" (default), "mean", or NULL to omit point estimate. This is
+#'   computed separately from the quantiles in \code{probs}.
+#' @param na.rm Logical indicating whether to remove NA values before computing
+#'   statistics. Default is FALSE, which will result in NA output if any
+#'   bootstrap iteration failed. Set to TRUE to compute statistics on
+#'   non-missing values only.
+#'
+#' @return A tibble with one row per coefficient containing:
+#'   \itemize{
+#'     \item term: Coefficient name
+#'     \item estimate: Point estimate (median or mean, if requested)
+#'     \item lower: Lower confidence limit (first value in \code{probs})
+#'     \item upper: Upper confidence limit (second value in \code{probs})
+#'   }
+#'
+#' @details
+#' This function computes quantile-based confidence intervals from bootstrap
+#' coefficient estimates. The default settings provide:
+#' \itemize{
+#'   \item Median as point estimate
+#'   \item 2.5th percentile as lower bound
+#'   \item 97.5th percentile as upper bound
+#' }
+#'
+#' This corresponds to the percentile bootstrap confidence interval method,
+#' which is appropriate when the bootstrap distribution is roughly symmetric
+#' and unbiased.
+#'
+#' For highly skewed or biased bootstrap distributions, consider using
+#' bias-corrected and accelerated (BCa) intervals instead (not currently
+#' implemented in this function).
+#'
+#' **Usage with assess_operating_characteristics()**: When using this function
+#' within fitting functions for \code{\link{assess_operating_characteristics}},
+#' you'll need to add additional columns and rename \code{lower}/\code{upper}
+#' to \code{conf_low}/\code{conf_high}. See examples below.
+#'
+#' @examples
+#' \dontrun{
+#' # After running bootstrap
+#' boot_coefs <- bootstrap_model_coefs(
+#'   model = m,
+#'   data = my_data,
+#'   n_boot = 1000
+#' )
+#'
+#' # Get 95% CI with median
+#' tidy_boot <- tidy_bootstrap_coefs(boot_coefs)
+#'
+#' # Get 90% CI with mean
+#' tidy_boot <- tidy_bootstrap_coefs(
+#'   boot_coefs,
+#'   probs = c(0.05, 0.95),
+#'   estimate = "mean"
+#' )
+#'
+#' # Get 99% CI with median
+#' tidy_boot <- tidy_bootstrap_coefs(
+#'   boot_coefs,
+#'   probs = c(0.005, 0.995)
+#' )
+#'
+#' # Remove NA values if some bootstrap iterations failed
+#' tidy_boot <- tidy_bootstrap_coefs(
+#'   boot_coefs,
+#'   na.rm = TRUE
+#' )
+#'
+#' # Format for assess_operating_characteristics()
+#' tidy_boot <- tidy_bootstrap_coefs(
+#'   boot_coefs,
+#'   probs = c(0.025, 0.975),
+#'   estimate = "median"
+#' ) |>
+#'   mutate(
+#'     iter = 1,
+#'     analysis = "markov",
+#'     se_type = "boot",
+#'     std_error = NULL,
+#'     statistic = NULL,
+#'     p_value = NULL,
+#'     conf_low = lower,
+#'     conf_high = upper,
+#'     .before = 1
+#'   ) |>
+#'   select(iter, analysis, se_type, term, estimate, std_error,
+#'          statistic, p_value, conf_low, conf_high)
+#' }
+#'
+#' @importFrom dplyr select across summarise everything
+#' @importFrom tidyr pivot_longer
+#' @importFrom stats quantile median
+#'
+#' @export
+tidy_bootstrap_coefs <- function(
+  boot_coefs,
+  id_col = "boot_id",
+  probs = c(0.025, 0.975),
+  estimate = "median",
+  na.rm = FALSE
+) {
+  # Input validation
+  if (!is.data.frame(boot_coefs)) {
+    stop("boot_coefs must be a data frame or tibble")
+  }
+
+  if (!id_col %in% names(boot_coefs)) {
+    stop("id_col '", id_col, "' not found in boot_coefs")
+  }
+
+  if (
+    !is.numeric(probs) || length(probs) != 2 || any(probs < 0) || any(probs > 1)
+  ) {
+    stop(
+      "probs must be a numeric vector of length 2 with values between 0 and 1"
+    )
+  }
+
+  if (!is.null(estimate) && !estimate %in% c("median", "mean")) {
+    stop("estimate must be 'median', 'mean', or NULL")
+  }
+
+  if (!is.logical(na.rm) || length(na.rm) != 1) {
+    stop("na.rm must be a single logical value (TRUE or FALSE)")
+  }
+
+  # Ensure probs are sorted
+  probs <- sort(probs)
+
+  # Remove the ID column and summarize
+  result <- boot_coefs |>
+    dplyr::select(-dplyr::all_of(id_col)) |>
+    dplyr::summarise(
+      dplyr::across(
+        dplyr::everything(),
+        list(
+          estimate = ~ if (!is.null(estimate)) {
+            if (estimate == "median") {
+              median(.x, na.rm = na.rm)
+            } else {
+              mean(.x, na.rm = na.rm)
+            }
+          } else {
+            NA_real_
+          },
+          lower = ~ quantile(.x, probs[1], na.rm = na.rm),
+          upper = ~ quantile(.x, probs[2], na.rm = na.rm)
+        ),
+        .names = "{.col}___{.fn}"
+      )
+    )
+
+  # Reshape to long format
+  result_long <- result |>
+    tidyr::pivot_longer(
+      cols = dplyr::everything(),
+      names_to = c("term", "statistic"),
+      names_sep = "___",
+      values_to = "value"
+    ) |>
+    tidyr::pivot_wider(
+      names_from = statistic,
+      values_from = value
+    )
+
+  # Remove estimate column if it's all NA (when estimate = NULL)
+  if ("estimate" %in% names(result_long) && all(is.na(result_long$estimate))) {
+    result_long <- result_long |>
+      dplyr::select(-estimate)
+  }
+
+  # Reorder columns: term, estimate (if present), lower, upper
+  if ("estimate" %in% names(result_long)) {
+    result_long <- result_long |>
+      dplyr::select(term, estimate, lower, upper)
+  } else {
+    result_long <- result_long |>
+      dplyr::select(term, lower, upper)
+  }
+
+  return(result_long)
 }

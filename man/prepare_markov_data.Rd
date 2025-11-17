@@ -19,7 +19,7 @@ prepare_markov_data(
 for death). Observations where \code{yprev} equals this value are removed.}
 
 \item{ordered_response}{Logical. Should \code{y} be converted to ordered factor?
-(default: TRUE). Required for most proportional odds models.}
+(default: TRUE). Required for clm and vglm, not required for orm.}
 
 \item{factor_previous}{Logical. Should \code{yprev} be converted to factor?
 (default: TRUE).}
@@ -31,6 +31,7 @@ states removed.
 \description{
 Prepares longitudinal Markov trajectory data for proportional odds regression
 by removing absorbing states and converting variables to appropriate types.
+Works with both VGAM::vglm and rms::orm models.
 }
 \details{
 This is a convenience function that performs standard data preparation for
@@ -41,18 +42,31 @@ proportional odds models on Markov data:
 \item Converts previous state to factor (for including as predictor)
 }
 
-Users can then fit models using their preferred package (VGAM, rms, ordinal).
+\strong{Package compatibility}: This function prepares data for:
+\itemize{
+\item \strong{VGAM::vglm}: Use \code{cumulative(parallel = TRUE, reverse = TRUE)} default
+datasets.
+\item \strong{rms::orm}: Automatically treats integers as ordered factors.
+\item \strong{ordinal::clm}: Only accepts ordered factors.
+}
 }
 \examples{
 \dontrun{
 # Prepare data
 model_data <- prepare_markov_data(trajectories)
 
-# Fit with VGAM
+# Fit with VGAM (no robust SEs; use bootstrap for inference)
 library(VGAM)
 fit <- vglm(y ~ tx + rcs(time, 4) + yprev,
             family = cumulative(parallel = TRUE, reverse = TRUE),
             data = model_data)
+
+# Fit with rms (supports robust SEs via robcov)
+library(rms)
+dd <- datadist(model_data)
+options(datadist = "dd")
+fit <- orm(y ~ tx + rcs(time, 4) + yprev, data = model_data, x = TRUE, y = TRUE)
+fit_robust <- robcov(fit, cluster = model_data$id)
 
 # Fit with ordinal
 library(ordinal)

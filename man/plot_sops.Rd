@@ -2,9 +2,15 @@
 % Please edit documentation in R/viz.R
 \name{plot_sops}
 \alias{plot_sops}
-\title{Plot State Occupancy Proportions Over Time}
+\title{Plot Empirical State Occupancy Probabilities Over Time}
 \usage{
-plot_sops(data, time_var = "time", y_var = "y", facet_var = "tx")
+plot_sops(
+  data,
+  time_var = "time",
+  y_var = "y",
+  facet_var = "tx",
+  geom = c("bar", "line")
+)
 }
 \arguments{
 \item{data}{A data frame containing trajectory data, typically from
@@ -15,27 +21,41 @@ plot_sops(data, time_var = "time", y_var = "y", facet_var = "tx")
 \item{y_var}{Character string. Name of the state variable column (default: "y").}
 
 \item{facet_var}{Character string. Name of the variable to facet by (default: "tx").}
+
+\item{geom}{Character string. Type of plot: "bar" for stacked bar chart (default)
+or "line" for line plot.}
 }
 \value{
-A ggplot object showing state occupancy proportions over time.
+A ggplot object showing empirical state occupancy probabilities over time.
 }
 \description{
-Creates a stacked bar chart showing the proportion of patients in each state
+Creates a visualization showing the empirical state occupancy probabilities
 over time, with optional faceting by a grouping variable (typically treatment).
+Can display as stacked bars (default) or as lines.
 }
 \details{
 This function creates a visualization of how the distribution of patients
-across states changes over time. Each bar represents a time point, with
-colors indicating the proportion in each state. Faceting allows comparison
-between groups (e.g., treatment vs. control).
+across states changes over time.
+
+When \code{geom = "bar"} (default), each bar represents a time point with
+colors indicating the empirical state occupancy probability for each state.
+
+When \code{geom = "line"}, separate lines show the empirical state occupancy
+probability for each state over time, which can be useful for seeing trends
+in individual states.
+
+Faceting allows comparison between groups (e.g., treatment vs. control).
 }
 \examples{
 \dontrun{
 # After simulating trajectories
 trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
 
-# Basic plot
+# Basic stacked bar plot
 plot_sops(trajectories)
+
+# Line plot
+plot_sops(trajectories, geom = "line")
 
 # Customize variable names
 plot_sops(trajectories, time_var = "day", y_var = "state", facet_var = "treatment")

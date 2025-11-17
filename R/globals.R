@@ -39,5 +39,8 @@ utils::globalVariables(c(
   "splits",
   "models",
   "boot_id",
-  "coefs"
+  "coefs",
+  "value",
+  "upper",
+  "lower"
 ))
