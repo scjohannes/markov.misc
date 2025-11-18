@@ -8,19 +8,25 @@
 assess_operating_characteristics(
   iter_num,
   data_paths,
+  fit_functions,
   sample_size = 250,
   allocation_ratio = 0.5,
   seed = 123,
-  fit_functions
+  rerandomize = FALSE,
+  id_var = "id",
+  tx_var = "tx"
 )
 
 run_power_iteration(
   iter_num,
   data_paths,
+  fit_functions,
   sample_size = 250,
   allocation_ratio = 0.5,
   seed = 123,
-  fit_functions
+  rerandomize = FALSE,
+  id_var = "id",
+  tx_var = "tx"
 )
 }
 \arguments{
@@ -30,13 +36,6 @@ run_power_iteration(
 fit_functions. Example:
 \code{list(markov = "ha_or_0.8.parquet", t_test = "t_data_or_0.8.parquet")}.}
 
-\item{sample_size}{Integer. Total number of patients to sample (default: 250).}
-
-\item{allocation_ratio}{Numeric. Proportion assigned to treatment (default: 0.5).}
-
-\item{seed}{Integer. Base random seed (default: 123). Actual seed will be
-\code{seed + iter_num}.}
-
 \item{fit_functions}{Named list of functions that fit models and return tidy
 results. Each function receives \code{data} (sampled data) and \code{iter} (iteration
 number) arguments. Must return a tibble with columns: \code{iter}, \code{analysis},
@@ -44,6 +43,13 @@ number) arguments. Must return a tibble with columns: \code{iter}, \code{analysi
 \code{conf_low}, \code{conf_high}. For bootstrap-based inference, \code{std_error} should
 be the bootstrap standard error, and confidence limits should be renamed
 from \code{lower}/\code{upper} to \code{conf_low}/\code{conf_high}.}
+
+\item{sample_size}{Integer. Total number of patients to sample (default: 250).}
+
+\item{allocation_ratio}{Numeric. Proportion assigned to treatment (default: 0.5).}
+
+\item{seed}{Integer. Base random seed (default: 123). Actual seed will be
+\code{seed + iter_num}.}
 }
 \value{
 A tibble combining results from all analysis functions with columns:
