@@ -568,10 +568,13 @@ tidy_po <- function(
 assess_operating_characteristics <- function(
   iter_num,
   data_paths,
+  fit_functions,
   sample_size = 250,
   allocation_ratio = 0.5,
   seed = 123,
-  fit_functions
+  rerandomize = FALSE,
+  id_var = "id",
+  tx_var = "tx"
 ) {
   set.seed(seed + iter_num)
 
@@ -595,6 +598,20 @@ assess_operating_characteristics <- function(
       allocation_ratio = allocation_ratio
       # Note: No seed argument - uses set.seed() from above
     )
+
+    if (rerandomize) {
+      ids <- unique(sampled_data[[id_var]])
+      tx_ids <- sample(
+        ids,
+        size = round(allocation_ratio * length(ids)),
+        replace = FALSE
+      )
+      sampled_data[[tx_var]] <- ifelse(
+        sampled_data[[id_var]] %in% tx_ids,
+        1,
+        0
+      )
+    }
 
     # Apply fitting function to this specific sample
     results_list[[analysis_name]] <- fit_functions[[analysis_name]](
