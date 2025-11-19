@@ -530,3 +530,137 @@ sim_trajectories_brownian <- function(
 
   return(tibble::tibble(result))
 }
+
+
+#' Simulate Patient Trajectories with Non-Linear (Quadratic) Dynamics
+#'
+#' Generates deterministic patient trajectories where the underlying latent
+#' variable follows a quadratic curve (time + time^2) with random walk noise.
+#'
+#' Default values are for a **mild to moderate respiratory viral disease population**,
+#' the default parameters simulate a general recovery trend (negative linear
+#' slope).
+#'
+#' @param n_patients Integer. Number of patients (default: 1000).
+#' @param follow_up_time Integer. Days to simulate (default: 60).
+#' @param n_states Integer. Number of states (default: 6).
+#' @param mu_linear Numeric. Initial linear slope at t=0 (default: -0.1).
+#'   Negative values indicate improvement.
+#' @param linear_sd Numeric. SD of the linear slope between patients (default: 0.02).
+#' @param mu_quad Numeric. Quadratic coefficient (acceleration) (default: 0).
+#'   The default is 0 (linear recovery). Positive values combined with a negative
+#'   linear slope will cause patients to improve, bottom out, and then worsen (relapse).
+#' @param quad_sd Numeric. SD of the quadratic term between patients (default: 0.0006).
+#' @param mu_treatment_effect Numeric. Effect of treatment on the *linear* slope
+#'   (default: 0). If set to a negative value (e.g., -0.05), treatment accelerates recovery.
+#' @param sigma_rw Numeric. Daily random walk noise (default: 0.25).
+#' @param x0_mean Numeric. Baseline severity mean (default: 0.1).
+#'   Represents mild/moderate starting severity.
+#' @param x0_sd Numeric. Baseline severity SD (default: 1.0).
+#' @param thresholds Numeric vector. Cutpoints for states (default: c(-1.8, -0.5, 0.5, 1.2, 2.3)).
+#' @param treatment_prob Numeric. Probability of treatment (default: 0.5).
+#' @param seed Integer. Seed for reproducibility.
+#'
+#' @return A tibble with id, time, tx, y, x.
+#'
+#' @importFrom stats rnorm rbinom
+#' @importFrom tibble tibble
+#' @importFrom dplyr mutate left_join arrange
+#' @importFrom tidyr pivot_longer
+#'
+#' @export
+sim_trajectories_deterministic <- function(
+  n_patients = 1000,
+  follow_up_time = 60,
+  n_states = 6,
+  mu_linear = -0.1,
+  linear_sd = 0.02,
+  mu_quad = 0,
+  quad_sd = 0.0006,
+  mu_treatment_effect = 0,
+  sigma_rw = 0.25,
+  x0_mean = 0.1,
+  x0_sd = 1.0,
+  thresholds = c(-1.8, -0.5, 0.5, 1.2, 2.3),
+  treatment_prob = 0.5,
+  seed = NULL
+) {
+  # --- Validation ---
+  if (length(thresholds) != n_states - 1) {
+    stop("Thresholds length error")
+  }
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
+
+  # --- Setup ---
+  X <- matrix(NA_real_, n_patients, follow_up_time + 1)
+  Y <- matrix(NA_integer_, n_patients, follow_up_time + 1)
+  treatment <- rbinom(n_patients, 1, treatment_prob)
+
+  # --- Assign Individual Parameters ---
+  # 1. Linear term (Velocity): Varies by patient + Treatment effect
+  # Note: We apply treatment only to the linear term (initial response)
+  beta1_i <- rnorm(n_patients, mu_linear, linear_sd) +
+    (treatment * mu_treatment_effect)
+
+  # 2. Quadratic term (Acceleration/Curvature): Varies by patient
+  beta2_i <- rnorm(n_patients, mu_quad, quad_sd)
+
+  # --- Simulation Loop ---
+  for (i in 1:n_patients) {
+    # Baseline
+    X[i, 1] <- rnorm(1, x0_mean, x0_sd)
+    Y[i, 1] <- findInterval(X[i, 1], thresholds) + 1
+
+    absorbed <- FALSE
+    if (Y[i, 1] == n_states) {
+      absorbed <- TRUE
+    }
+
+    for (t in 2:(follow_up_time + 1)) {
+      if (absorbed) {
+        Y[i, t] <- n_states
+        X[i, t] <- NA
+      } else {
+        # Calculate the deterministic drift for this specific timepoint
+        # The derivative of (b1*t + b2*t^2) is (b1 + 2*b2*t)
+        # Note: t here represents the step index.
+        # Since we are adding to the *previous* X, we add the instantaneous slope.
+        current_drift <- beta1_i[i] + (2 * beta2_i[i] * (t - 1))
+
+        # Update Latent X
+        X[i, t] <- X[i, t - 1] + current_drift + rnorm(1, 0, sigma_rw)
+
+        # Map to Observed Y
+        state <- findInterval(X[i, t], thresholds) + 1
+
+        if (state >= n_states) {
+          Y[i, t] <- n_states
+          absorbed <- TRUE
+        } else {
+          Y[i, t] <- state
+        }
+      }
+    }
+  }
+
+  # --- Formatting ---
+  dat_x <- as.data.frame(X)
+  colnames(dat_x) <- as.character(0:follow_up_time)
+  dat_x <- dat_x |>
+    dplyr::mutate(id = 1:n_patients, tx = treatment) |>
+    tidyr::pivot_longer(-c(id, tx), names_to = "time", values_to = "x")
+
+  dat_y <- as.data.frame(Y)
+  colnames(dat_y) <- as.character(0:follow_up_time)
+  dat_y <- dat_y |>
+    dplyr::mutate(id = 1:n_patients, tx = treatment) |>
+    tidyr::pivot_longer(-c(id, tx), names_to = "time", values_to = "y")
+
+  result <- dplyr::left_join(dat_y, dat_x, by = c("id", "tx", "time")) |>
+    dplyr::mutate(time = as.integer(time)) |>
+    dplyr::arrange(id, time)
+
+  return(tibble::tibble(result))
+}
