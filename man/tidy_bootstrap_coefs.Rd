@@ -9,7 +9,7 @@ tidy_bootstrap_coefs(
   id_col = "boot_id",
   probs = c(0.025, 0.975),
   estimate = "median",
-  na.rm = FALSE
+  na.rm = TRUE
 )
 }
 \arguments{

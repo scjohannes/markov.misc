@@ -667,7 +667,7 @@ tidy_bootstrap_coefs <- function(
   id_col = "boot_id",
   probs = c(0.025, 0.975),
   estimate = "median",
-  na.rm = FALSE
+  na.rm = TRUE
 ) {
   # Input validation
   if (!is.data.frame(boot_coefs)) {
@@ -714,7 +714,8 @@ tidy_bootstrap_coefs <- function(
             NA_real_
           },
           lower = ~ quantile(.x, probs[1], na.rm = na.rm),
-          upper = ~ quantile(.x, probs[2], na.rm = na.rm)
+          upper = ~ quantile(.x, probs[2], na.rm = na.rm),
+          n_iter = ~ n()
         ),
         .names = "{.col}___{.fn}"
       )
@@ -742,10 +743,10 @@ tidy_bootstrap_coefs <- function(
   # Reorder columns: term, estimate (if present), lower, upper
   if ("estimate" %in% names(result_long)) {
     result_long <- result_long |>
-      dplyr::select(term, estimate, lower, upper)
+      dplyr::select(term, estimate, lower, upper, n_iter)
   } else {
     result_long <- result_long |>
-      dplyr::select(term, lower, upper)
+      dplyr::select(term, lower, upper, n_iter)
   }
 
   return(result_long)
