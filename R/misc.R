@@ -743,10 +743,10 @@ tidy_bootstrap_coefs <- function(
   # Reorder columns: term, estimate (if present), lower, upper
   if ("estimate" %in% names(result_long)) {
     result_long <- result_long |>
-      dplyr::select(term, estimate, lower, upper)
+      dplyr::select(term, estimate, lower, upper, n_iter)
   } else {
     result_long <- result_long |>
-      dplyr::select(term, lower, upper)
+      dplyr::select(term, lower, upper, n_iter)
   }
 
   return(result_long)
