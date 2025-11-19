@@ -19,8 +19,8 @@ taooh_bootstrap2(
 )
 }
 \arguments{
-\item{model}{A fitted model object from \code{rms::orm}. Should be fitted
-with \code{x = TRUE, y = TRUE} to enable model updating with bootstrap samples.}
+\item{model}{A fitted model object from \code{rms::orm} or \code{VGAM::vglm}.
+See details for specifications of these models.}
 
 \item{data}{A data frame containing the patient data}
 
@@ -78,6 +78,12 @@ environment (for datadist) without conflicts.
 
 \strong{Important:} The \code{yprev} variable should be a factor before
 fitting the model for proper handling of state levels.
+
+orm should be fitted with \code{x = TRUE, y = TRUE} to enable model updating with
+bootstrap samples. vglm should use factor in the model formula (such as
+\code{y ~ time + tx+ factor(yprev)}) and \code{model = TRUE} (see VGAM::vglm documentation)
+to be compatible with \code{soprobMarkovOrdm()}. Otherwise soprobMarkovOrdm will
+complain about "yprev" not being a factor.
 }
 \examples{
 \dontrun{

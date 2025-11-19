@@ -89,9 +89,9 @@ taooh <- function(
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 ) {
   # Check model class
-  if (!inherits(model, "orm")) {
+  if (!inherits(model, "orm") && !inherits(model, "vglm")) {
     stop(
-      "model must be an orm object from rms package. vgam support coming soon."
+      "model must be an orm object (rms package) or vglm object (VGAM package)."
     )
   }
 

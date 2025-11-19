@@ -695,8 +695,8 @@ bootstrap_standardized_sops <- function(
 #' time spent in specified target state(s). Uses parallel computation via
 #' future.callr for efficiency.
 #'
-#' @param model A fitted model object from \code{rms::orm}. Should be fitted
-#'   with \code{x = TRUE, y = TRUE} to enable model updating with bootstrap samples.
+#' @param model A fitted model object from \code{rms::orm} or \code{VGAM::vglm}.
+#' See details for specifications of these models.
 #' @param data A data frame containing the patient data
 #' @param n_boot Number of bootstrap samples
 #' @param workers Number of workers used for parallelization. Default is
@@ -740,12 +740,19 @@ bootstrap_standardized_sops <- function(
 #' \strong{Important:} The \code{yprev} variable should be a factor before
 #' fitting the model for proper handling of state levels.
 #'
+#' orm should be fitted with \code{x = TRUE, y = TRUE} to enable model updating with
+#' bootstrap samples. vglm should use factor in the model formula (such as
+#' \code{y ~ time + tx+ factor(yprev)}) and \code{model = TRUE} (see VGAM::vglm documentation)
+#' to be compatible with \code{soprobMarkovOrdm()}. Otherwise soprobMarkovOrdm will
+#' complain about "yprev" not being a factor.
+#'
 #' @keywords bootstrap time alive and out of hospital
 #'
 #' @importFrom future.callr callr
 #' @importFrom future plan
 #' @importFrom furrr future_map_dbl
 #' @importFrom rms datadist
+#' @importFrom rms rcs
 #' @importFrom stats ave update
 #'
 #' @examples
@@ -791,9 +798,9 @@ taooh_bootstrap2 <- function(
   quantiles = 0.95
 ) {
   # Check model class
-  if (!inherits(model, "orm")) {
+  if (!inherits(model, "orm") && !inherits(model, "vglm")) {
     stop(
-      "model must be an orm object from rms package. vgam support coming soon."
+      "model must be an orm object (rms package) or vglm object (VGAM package)."
     )
   }
 
@@ -908,9 +915,11 @@ taooh_bootstrap2 <- function(
 
     # Update datadist and assign to global environment
     # This works because we use future.callr which has isolated processes
-    dd <- rms::datadist(boot_data)
-    assign("dd", dd, envir = .GlobalEnv)
-    options(datadist = "dd")
+    if (inherits(model, "orm")) {
+      dd <- rms::datadist(boot_data)
+      assign("dd", dd, envir = .GlobalEnv)
+      options(datadist = "dd")
+      }
 
     # Refit model with bootstrap data
     m_boot <- tryCatch(
