@@ -10,7 +10,7 @@ taooh_bootstrap(
   n_boot,
   workers = NULL,
   parallel = FALSE,
-  ylevels = 1:6,
+  ylevels = as.character(1:6),
   absorb = 6,
   times = NULL,
   target_states = 1,

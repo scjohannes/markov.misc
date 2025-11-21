@@ -8,7 +8,7 @@ taooh(
   model,
   data = NULL,
   times = NULL,
-  ylevels = 1:6,
+  ylevels = as.character(1:6),
   absorb = 6,
   target_states = 1,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")

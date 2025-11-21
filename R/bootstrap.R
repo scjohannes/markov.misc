@@ -104,16 +104,16 @@ taooh_bootstrap <- function(
   n_boot,
   workers = NULL,
   parallel = FALSE,
-  ylevels = 1:6,
+  ylevels = as.character(1:6),
   absorb = 6,
   times = NULL,
   target_states = 1,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 ) {
   # Check model class
-  if (!inherits(model, "orm")) {
+  if (!inherits(model, "orm") && !inherits(model, "vglm")) {
     stop(
-      "model must be an orm object from rms package. vgam support coming soon."
+      "model must be an orm object (rms package) or vglm object (VGAM package)."
     )
   }
 
@@ -182,7 +182,7 @@ taooh_bootstrap <- function(
     id_var = varnames$id,
     parallel = parallel,
     workers = workers,
-    packages = c("rms", "Hmisc", "stats", "dplyr"),
+    packages = c("VGAM", "rms", "Hmisc", "stats", "dplyr"),
     globals = c(
       "model",
       "times",
@@ -919,7 +919,7 @@ taooh_bootstrap2 <- function(
       dd <- rms::datadist(boot_data)
       assign("dd", dd, envir = .GlobalEnv)
       options(datadist = "dd")
-      }
+    }
 
     # Refit model with bootstrap data
     m_boot <- tryCatch(
