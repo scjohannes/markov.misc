@@ -427,7 +427,9 @@ states_to_tte <- function(
 
   data <- data[data$state_change != 0, ]
 
-  data[["start"]] <- lag(data[["time"]], default = 0)
+  data[["start"]] <- data$start <- ave(data$time, data$id, FUN = function(t) {
+    c(0, t[-length(t)])
+  })
   data[["stop"]] <- data[["time"]]
   data <- data[, !(colnames(data) %in% c("state_change", "time"))]
 
@@ -750,4 +752,110 @@ tidy_bootstrap_coefs <- function(
   }
 
   return(result_long)
+}
+
+
+#' Format Time-to-Event Output for Competing Risks
+#'
+#' Prepare the output from `states_to_tte()` for competing-risks analysis
+#' (Fine-Gray style) by truncating each subject's record at the first of an
+#' event of interest (e.g., discharge) or death event and encoding a final status variable suitable
+#' for survival modelling (0 = censored, 1 = discharge, 2 = death).
+#'
+#' This function expects the input produced by `states_to_tte()` which uses
+#' `start`/`stop` interval times and a state label `y` at the end of each
+#' interval.
+#'
+#' @param data A data frame produced by `states_to_tte()` (must contain
+#'   columns `id`, `start`, `stop`, `y`, and `tx`).
+#' @param event_status Integer code identifying the discharge state in `y`
+#'   (default: 1).
+#' @param death_status Integer code identifying the death/absorbing state in `y`
+#'   (default: 6).
+#'
+#' @return A data frame with the same rows truncated at the first event per
+#'   `id`, and an added integer `status` column with values 0 (censored), 1
+#'   (discharge) or 2 (death). The function preserves other columns present
+#'   in the input.
+#'
+#' @details
+#' For each subject (`id`) the function finds the earliest `stop` time at which
+#' `y` equals `event_status` or `death_status`. All rows with `stop` after that
+#' cutoff are removed. The final row at the cutoff receives `status` equal to
+#' 1 (discharge) or 2 (death). If neither event is observed for a subject the
+#' subject remains in the dataset with `status = 0` (censored).
+#'
+#' @examples
+#' \dontrun{
+#' tte <- states_to_tte(trajectories)
+#' fg_ready <- format_competing_risks(tte, event_status = 1, death_status = 6)
+#' }
+#'
+#' @importFrom dplyr group_by mutate case_when filter if_else ungroup select everything
+#' @export
+format_competing_risks <- function(data, event_status = 1, death_status = 6) {
+  # Basic validation
+  required_cols <- c("id", "start", "stop", "y", "tx")
+  missing_cols <- setdiff(required_cols, names(data))
+  if (length(missing_cols) > 0) {
+    stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
+  }
+
+  data <- data |>
+    dplyr::group_by(id) |>
+    dplyr::mutate(
+      # Identify the first stop time for discharge and death (Inf if absent)
+      t_discharge = if (any(.data$y == event_status)) {
+        min(.data$stop[.data$y == event_status])
+      } else {
+        Inf
+      },
+      t_death = if (any(.data$y == death_status)) {
+        min(.data$stop[.data$y == death_status])
+      } else {
+        Inf
+      },
+
+      # cutoff_time is the earlier of discharge or death for this id
+      cutoff_time = base::pmin(t_discharge, t_death),
+
+      # final event label: 1 = discharge, 2 = death, 0 = censored
+      final_event = dplyr::case_when(
+        t_discharge < t_death ~ 1L,
+        t_death < t_discharge ~ 2L,
+        TRUE ~ 0L
+      )
+    ) |>
+    # Remove rows after the first event
+    dplyr::filter(.data$stop <= cutoff_time) |>
+    # Assign status: only the final interval at cutoff_time gets the event code
+    dplyr::mutate(
+      status = dplyr::if_else(.data$stop == cutoff_time, final_event, 0L)
+    ) |>
+    dplyr::ungroup() |>
+    # Keep order and remove helper columns
+    dplyr::select(
+      id,
+      tx,
+      start,
+      stop,
+      status,
+      y,
+      yprev = dplyr::any_of("yprev"),
+      dplyr::everything(),
+      -t_discharge,
+      -t_death,
+      -cutoff_time,
+      -final_event
+    )
+
+  # The select() call above may have introduced a column named yprev = TRUE/FALSE
+  # when yprev did not exist; clean that up by restoring original semantics.
+  if ("yprev" %in% names(data) && is.logical(data$yprev)) {
+    # If yprev is logical introduced by any_of, remove and keep nothing
+    data <- data |>
+      dplyr::select(-dplyr::all_of("yprev"))
+  }
+
+  return(data)
 }
