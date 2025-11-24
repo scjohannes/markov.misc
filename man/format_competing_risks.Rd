@@ -7,41 +7,57 @@
 format_competing_risks(data, event_status = 1, death_status = 6)
 }
 \arguments{
-\item{data}{A data frame produced by \code{states_to_tte()} (must contain
-columns \code{id}, \code{start}, \code{stop}, \code{y}, and \code{tx}).}
+\item{data}{A data frame produced by \code{states_to_tte()} containing at least
+columns \code{id}, \code{start}, \code{stop}, \code{y} (state), and \code{tx}.}
 
-\item{event_status}{Integer code identifying the discharge state in \code{y}
-(default: 1).}
+\item{event_status}{Integer code identifying the event of interest (e.g., discharge)
+in the \code{y} column (default: 1).}
 
-\item{death_status}{Integer code identifying the death/absorbing state in \code{y}
-(default: 6).}
+\item{death_status}{Integer code identifying the competing event (e.g., death)
+in the \code{y} column (default: 6).}
 }
 \value{
-A data frame with the same rows truncated at the first event per
-\code{id}, and an added integer \code{status} column with values 0 (censored), 1
-(discharge) or 2 (death). The function preserves other columns present
-in the input.
+A data frame where each row represents an interval at risk. The output
+includes a \code{status} column:
+\itemize{
+\item \code{0}: Censored (no event observed or lost to follow-up)
+\item \code{1}: Event of interest occurred at the end of this interval
+\item \code{2}: Competing event occurred at the end of this interval
+}
+Rows where \code{y} matches \code{event_status} or \code{death_status} are removed.
 }
 \description{
-Prepare the output from \code{states_to_tte()} for competing-risks analysis
-(Fine-Gray style) by truncating each subject's record at the first of an
-event of interest (e.g., discharge) or death event and encoding a final status variable suitable
-for survival modelling (0 = censored, 1 = discharge, 2 = death).
+This function transforms "state occupancy" data into "time-to-event" data.
+It looks ahead to the subsequent interval to detect when a subject transitions
+from a generic state to an event state. The interval ending at that transition
+is assigned the corresponding event status. Rows representing the absorbing
+states themselves are excluded, as the subject is no longer at risk.
 }
 \details{
-This function expects the input produced by \code{states_to_tte()} which uses
-\code{start}/\code{stop} interval times and a state label \code{y} at the end of each
-interval.
+Prepares the output from \code{states_to_tte()} for competing-risks analysis
+(e.g., Fine-Gray or Cause-Specific Cox) by identifying transitions from
+a risk state (e.g., hospital) to an absorbing state (e.g., discharge or death).
 
-For each subject (\code{id}) the function finds the earliest \code{stop} time at which
-\code{y} equals \code{event_status} or \code{death_status}. All rows with \code{stop} after that
-cutoff are removed. The final row at the cutoff receives \code{status} equal to
-1 (discharge) or 2 (death). If neither event is observed for a subject the
-subject remains in the dataset with \code{status = 0} (censored).
+The function performs the following steps for each subject (\code{id}):
+\enumerate{
+\item \strong{Sorts} the data by time (\code{start}) to ensure chronological order.
+\item \strong{Looks ahead} to the state (\code{y}) of the \emph{next} interval.
+\item \strong{Assigns status}:
+\itemize{
+\item If the \emph{next} state is \code{event_status}, the current interval gets \code{status = 1}.
+\item If the \emph{next} state is \code{death_status}, the current interval gets \code{status = 2}.
+\item Otherwise, \code{status = 0}.
+}
+\item \strong{Filters}: Removes rows where the subject is already in an absorbing
+state (\code{event_status} or \code{death_status}), as they are no longer at risk.
+\item \strong{Truncates}: Ensures only the trajectory up to the first observed event
+is retained per subject.
+}
 }
 \examples{
 \dontrun{
 tte <- states_to_tte(trajectories)
+# Prepare for Fine-Gray model (1=Discharge vs 2=Death)
 fg_ready <- format_competing_risks(tte, event_status = 1, death_status = 6)
 }
 
