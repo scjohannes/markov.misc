@@ -470,9 +470,13 @@ states_to_tte_old <- function(
 #' }
 #' @importFrom dplyr arrange group_by mutate lag summarize first select any_of everything
 #' @export
-states_to_tte <- function(data, covariates = c("age", "sofa")) {
+states_to_tte <- function(
+  data,
+  covariates = c("age", "sofa"),
+  absorbing_state = 6
+) {
   # 1. Input Validation
-  required_cols <- c("id", "time", "y", "tx")
+  required_cols <- c("id", "time", "y", "yprev", "tx")
   missing_cols <- setdiff(required_cols, names(data))
   if (length(missing_cols) > 0) {
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
@@ -481,6 +485,7 @@ states_to_tte <- function(data, covariates = c("age", "sofa")) {
   # 2. Logic: Collapse consecutive runs of identical states
   # We cannot just filter; we must aggregate.
   result <- data |>
+    dplyr::filter(yprev != absorbing_state) |>
     dplyr::arrange(id, time) |>
     dplyr::group_by(id) |>
     dplyr::mutate(

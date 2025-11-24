@@ -4,7 +4,7 @@
 \alias{states_to_tte}
 \title{Convert Markov Data to Time-to-Event (Start-Stop) Format}
 \usage{
-states_to_tte(data, covariates = c("age", "sofa"))
+states_to_tte(data, covariates = c("age", "sofa"), absorbing_state = 6)
 }
 \arguments{
 \item{data}{A data frame containing trajectory data, typically the output from
