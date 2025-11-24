@@ -394,22 +394,10 @@ states_to_drs <- function(
 #' start and stop and the state at the end of the interval. Columns given in
 #' covariates will be kept in the output.
 #'
-#' @examples
-#' \dontrun{
-#' # After simulating trajectories
-#' trajectories <- sim_trajectories_markov(baseline_data, follow_up_time = 60,
-#'                                         lp_function = my_lp)
-#' tte_data <- states_to_tte(trajectories, follow_up_time = 60)
-#'
-#' # With different covariates
-#' tte_data <- states_to_tte(trajectories, follow_up_time = 60,
-#'                           covariates = c("age", "sofa", "baseline_severity"))
-#' }
-#'
 #' @importFrom dplyr group_by arrange summarise if_else select across all_of left_join mutate
 #'
 #' @export
-states_to_tte <- function(
+states_to_tte_old <- function(
   data,
   covariates = c("age", "sofa")
 ) {
@@ -446,6 +434,88 @@ states_to_tte <- function(
   }
 
   return(result = data)
+}
+
+
+#' Convert Markov Data to Time-to-Event (Start-Stop) Format
+#'
+#' Converts a longitudinal dataset of daily states into a collapsed
+#' start-stop format suitable for survival analysis
+#'
+#' @param data A data frame containing trajectory data, typically the output from
+#'   `sim_trajectories_markov()` or `sim_trajectories_brownian()`. Must contain
+#'   columns: `id`, `time`, `y` (state), and `tx` (treatment).
+#' @param covariates Character vector of additional covariate names to include in
+#'   the output (default: c("age", "sofa")). The first value of each covariate
+#'   per patient will be retained.
+#'
+#' @return A tibble in start-stop format with columns:
+#'   \code{id}, \code{tx}, \code{start}, \code{stop}, \code{y}, \code{yprev},
+#'   and specified covariates.
+#'
+#' @details
+#' Each event change within a participant concludes a time interval indicated by
+#' start and stop and the state at the end of the interval. Columns given in
+#' covariates will be kept in the output.
+#'
+#' @examples
+#' \dontrun{
+#' # After simulating trajectories
+#' trajectories <- sim_trajectories_markov(baseline_data, follow_up_time = 60,
+#'                                         lp_function = my_lp)
+#' tte_data <- states_to_tte(trajectories)
+#'
+#' # With different covariates
+#' tte_data <- states_to_tte(trajectories, covariates = c("age", "sofa", "baseline_severity"))
+#' }
+#' @importFrom dplyr arrange group_by mutate lag summarize first select any_of everything
+#'
+states_to_tte <- function(data, covariates = c("age", "sofa")) {
+  # 1. Input Validation
+  required_cols <- c("id", "time", "y", "tx")
+  missing_cols <- setdiff(required_cols, names(data))
+  if (length(missing_cols) > 0) {
+    stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
+  }
+
+  # 2. Logic: Collapse consecutive runs of identical states
+  # We cannot just filter; we must aggregate.
+  result <- data |>
+    dplyr::arrange(id, time) |>
+    dplyr::group_by(id) |>
+    dplyr::mutate(
+      # Define the raw interval for every single row
+      # If time is 1, interval is 0 -> 1.
+      raw_start = dplyr::lag(time, default = 0),
+      raw_stop = time,
+
+      # Create a unique ID for every "run" of identical states
+      # If y changes, we increment the ID.
+      state_change = y != dplyr::lag(y, default = -999),
+      run_id = cumsum(state_change)
+    ) |>
+    # Collapse: Squash all rows in the same run into one interval
+    dplyr::group_by(id, run_id) |>
+    dplyr::summarize(
+      # Variables that are constant for the run
+      y = dplyr::first(y),
+      tx = dplyr::first(tx),
+      yprev = dplyr::first(yprev),
+
+      # The interval becomes the Min Start to the Max Stop of the run
+      start = min(raw_start),
+      stop = max(raw_stop),
+
+      # Capture covariates (taking the value at the start of the run)
+      dplyr::across(dplyr::any_of(covariates), dplyr::first),
+
+      .groups = "drop"
+    ) |>
+    # Clean up and reorder
+    dplyr::select(-run_id) |>
+    dplyr::select(id, tx, start, stop, y, yprev, dplyr::everything())
+
+  return(result)
 }
 
 
@@ -757,41 +827,58 @@ tidy_bootstrap_coefs <- function(
 
 #' Format Time-to-Event Output for Competing Risks
 #'
-#' Prepare the output from `states_to_tte()` for competing-risks analysis
-#' (Fine-Gray style) by truncating each subject's record at the first of an
-#' event of interest (e.g., discharge) or death event and encoding a final status variable suitable
-#' for survival modelling (0 = censored, 1 = discharge, 2 = death).
+#' Prepares the output from `states_to_tte()` for competing-risks analysis
+#' (e.g., Fine-Gray or Cause-Specific Cox) by identifying transitions from
+#' a risk state (e.g., hospital) to an absorbing state (e.g., discharge or death).
 #'
-#' This function expects the input produced by `states_to_tte()` which uses
-#' `start`/`stop` interval times and a state label `y` at the end of each
-#' interval.
+#' @description
+#' This function transforms "state occupancy" data into "time-to-event" data.
+#' It looks ahead to the subsequent interval to detect when a subject transitions
+#' from a generic state to an event state. The interval ending at that transition
+#' is assigned the corresponding event status. Rows representing the absorbing
+#' states themselves are excluded, as the subject is no longer at risk.
 #'
-#' @param data A data frame produced by `states_to_tte()` (must contain
-#'   columns `id`, `start`, `stop`, `y`, and `tx`).
-#' @param event_status Integer code identifying the discharge state in `y`
-#'   (default: 1).
-#' @param death_status Integer code identifying the death/absorbing state in `y`
-#'   (default: 6).
+#' @param data A data frame produced by `states_to_tte()` containing at least
+#'   columns `id`, `start`, `stop`, `y` (state), and `tx`.
+#' @param event_status Integer code identifying the event of interest (e.g., discharge)
+#'   in the `y` column (default: 1).
+#' @param death_status Integer code identifying the competing event (e.g., death)
+#'   in the `y` column (default: 6).
 #'
-#' @return A data frame with the same rows truncated at the first event per
-#'   `id`, and an added integer `status` column with values 0 (censored), 1
-#'   (discharge) or 2 (death). The function preserves other columns present
-#'   in the input.
+#' @return A data frame where each row represents an interval at risk. The output
+#'   includes a `status` column:
+#'   \itemize{
+#'     \item \code{0}: Censored (no event observed or lost to follow-up)
+#'     \item \code{1}: Event of interest occurred at the end of this interval
+#'     \item \code{2}: Competing event occurred at the end of this interval
+#'   }
+#'   Rows where `y` matches `event_status` or `death_status` are removed.
 #'
 #' @details
-#' For each subject (`id`) the function finds the earliest `stop` time at which
-#' `y` equals `event_status` or `death_status`. All rows with `stop` after that
-#' cutoff are removed. The final row at the cutoff receives `status` equal to
-#' 1 (discharge) or 2 (death). If neither event is observed for a subject the
-#' subject remains in the dataset with `status = 0` (censored).
+#' The function performs the following steps for each subject (`id`):
+#' \enumerate{
+#'   \item **Sorts** the data by time (`start`) to ensure chronological order.
+#'   \item **Looks ahead** to the state (`y`) of the *next* interval.
+#'   \item **Assigns status**:
+#'     \itemize{
+#'       \item If the *next* state is `event_status`, the current interval gets `status = 1`.
+#'       \item If the *next* state is `death_status`, the current interval gets `status = 2`.
+#'       \item Otherwise, `status = 0`.
+#'     }
+#'   \item **Filters**: Removes rows where the subject is already in an absorbing
+#'     state (`event_status` or `death_status`), as they are no longer at risk.
+#'   \item **Truncates**: Ensures only the trajectory up to the first observed event
+#'     is retained per subject.
+#' }
 #'
 #' @examples
 #' \dontrun{
 #' tte <- states_to_tte(trajectories)
+#' # Prepare for Fine-Gray model (1=Discharge vs 2=Death)
 #' fg_ready <- format_competing_risks(tte, event_status = 1, death_status = 6)
 #' }
 #'
-#' @importFrom dplyr group_by mutate case_when filter if_else ungroup select everything
+#' @importFrom dplyr arrange group_by mutate lead filter ungroup select everything
 #' @export
 format_competing_risks <- function(data, event_status = 1, death_status = 6) {
   # Basic validation
@@ -802,38 +889,31 @@ format_competing_risks <- function(data, event_status = 1, death_status = 6) {
   }
 
   data <- data |>
+    dplyr::arrange(id, start) |>
     dplyr::group_by(id) |>
     dplyr::mutate(
-      # Identify the first stop time for discharge and death (Inf if absent)
-      t_discharge = if (any(.data$y == event_status)) {
-        min(.data$stop[.data$y == event_status])
-      } else {
-        Inf
-      },
-      t_death = if (any(.data$y == death_status)) {
-        min(.data$stop[.data$y == death_status])
-      } else {
-        Inf
-      },
+      # Look at the NEXT state to see if an event happens at the end of THIS interval
+      next_y = dplyr::lead(y),
 
-      # cutoff_time is the earlier of discharge or death for this id
-      cutoff_time = base::pmin(t_discharge, t_death),
-
-      # final event label: 1 = discharge, 2 = death, 0 = censored
-      final_event = dplyr::case_when(
-        t_discharge < t_death ~ 1L,
-        t_death < t_discharge ~ 2L,
+      # Assign Status to the interval PRECEDING the event
+      # E.g., 1 = Discharge, 2 = Death, 0 = Censored (no event or loss to follow up)
+      status = dplyr::case_when(
+        next_y == event_status ~ 1L,
+        next_y == death_status ~ 2L,
         TRUE ~ 0L
       )
     ) |>
-    # Remove rows after the first event
-    dplyr::filter(.data$stop <= cutoff_time) |>
-    # Assign status: only the final interval at cutoff_time gets the event code
-    dplyr::mutate(
-      status = dplyr::if_else(.data$stop == cutoff_time, final_event, 0L)
-    ) |>
+    # 2. Remove rows where the patient is ALREADY in the absorbing state
+    # We only want the time spent waiting for the event (Hospital State)
+    dplyr::filter(y != event_status, y != death_status) |>
+
+    # 3. Handle edge cases (multiple events?)
+    # We stop at the FIRST event.
+    # This keeps rows up to and including the first interval that ends in an event.
+    dplyr::mutate(has_event = cumsum(status > 0)) |>
+    dplyr::filter(has_event <= 1) |>
+
     dplyr::ungroup() |>
-    # Keep order and remove helper columns
     dplyr::select(
       id,
       tx,
@@ -841,21 +921,10 @@ format_competing_risks <- function(data, event_status = 1, death_status = 6) {
       stop,
       status,
       y,
-      yprev = dplyr::any_of("yprev"),
       dplyr::everything(),
-      -t_discharge,
-      -t_death,
-      -cutoff_time,
-      -final_event
+      -next_y,
+      -has_event
     )
-
-  # The select() call above may have introduced a column named yprev = TRUE/FALSE
-  # when yprev did not exist; clean that up by restoring original semantics.
-  if ("yprev" %in% names(data) && is.logical(data$yprev)) {
-    # If yprev is logical introduced by any_of, remove and keep nothing
-    data <- data |>
-      dplyr::select(-dplyr::all_of("yprev"))
-  }
 
   return(data)
 }
