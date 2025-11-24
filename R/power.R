@@ -168,7 +168,7 @@ prepare_markov_data <- function(
 }
 
 
-#' Extract Tidy Coefficients from Proportional Odds Models
+#' Extract Tidy Coefficients from Proportional Odds and Cox Models
 #'
 #' Extracts coefficients with standard errors, p-values, and confidence intervals
 #' from various proportional odds model objects, with standardized output format.
@@ -251,14 +251,14 @@ tidy_po <- function(
   alternative <- match.arg(alternative)
   alpha <- 1 - conf_level
 
-  # Calculate critical value and confidence interval bounds based on alternative
+  # Calculate critical value based on alternative
   if (alternative == "two.sided") {
     z_crit <- stats::qnorm(1 - alpha / 2)
   } else {
     z_crit <- stats::qnorm(1 - alpha)
   }
 
-  # VGAM method
+  # --- VGAM method ---
   if (inherits(fit, "vglm")) {
     coefs <- stats::coef(fit)
     ses <- sqrt(diag(stats::vcov(fit)))
@@ -273,28 +273,7 @@ tidy_po <- function(
       statistic = estimate / std_error
     )
 
-    # Calculate p-values based on alternative hypothesis
-    result <- result |>
-      dplyr::mutate(
-        p_value = dplyr::case_when(
-          alternative == "two.sided" ~ 2 * stats::pnorm(-abs(statistic)),
-          alternative == "greater" ~ stats::pnorm(
-            statistic,
-            lower.tail = FALSE
-          ),
-          alternative == "less" ~ stats::pnorm(statistic)
-        ),
-        conf_low = dplyr::case_when(
-          alternative == "two.sided" ~ estimate - z_crit * std_error,
-          alternative == "greater" ~ estimate - z_crit * std_error,
-          alternative == "less" ~ -Inf
-        ),
-        conf_high = dplyr::case_when(
-          alternative == "two.sided" ~ estimate + z_crit * std_error,
-          alternative == "greater" ~ Inf,
-          alternative == "less" ~ estimate + z_crit * std_error
-        )
-      )
+    # --- rms::orm method ---
   } else if (inherits(fit, "orm")) {
     # rms::orm method
     # Note: fit$var is only populated after robcov() is applied
@@ -302,12 +281,9 @@ tidy_po <- function(
     coefs <- fit$coefficients
 
     if (!is.null(fit$var)) {
-      # Robust SEs available (robcov was applied)
-      # fit$var contains the full covariance matrix for all coefficients
+      # Robust SEs available
       vcov_matrix <- fit$var
       ses <- sqrt(diag(vcov_matrix))
-
-      # Filter out intercepts (they start with 'y>=')
       non_intercepts <- !grepl("^y>=", names(coefs))
 
       result <- tibble::tibble(
@@ -317,9 +293,7 @@ tidy_po <- function(
         statistic = estimate / std_error
       )
     } else {
-      # Naive SEs (use vcov)
-      # vcov() for orm returns a reduced matrix that may not include all intercepts
-      # We need to match coefficients to the vcov matrix by names
+      # Naive SEs
       vcov_matrix <- stats::vcov(fit)
       vcov_names <- rownames(vcov_matrix)
 
@@ -335,79 +309,66 @@ tidy_po <- function(
       )
     }
 
-    # Calculate p-values based on alternative hypothesis
-    result <- result |>
-      dplyr::mutate(
-        p_value = dplyr::case_when(
-          alternative == "two.sided" ~ 2 * stats::pnorm(-abs(statistic)),
-          alternative == "greater" ~ stats::pnorm(
-            statistic,
-            lower.tail = FALSE
-          ),
-          alternative == "less" ~ stats::pnorm(statistic)
-        ),
-        conf_low = dplyr::case_when(
-          alternative == "two.sided" ~ estimate - z_crit * std_error,
-          alternative == "greater" ~ estimate - z_crit * std_error,
-          alternative == "less" ~ -Inf
-        ),
-        conf_high = dplyr::case_when(
-          alternative == "two.sided" ~ estimate + z_crit * std_error,
-          alternative == "greater" ~ Inf,
-          alternative == "less" ~ estimate + z_crit * std_error
-        )
-      )
+    # --- ordinal::clm method ---
   } else if (inherits(fit, "clm")) {
-    # ordinal::clm method
     summ <- summary(fit)
     coef_table <- summ$coefficients
 
     result <- tibble::as_tibble(coef_table, rownames = "term") |>
-      dplyr::filter(!grepl("\\|", term)) |> # Remove threshold parameters
+      dplyr::filter(!grepl("\\|", term)) |>
       dplyr::mutate(
         estimate = Estimate,
         std_error = `Std. Error`,
         statistic = `z value`
-      )
-
-    # Calculate p-values based on alternative hypothesis (override clm's two-sided p-value)
-    result <- result |>
-      dplyr::mutate(
-        p_value = dplyr::case_when(
-          alternative == "two.sided" ~ 2 * stats::pnorm(-abs(statistic)),
-          alternative == "greater" ~ stats::pnorm(
-            statistic,
-            lower.tail = FALSE
-          ),
-          alternative == "less" ~ stats::pnorm(statistic)
-        ),
-        conf_low = dplyr::case_when(
-          alternative == "two.sided" ~ estimate - z_crit * std_error,
-          alternative == "greater" ~ estimate - z_crit * std_error,
-          alternative == "less" ~ -Inf
-        ),
-        conf_high = dplyr::case_when(
-          alternative == "two.sided" ~ estimate + z_crit * std_error,
-          alternative == "greater" ~ Inf,
-          alternative == "less" ~ estimate + z_crit * std_error
-        )
       ) |>
-      dplyr::select(
-        term,
-        estimate,
-        std_error,
-        statistic,
-        p_value,
-        conf_low,
-        conf_high
-      )
+      dplyr::select(term, estimate, std_error, statistic)
+
+    # --- survival::coxph method (Supports Fine-Gray) ---
+  } else if (inherits(fit, "coxph")) {
+    # vcov(fit) automatically returns the robust variance if weights/cluster were used
+
+    coefs <- stats::coef(fit)
+    # Handle cases where coefficients might be NA (rare but possible in rank deficient models)
+    if (any(is.na(coefs))) {
+      warning("Some coefficients in coxph model are NA")
+    }
+
+    vcov_mat <- stats::vcov(fit)
+    ses <- sqrt(diag(vcov_mat))
+
+    result <- tibble::tibble(
+      term = names(coefs),
+      estimate = coefs,
+      std_error = ses,
+      statistic = estimate / std_error
+    )
   } else {
-    stop("fit must be a vglm, orm, or clm object")
+    stop("fit must be a vglm, orm, clm, or coxph object")
   }
 
-  result
-}
+  # --- Common Calculation for P-values and CIs ---
+  # Apply to the 'result' tibble regardless of which method generated it
+  result <- result |>
+    dplyr::mutate(
+      p_value = dplyr::case_when(
+        alternative == "two.sided" ~ 2 * stats::pnorm(-abs(statistic)),
+        alternative == "greater" ~ stats::pnorm(statistic, lower.tail = FALSE),
+        alternative == "less" ~ stats::pnorm(statistic)
+      ),
+      conf_low = dplyr::case_when(
+        alternative == "two.sided" ~ estimate - z_crit * std_error,
+        alternative == "greater" ~ estimate - z_crit * std_error,
+        alternative == "less" ~ -Inf
+      ),
+      conf_high = dplyr::case_when(
+        alternative == "two.sided" ~ estimate + z_crit * std_error,
+        alternative == "greater" ~ Inf,
+        alternative == "less" ~ estimate + z_crit * std_error
+      )
+    )
 
+  return(result)
+}
 
 #' Assess Operating Characteristics for One Iteration
 #'
