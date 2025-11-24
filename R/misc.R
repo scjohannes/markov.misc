@@ -901,18 +901,19 @@ format_competing_risks <- function(data, event_status = 1, death_status = 6) {
         next_y == event_status ~ 1L,
         next_y == death_status ~ 2L,
         TRUE ~ 0L
-      )
+      ),
+      # 2. Drop all rows appearing AFTER the first event
+      # Calculate cumulative events.
+      # Once this hits 1, the current row is the event.
+      cum_events = cumsum(status > 0),
+
+      # We want to remove rows where the event occurred PREVIOUSLY.
+      # lag(cum_events, default=0) will be 0 for the event row,
+      # but 1 for all subsequent rows.
+      prev_events = dplyr::lag(cum_events, default = 0)
     ) |>
-    # 2. Remove rows where the patient is ALREADY in the absorbing state
-    # We only want the time spent waiting for the event (Hospital State)
-    dplyr::filter(y != event_status, y != death_status) |>
-
-    # 3. Handle edge cases (multiple events?)
-    # We stop at the FIRST event.
-    # This keeps rows up to and including the first interval that ends in an event.
-    dplyr::mutate(has_event = cumsum(status > 0)) |>
-    dplyr::filter(has_event <= 1) |>
-
+    # Keep rows where no event has happened in the past
+    dplyr::filter(prev_events == 0) |>
     dplyr::ungroup() |>
     dplyr::select(
       id,
@@ -923,8 +924,7 @@ format_competing_risks <- function(data, event_status = 1, death_status = 6) {
       y,
       dplyr::everything(),
       -next_y,
-      -has_event
+      -cum_events,
+      -prev_events
     )
-
-  return(data)
 }
