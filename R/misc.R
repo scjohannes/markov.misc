@@ -469,7 +469,7 @@ states_to_tte_old <- function(
 #' tte_data <- states_to_tte(trajectories, covariates = c("age", "sofa", "baseline_severity"))
 #' }
 #' @importFrom dplyr arrange group_by mutate lag summarize first select any_of everything
-#'
+#' @export
 states_to_tte <- function(data, covariates = c("age", "sofa")) {
   # 1. Input Validation
   required_cols <- c("id", "time", "y", "tx")
