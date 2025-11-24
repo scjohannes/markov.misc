@@ -2,7 +2,7 @@
 % Please edit documentation in R/misc.R
 \name{states_to_tte}
 \alias{states_to_tte}
-\title{Convert State Trajectory Data to Time-to-event data}
+\title{Convert Markov Data to Time-to-Event (Start-Stop) Format}
 \usage{
 states_to_tte(data, covariates = c("age", "sofa"))
 }
@@ -16,19 +16,13 @@ the output (default: c("age", "sofa")). The first value of each covariate
 per patient will be retained.}
 }
 \value{
-A data frame with columns:
-\itemize{
-\item id: patient identifier
-\item tx: treatment assignment
-\item start: start of the interval, first value per participant is zero
-\item stop: end of the interval
-\item y: state at the end of the interval
-\item any additional covariates specified
-}
+A tibble in start-stop format with columns:
+\code{id}, \code{tx}, \code{start}, \code{stop}, \code{y}, \code{yprev},
+and specified covariates.
 }
 \description{
-This function calculates time-to-event for usage in Cox or recurrent event
-models.
+Converts a longitudinal dataset of daily states into a collapsed
+start-stop format suitable for survival analysis
 }
 \details{
 Each event change within a participant concludes a time interval indicated by
@@ -40,11 +34,9 @@ covariates will be kept in the output.
 # After simulating trajectories
 trajectories <- sim_trajectories_markov(baseline_data, follow_up_time = 60,
                                         lp_function = my_lp)
-tte_data <- states_to_tte(trajectories, follow_up_time = 60)
+tte_data <- states_to_tte(trajectories)
 
 # With different covariates
-tte_data <- states_to_tte(trajectories, follow_up_time = 60,
-                          covariates = c("age", "sofa", "baseline_severity"))
+tte_data <- states_to_tte(trajectories, covariates = c("age", "sofa", "baseline_severity"))
 }
-
 }
