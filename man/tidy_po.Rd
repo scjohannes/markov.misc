@@ -2,7 +2,7 @@
 % Please edit documentation in R/power.R
 \name{tidy_po}
 \alias{tidy_po}
-\title{Extract Tidy Coefficients from Proportional Odds Models}
+\title{Extract Tidy Coefficients from Proportional Odds and Cox Models}
 \usage{
 tidy_po(
   fit,
