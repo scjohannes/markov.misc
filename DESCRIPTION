@@ -20,13 +20,18 @@ Imports:
     rlang,
     rms,
     rsample,
+    VGAM,
+    survival,
     stats,
     tibble,
     tidyr,
     purrr
 Depends: 
-    R (>= 4.0)
+    R (>= 4.1.0)
 LazyData: true
 Suggests: 
+    knitr,
+    rmarkdown,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
+VignetteBuilder: knitr

@@ -1,0 +1,404 @@
+---
+title: "Power Simulation Pipeline"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Power Simulation Pipeline}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## Setup
+
+First, we load the necessary packages and define our simulation constants.
+
+Note: For this vignette, we use a small sample size and low simulation count to ensure the document compiles quickly. In a real analysis, you should use larger values (e.g., `N_PATIENTS = 250000` and `N_SIMULATIONS = 1000`).
+```{r setup, message=FALSE, warning=FALSE}
+library(markov.misc)
+library(arrow)
+library(dplyr)
+library(furrr)
+library(rms)
+library(VGAM)
+library(survival)
+
+# Configuration for Vignette (Fast Run)
+N_PATIENTS <- 2000      # Real analysis: 250,000+
+N_SIMULATIONS <- 16      # Real analysis: 1,000+
+SAMPLE_SIZE <- 300      # Patients per clinical trial sample
+N_CORES <- 8            # Adjust based on your machine
+SEED <- 123456
+
+# Use temporary directory for vignette to avoid writing to persistent storage
+DATA_PATH <- file.path(tempdir(), "sim_data")
+OUTPUT_PATH <- file.path(tempdir(), "sim_output")
+
+# Create directories
+if (!dir.exists(DATA_PATH)) dir.create(DATA_PATH)
+if (!dir.exists(OUTPUT_PATH)) dir.create(OUTPUT_PATH)
+```
+
+## Step 1: Generate Superpopulation
+
+We generate a large population of patient trajectories using a Brownian motion model. We also calculate the "true" effect size based on this superpopulation to use as a reference.
+
+```{r superpop}
+# Effect size to simulate (e.g., -0.01 drift)
+effect_sizes <- c(0, -0.01)
+
+for (i in effect_sizes) {
+  # Generate trajectories using Brownian motion model
+  # This creates a 6-state model similar to VIOLET trial
+  markov_data <- sim_trajectories_brownian(
+    n_patients = N_PATIENTS,
+    # latent_dist = "normal",
+    # thresholds = c(-3, -1.0, 0.5, 2, 3),
+    # mu_drift = -0.12,
+    # drift_change_times = c(40, 50),
+    # sigma_rw = 0.02,
+    follow_up_time = 60,
+    treatment_prob = 0.5,
+    absorbing_state = 6,
+    seed = SEED,
+    mu_treatment_effect = i
+  )
+
+  # Plot state occupation probabilities (SOPs)
+  plot_sops(markov_data, geom = "line")
+
+  # Calculate True Effect: Difference in time in state 1 (Home)
+  es_calc <- calc_time_in_state_diff(markov_data, target_state = 1)
+  es <- es_calc$true_effect[1]
+  
+  message(paste0("True Effect Size (Days at Home Diff): ", round(es, 2)))
+
+  # --- Convert to different data formats for analysis ---
+
+  # 1. T-Test format (Count of days in state 1)
+  t_data <- states_to_ttest(markov_data, target_state = 1)
+
+  # 2. DRS format (Days at home after last hospitalization)
+  drs_data <- states_to_drs(
+    markov_data,
+    target_state = 1,
+    follow_up_time = 60,
+    covariates = NULL
+  )
+
+  # 3. Time-to-Event format (Anderson-Gill)
+  count_data <- states_to_tte(markov_data, covariates = NULL)
+
+  # --- Prepare Data for Markov Analysis ---
+  # Removes absorbing states and converts variables
+  markov_model_data <- prepare_markov_data(
+    data = markov_data,
+    absorbing_state = 6,
+    ordered_response = TRUE,
+    factor_previous = TRUE
+  )
+
+  # --- Save Superpopulations to Disk ---
+  # We use parquet files to allow efficient partial reading during simulation
+  es_label <- sprintf("%.2f", es)
+  
+  write_parquet(markov_model_data, file.path(DATA_PATH, paste0("superpopulation_markov_", es_label, ".parquet")))
+  write_parquet(t_data, file.path(DATA_PATH, paste0("superpopulation_ttest_", es_label, ".parquet")))
+  write_parquet(drs_data, file.path(DATA_PATH, paste0("superpopulation_drs_", es_label, ".parquet")))
+  write_parquet(count_data, file.path(DATA_PATH, paste0("superpopulation_count_", es_label, ".parquet")))
+}
+```
+
+## Step 2: Identify Scenarios
+
+We scan the data directory to identify which effect size scenarios are available for simulation.
+
+```{r}
+# Get all markov files to determine available effect sizes
+markov_files <- list.files(DATA_PATH, pattern = "superpopulation_markov_.*\\.parquet", full.names = TRUE)
+
+# Extract effect sizes from filenames using regex
+available_effect_sizes <- as.numeric(
+  gsub(".*superpopulation_markov_([0-9.-]+)\\.parquet", "\\1", markov_files)
+)
+
+message(paste("Found scenarios:", paste(available_effect_sizes, collapse = ", ")))
+```
+
+## Step 3: Define Analysis Functions
+
+We define wrapper functions for each statistical method. These functions take the sampled data and the iteration number `iter`, fit a model, and return a standardized tibble of results using `tidy_po` or manual construction.
+
+```{r}
+# Markov analysis with VGAM (naive SEs)
+fit_markov_naive <- function(data, iter) {
+  # Fit VGAM model
+  fit <- VGAM::vglm(
+    y ~ tx + rcs(time, 4) + yprev,
+    family = VGAM::cumulative(parallel = TRUE, reverse = TRUE),
+    data = data
+  )
+
+  # Tidy output
+  result <- tidy_po(fit, alternative = "two.sided", conf_level = 0.95) |>
+    filter(term == "tx") |>
+    mutate(
+      iter = iter,
+      analysis = "markov_vgam",
+      se_type = "naive",
+      .before = 1
+    )
+
+  return(result)
+}
+
+# DRS analysis with rms::orm
+fit_drs_orm <- function(data, iter) {
+  # Set up datadist for rms
+  # dd <- rms::datadist(data)
+  # assign('dd', dd, envir = .GlobalEnv)
+  # options(datadist = "dd", )
+
+  # Fit ORM model
+  fit <- rms::orm(drs ~ tx, data = data)
+
+  # Tidy coefficients with one-sided test (greater (higher odds of better state))
+  result <- tidy_po(fit, alternative = "two.sided", conf_level = 0.95) |>
+    filter(term == "tx") |>
+    mutate(
+      iter = iter,
+      analysis = "drs_orm",
+      se_type = "robust",
+      .before = 1
+    )
+
+  return(result)
+}
+
+# T-test analysis
+fit_ttest <- function(data, iter) {
+  # Run one-sided t-test
+  # For some reason this tests HA that tx0 < tx1
+  # Would have expected it to be the opposite and to have to use alternative = "greater"
+  t_result <- t.test(
+    y ~ tx,
+    data = data,
+    alternative = "two.sided",
+    conf.level = 0.95
+  )
+
+  # Format results to match expected structure
+  result <- tibble::tibble(
+    iter = iter,
+    analysis = "ttest",
+    se_type = "naive",
+    term = "tx",
+    estimate = -diff(t_result$estimate), # tx1 - tx0
+    std_error = t_result$stderr,
+    statistic = t_result$statistic,
+    p_value = t_result$p.value,
+    conf_low = -t_result$conf.int[2],
+    conf_high = -t_result$conf.int[1]
+  )
+
+  return(result)
+}
+
+# Using finegray subdistributional hazard ratio
+fit_time_to_discharge <- function(data, iter) {
+  data <- format_competing_risks(data, event_status = 1, death_status = 6) |>
+    mutate(
+      status = factor(
+        status,
+        levels = c(0, 1, 2),
+        labels = c("censored", "discharge", "death")
+      )
+    )
+
+  fg_data <- survival::finegray(
+    survival::Surv(start, stop, status) ~ .,
+    data = data,
+    etype = "discharge",
+    id = id
+  )
+
+  fg_model <- survival::coxph(
+    survival::Surv(fgstart, fgstop, fgstatus) ~ tx + yprev,
+    data = fg_data,
+    weights = fgwt,
+    cluster = id
+  )
+
+  tidy_po(fg_model, alternative = "two.sided") |>
+    filter(term == "tx") |>
+    mutate(
+      iter = iter,
+      analysis = "time_to_discharge_fg",
+      se_type = "robust",
+      .before = 1
+    )
+}
+
+fit_time_to_recovery <- function(data, iter) {
+  # Restructure data
+  # data$lead_dur <- lead(data$stop - data$start)
+  data <- data |>
+    group_by(id) |>
+    mutate(lead_dur = lead(stop - start)) |>
+    ungroup()
+
+  data$event <- data$y == 1 & data$lead_dur > 3
+  data$event <- ifelse(is.na(data$event), FALSE, data$event)
+  split_data <- split(data, data$id)
+  temp <- lapply(split_data, FUN = function(x) {
+    if (any(x$event == TRUE)) {
+      x[x$event & x$stop == min(x$stop[x$event]), ]
+    } else {
+      x[nrow(x), ]
+    }
+  })
+
+  data <- do.call(rbind, temp)
+
+  cox_model <- survival::coxph(
+    survival::Surv(time = stop, event = event) ~ tx + yprev,
+    #cluster = id, # Check the type-I-error without robust SEs
+    data = data
+  )
+
+  tidy_po(cox_model, alternative = "two.sided") |>
+    filter(term == "tx") |>
+    mutate(
+      iter = iter,
+      analysis = "time_to_recovery_cox",
+      se_type = "naive",
+      .before = 1
+    )
+}
+
+fit_binary_death <- function(data, iter) {
+  # Collapse count data to one row per patient
+  # We determine death if the patient EVER reached state 6 (death_status)
+  analysis_data <- data |>
+    group_by(id) |>
+    summarise(
+      died = as.integer(any(y == 6)),
+      tx = first(tx),
+      yprev = first(yprev)
+    ) |>
+    ungroup()
+
+  # Fit Logistic Regression (GLM)
+  fit <- stats::glm(
+    died ~ tx + yprev,
+    family = stats::binomial(link = "logit"),
+    data = analysis_data
+  )
+
+  # Extract results
+  # We rename columns to match the convention used in your fit_ttest
+  tidy_po(fit, alternative = "two.sided") |>
+    filter(term == "tx") |>
+    mutate(
+      iter = iter,
+      analysis = "death_binary",
+      se_type = "naive",
+      .before = 1
+    )
+}
+
+# Define fitting functions (constant across all effect sizes)
+fit_functions <- list(
+  markov_vgam = fit_markov_naive,
+  drs_orm = fit_drs_orm,
+  ttest = fit_ttest,
+  time_to_discharge = fit_time_to_discharge,
+  time_to_recovery = fit_time_to_recovery,
+  binary_death = fit_binary_death
+)
+```
+
+## Step 4: Run Simulations
+
+We iterate through the available effect sizes and run the simulation using `assess_operating_characteristics()`. This function handles the sampling of patients from the on-disk superpopulations for each iteration.
+
+```{r run-sim}
+# Set up parallel processing if available
+if (requireNamespace("future", quietly = TRUE)) {
+  plan(future.callr::callr, workers = N_CORES)
+} else {
+  plan("sequential")
+}
+
+results_all <- list()
+summary_all <- list()
+
+for (es_val in available_effect_sizes) {
+  es_label <- sprintf("%.2f", es_val)
+  message(paste("Processing scenario:", es_label))
+
+  # Define paths for this specific effect size
+  data_paths <- list(
+    markov_vgam = file.path(DATA_PATH, paste0("superpopulation_markov_", es_label, ".parquet")),
+    drs_orm = file.path(DATA_PATH, paste0("superpopulation_drs_", es_label, ".parquet")),
+    ttest = file.path(DATA_PATH, paste0("superpopulation_ttest_", es_label, ".parquet")),
+    time_to_discharge = file.path(DATA_PATH, paste0("superpopulation_count_", es_label, ".parquet")),
+    time_to_recovery = file.path(DATA_PATH, paste0("superpopulation_count_", es_label, ".parquet")),
+    binary_death = file.path(DATA_PATH, paste0("superpopulation_count_", es_label, ".parquet"))
+  )
+
+  # Run parallel simulations
+  results <- future_map_dfr(
+    1:N_SIMULATIONS,
+    ~ assess_operating_characteristics(
+      iter_num = .,
+      data_paths = data_paths,
+      fit_functions = fit_functions,
+      sample_size = SAMPLE_SIZE,
+      allocation_ratio = 0.5,
+      rerandomize = FALSE,
+      seed = SEED
+    ),
+    .options = furrr_options(
+      seed = TRUE,
+      packages = c("rms", "VGAM", "dplyr", "tibble", "markov.misc", "survival")
+    )
+  )
+  
+  results$effect_size_label <- es_label
+  results_all[[es_label]] <- results
+
+  # Summarize
+  summary <- summarize_oc_results(results, alpha = 0.025) |>
+    mutate(effect_size_label = es_label, .before = 1)
+  
+  summary_all[[es_label]] <- summary
+  
+  # Display brief summary
+  print(head(summary))
+}
+
+# Return to sequential plan
+plan("sequential")
+```
+
+## Step 5: Review Results
+
+We can combine the summaries and inspect the power/operating characteristics of the different methods.
+
+```{r review-results}
+final_summary <- bind_rows(summary_all)
+
+# Print summary table
+knitr::kable(final_summary, digits = 3)
+
+# Clean up temporary files
+unlink(DATA_PATH, recursive = TRUE)
+unlink(OUTPUT_PATH, recursive = TRUE)
+```
+

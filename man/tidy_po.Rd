@@ -2,7 +2,7 @@
 % Please edit documentation in R/power.R
 \name{tidy_po}
 \alias{tidy_po}
-\title{Extract Tidy Coefficients from Proportional Odds and Cox Models}
+\title{Extract Tidy Coefficients from Proportional Odds, Cox, and GLM Models}
 \usage{
 tidy_po(
   fit,
@@ -11,9 +11,10 @@ tidy_po(
 )
 }
 \arguments{
-\item{fit}{A fitted proportional odds model object. Supported classes:
-"vglm" (VGAM), "orm" (rms), "clm" (ordinal). For robust standard errors with
-orm models, apply \code{rms::robcov()} to the model before passing to this function.}
+\item{fit}{A fitted model object. Supported classes:
+"vglm" (VGAM), "orm" (rms), "clm" (ordinal), "coxph" (survival), "glm" (stats).
+For robust standard errors with orm models, apply \code{rms::robcov()} to the model
+before passing to this function.}
 
 \item{alternative}{Character. Specifies the alternative hypothesis for p-value
 calculation: "two.sided" (default), "greater" (H₁: β > 0), or "less" (H₁: β < 0).
@@ -35,29 +36,21 @@ A tibble with columns:
 }
 \description{
 Extracts coefficients with standard errors, p-values, and confidence intervals
-from various proportional odds model objects, with standardized output format.
-Supports both VGAM::vglm, rms::orm, and ordinal::clm models.
+from various model objects, with standardized output format.
+Supports VGAM::vglm, rms::orm, ordinal::clm, survival::coxph, and stats::glm models.
 }
 \details{
 This function provides a standardized interface for extracting coefficients
-across different proportional odds packages:
+across different packages. Intercepts are automatically excluded from the output.
+
+Supported models:
 \itemize{
-\item \strong{VGAM::vglm}: Extracts naive SEs using \code{vcov()}. For robust inference
-accounting for clustering, use bootstrap via \code{assess_operating_characteristics()}.
-\item \strong{rms::orm}: Automatically detects whether \code{robcov()} was applied. If
-\code{fit$var} exists (populated by \code{robcov()}), uses robust SEs. Otherwise,
-uses \code{vcov(fit)} for naive SEs. To get robust SEs:
-\verb{fit_robust <- robcov(fit, cluster = data$id); tidy_po(fit_robust)}
-\item \strong{ordinal::clm}: Extracts naive SEs from model summary. For robust inference
-accounting for clustering, use bootstrap via \code{assess_operating_characteristics()}.
+\item \strong{VGAM::vglm}: Extracts naive SEs using \code{vcov()}.
+\item \strong{rms::orm}: Automatically detects if \code{robcov()} was applied.
+\item \strong{ordinal::clm}: Extracts naive SEs from model summary.
+\item \strong{survival::coxph}: Extracts SEs (robust if cluster/weights used).
+\item \strong{stats::glm}: Extracts SEs using \code{vcov()}. Useful for binary logistic regression.
 }
-
-Intercepts are automatically excluded. Previous state coefficients are
-standardized (e.g., "yprev2" for all packages).
-
-\strong{Note}: The function automatically determines the SE type for orm models.
-For VGAM and ordinal models, bootstrap-based inference is recommended when
-accounting for within-patient correlation is critical.
 }
 \examples{
 \dontrun{
