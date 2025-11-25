@@ -168,15 +168,16 @@ prepare_markov_data <- function(
 }
 
 
-#' Extract Tidy Coefficients from Proportional Odds and Cox Models
+#' Extract Tidy Coefficients from Proportional Odds, Cox, and GLM Models
 #'
 #' Extracts coefficients with standard errors, p-values, and confidence intervals
-#' from various proportional odds model objects, with standardized output format.
-#' Supports both VGAM::vglm, rms::orm, and ordinal::clm models.
+#' from various model objects, with standardized output format.
+#' Supports VGAM::vglm, rms::orm, ordinal::clm, survival::coxph, and stats::glm models.
 #'
-#' @param fit A fitted proportional odds model object. Supported classes:
-#'   "vglm" (VGAM), "orm" (rms), "clm" (ordinal). For robust standard errors with
-#'   orm models, apply `rms::robcov()` to the model before passing to this function.
+#' @param fit A fitted model object. Supported classes:
+#'   "vglm" (VGAM), "orm" (rms), "clm" (ordinal), "coxph" (survival), "glm" (stats).
+#'   For robust standard errors with orm models, apply `rms::robcov()` to the model
+#'   before passing to this function.
 #' @param alternative Character. Specifies the alternative hypothesis for p-value
 #'   calculation: "two.sided" (default), "greater" (H₁: β > 0), or "less" (H₁: β < 0).
 #'   Affects both p-values and confidence interval bounds.
@@ -193,25 +194,14 @@ prepare_markov_data <- function(
 #'
 #' @details
 #' This function provides a standardized interface for extracting coefficients
-#' across different proportional odds packages:
+#' across different packages. Intercepts are automatically excluded from the output.
 #'
-#' - **VGAM::vglm**: Extracts naive SEs using `vcov()`. For robust inference
-#'   accounting for clustering, use bootstrap via `assess_operating_characteristics()`.
-#'
-#' - **rms::orm**: Automatically detects whether `robcov()` was applied. If
-#'   `fit$var` exists (populated by `robcov()`), uses robust SEs. Otherwise,
-#'   uses `vcov(fit)` for naive SEs. To get robust SEs:
-#'   `fit_robust <- robcov(fit, cluster = data$id); tidy_po(fit_robust)`
-#'
-#' - **ordinal::clm**: Extracts naive SEs from model summary. For robust inference
-#'   accounting for clustering, use bootstrap via `assess_operating_characteristics()`.
-#'
-#' Intercepts are automatically excluded. Previous state coefficients are
-#' standardized (e.g., "yprev2" for all packages).
-#'
-#' **Note**: The function automatically determines the SE type for orm models.
-#' For VGAM and ordinal models, bootstrap-based inference is recommended when
-#' accounting for within-patient correlation is critical.
+#' Supported models:
+#' - **VGAM::vglm**: Extracts naive SEs using `vcov()`.
+#' - **rms::orm**: Automatically detects if `robcov()` was applied.
+#' - **ordinal::clm**: Extracts naive SEs from model summary.
+#' - **survival::coxph**: Extracts SEs (robust if cluster/weights used).
+#' - **stats::glm**: Extracts SEs using `vcov()`. Useful for binary logistic regression.
 #'
 #' @examples
 #' \dontrun{
@@ -342,8 +332,22 @@ tidy_po <- function(
       std_error = ses,
       statistic = estimate / std_error
     )
+    # --- stats::glm method ---
+  } else if (inherits(fit, "glm")) {
+    coefs <- stats::coef(fit)
+    ses <- sqrt(diag(stats::vcov(fit)))
+
+    # Filter out Intercepts
+    non_intercepts <- !grepl("\\(Intercept\\)", names(coefs))
+
+    result <- tibble::tibble(
+      term = names(coefs)[non_intercepts],
+      estimate = coefs[non_intercepts],
+      std_error = ses[non_intercepts],
+      statistic = estimate / std_error
+    )
   } else {
-    stop("fit must be a vglm, orm, clm, or coxph object")
+    stop("fit must be a vglm, orm, clm, coxph, or glm object")
   }
 
   # --- Common Calculation for P-values and CIs ---

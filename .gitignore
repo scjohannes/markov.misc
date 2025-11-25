@@ -50,3 +50,6 @@ rsconnect/
 .Rproj.user
 .github/copilot-instructions.md
 scripts
+inst/doc
+/doc/
+/Meta/

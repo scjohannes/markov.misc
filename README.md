@@ -1,6 +1,6 @@
 # markov.misc
 
-An R package for first-order Markov transition modelling, trajectory
+An R package for Markov transition modelling, trajectory
 simulation, visualization and operating-characteristic (power) calculations for
 discrete health states. The package was developed to support clinical trial
 simulation workflows and includes bootstrap helpers for inference on
