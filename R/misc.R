@@ -402,34 +402,40 @@ states_to_tte_old <- function(
   covariates = c("age", "sofa")
 ) {
   # Input validation
-  required_cols <- c("id", "time", "y", "tx")
+  required_cols <- c("id", "time", "y", "tx", "yprev")
   missing_cols <- setdiff(required_cols, names(data))
   if (length(missing_cols) > 0) {
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  # Calculate Andersen-Gill count data format
-  data$state_change <- ave(data[["y"]], data[["id"]], FUN = function(x) {
-    c(0, diff(x))
-  })
+  # Calculate Andersen-Gill count data format ----------------------------------
 
-  data <- data[data$state_change != 0, ]
+  # Indicate rows with state changes
+  data$state_change <- data[["y"]] - data[["yprev"]]
 
-  data[["start"]] <- data$start <- ave(data$time, data$id, FUN = function(t) {
+  # Keep state changes and ...
+  data <- data[data$state_change != 0 |
+                 # ... the last entry of each individual, unless they died
+                 (data[["time"]] == ave(data[["time"]],
+                                        data[["id"]],
+                                        FUN = max) &
+                    !data[["y"]] == 6), ]
+
+  data[["start"]] <- ave(data$time, data$id, FUN = function(t) {
     c(0, t[-length(t)])
   })
-  data[["stop"]] <- data[["time"]]
-  data <- data[, !(colnames(data) %in% c("state_change", "time"))]
+  data[["stop"]] <- lag(data[["time"]], -1)
+  data <- data[, c("id", "tx", "yprev", "start", "stop", "y")]
 
-  # Add covariates if specified
+  # Add covariates if specified ------------------------------------------------
   if (!is.null(covariates)) {
     available_covs <- intersect(covariates, colnames(data))
     data <- data[,
-      colnames(data) %in%
-        c(
-          c("id", "y", "tx", "start", "stop", "yprev"),
-          available_covs
-        )
+                 colnames(data) %in%
+                   c(
+                     c("id", "tx", "yprev", "start", "stop", "y"),
+                     available_covs
+                   )
     ]
   }
 
