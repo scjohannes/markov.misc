@@ -891,7 +891,8 @@ tidy_bootstrap_coefs <- function(
 #'
 #' @importFrom dplyr arrange group_by mutate lead filter ungroup select everything
 #' @export
-format_competing_risks <- function(data, event_status = 1, death_status = 6) {
+format_competing_risks <- function(data, event_status = 1, death_status = 6,
+                                   version_old = TRUE) {
   # Basic validation
   required_cols <- c("id", "start", "stop", "y", "tx")
   missing_cols <- setdiff(required_cols, names(data))
@@ -899,6 +900,7 @@ format_competing_risks <- function(data, event_status = 1, death_status = 6) {
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
+  if(!version_old) {
   data <- data |>
     dplyr::arrange(id, start) |>
     dplyr::group_by(id) |>
@@ -938,4 +940,29 @@ format_competing_risks <- function(data, event_status = 1, death_status = 6) {
       -cum_events,
       -prev_events
     )
+  }
+
+  if(version_old) {
+    # Split data into id groups
+    data_split <- split(data, data[["id"]])
+
+    # For each individual ...
+    data_split <- lapply(data_split, FUN = function(d) {
+      # ...if any event occurred in this group, select the according rows...
+      event_or_death <- d[["y"]] == event_status | d[["y"]] == death_status
+      if(any(event_or_death)) {
+        d <- d[event_or_death, ]
+      # ...else select the last row
+      } else {
+        d <- d[nrow(d), ]
+      }
+      # introduce status variable, which indicates event (1) or death (2)
+      d[["status"]] <- factor(ifelse(d[["y"]] == event_status, 1,
+                              ifelse(d[["y"]] == death_status, 2, 0)))
+      d <- d[1, ]
+      d[["etime"]] <- as.numeric(d[["stop"]])
+      return(d)
+      })
+    return(do.call(rbind, data_split))
+  }
 }
