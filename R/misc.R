@@ -424,7 +424,7 @@ states_to_tte_old <- function(
   data[["start"]] <- ave(data$time, data$id, FUN = function(t) {
     c(0, t[-length(t)])
   })
-  data[["stop"]] <- lag(data[["time"]], -1)
+  data[["stop"]] <- stats::lag(data[["time"]], -1)
   data <- data[, c("id", "tx", "yprev", "start", "stop", "y")]
 
   # Add covariates if specified ------------------------------------------------
