@@ -484,6 +484,7 @@ bootstrap_model_coefs <- function(
 #' bs_sops <- bootstrap_standardized_sops(
 #'   model = m,
 #'   data = my_data,
+#'   times = 1:30,
 #'   n_boot = 1000,
 #'   ylevels = 1:6,
 #'   absorb = 6
@@ -532,6 +533,8 @@ bootstrap_standardized_sops <- function(
   ylevels = 1:6,
   absorb = 6,
   times = NULL,
+  update_datadist = TRUE,
+  use_coefstart = TRUE,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 ) {
   # Check model class
@@ -566,7 +569,8 @@ bootstrap_standardized_sops <- function(
       original_data = data,
       ylevels = ylevels,
       absorb = absorb,
-      update_datadist = TRUE
+      update_datadist = update_datadist,
+      use_coefstart = use_coefstart
     )
 
     m_boot <- boot_result$model
