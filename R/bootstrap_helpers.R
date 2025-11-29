@@ -345,17 +345,31 @@ bootstrap_analysis_wrapper <- function(
   # Refit model
   m_boot <- tryCatch(
     {
-      # Use coefstart only if requested, valid for model type, and safe (no missing states)
+      # Attempt with coefstart if conditions met
       if (
         use_coefstart && inherits(model, "vglm") && length(missing_states) == 0
       ) {
-        stats::update(model, data = boot_data, coefstart = stats::coef(model))
+        tryCatch(
+          {
+            stats::update(
+              model,
+              data = boot_data,
+              coefstart = stats::coef(model)
+            )
+          },
+          error = function(e) {
+            # If coefstart fails (e.g. non-conformable due to dropped predictor levels),
+            # fall back to standard update
+            stats::update(model, data = boot_data)
+          }
+        )
       } else {
+        # Standard update without coefstart
         stats::update(model, data = boot_data)
       }
     },
     error = function(e) {
-      warning("Bootstrap iteration failed: ", e$message)
+      warning("Bootstrap model fitting failed: ", e$message)
       return(NULL)
     }
   )
