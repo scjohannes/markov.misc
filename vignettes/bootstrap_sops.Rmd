@@ -1,0 +1,114 @@
+---
+title: "Bootstrap Marginal State Occupation Probabilities"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Bootstrap Marginal State Occupation Probabilities}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+## Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+library(markov.misc)
+library(arrow)
+library(dplyr)
+library(tidyr)
+library(furrr)
+library(rms)
+library(VGAM)
+library(survival)
+
+# Configuration for Vignette (Fast Run)
+N_PATIENTS <- 30      # Real analysis: 250,000+
+SEED <- 123456
+
+# Use temporary directory for vignette to avoid writing to persistent storage
+DATA_PATH <- file.path(tempdir(), "sim_data")
+OUTPUT_PATH <- file.path(tempdir(), "sim_output")
+
+# Create directories
+if (!dir.exists(DATA_PATH)) dir.create(DATA_PATH)
+if (!dir.exists(OUTPUT_PATH)) dir.create(OUTPUT_PATH)
+```
+
+## Step 1: Simualte Trial Data
+
+```{r superpop}
+markov_data <- sim_trajectories_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = 15,
+  treatment_prob = 0.5,
+  absorbing_state = 6,
+  seed = SEED,
+  mu_treatment_effect = 0
+)
+
+# Plot state occupation probabilities (SOPs)
+plot_sops(markov_data, geom = "line")
+
+# Calculate True Effect: Difference in time in state 1 (Home)
+es_calc <- calc_time_in_state_diff(markov_data, target_state = 1)
+es <- es_calc$true_effect[1]
+```
+
+## Step 2: Fit Model
+
+```{r}
+data <- prepare_markov_data(markov_data)
+
+m <- vglm(y ~ rcs(time, 4) + tx + yprev, family = cumulative(reverse = TRUE, parallel = TRUE), data = data)
+```
+
+## Step 3: Bootstrap SOPs
+
+```{r}
+bs_sops <- bootstrap_standardized_sops(
+  model = m,
+  data = data,
+  times = 1:15,
+  n_boot = 100,
+  ylevels = factor(1:6),
+  absorb = "6",
+  use_coefstart = TRUE,
+  update_datadist = FALSE,
+  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
+)
+
+
+# Filter to treatment group and reshape to long format
+sops_tx_long <- bs_sops |>
+  filter(tx == 1) |>
+  pivot_longer(
+    cols = starts_with("state_"),
+    names_to = "state",
+    values_to = "probability",
+    names_prefix = "state_"
+  )
+
+# Compute confidence intervals
+ci_bands <- sops_tx_long |>
+  group_by(time, state) |>
+  summarise(
+    lower = quantile(probability, 0.025),
+    median = median(probability),
+    upper = quantile(probability, 0.975),
+    .groups = "drop"
+  )
+
+# Plot with confidence bands
+library(ggplot2)
+ggplot(ci_bands, aes(x = time, y = median, color = state)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = state), alpha = 0.2) +
+  facet_wrap(~state) +
+  labs(title = "Standardized SOPs under Treatment with 95% CI")
+}
+```
