@@ -8,7 +8,7 @@ standardize_sops(
   model,
   data = NULL,
   times = NULL,
-  ylevels = 1:6,
+  ylevels = factor(1:6),
   absorb = 6,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 )

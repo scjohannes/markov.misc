@@ -10,7 +10,8 @@ bootstrap_model_coefs(
   n_boot,
   workers = NULL,
   parallel = FALSE,
-  id_var = "id"
+  id_var = "id",
+  use_coefstart = FALSE
 )
 }
 \arguments{
