@@ -27,7 +27,7 @@ library(VGAM)
 library(ggplot2)
 
 N_PATIENTS <- 200
-R <- 64
+R <- 64*8
 SEED <- 123456
 
 DATA_PATH <- file.path(tempdir(), "sim_data")
@@ -51,7 +51,8 @@ markov_data <- sim_trajectories_brownian(
 )
 
 # Plot state occupation probabilities (SOPs)
-plot_sops(markov_data, geom = "line")
+plot_sops(markov_data, geom = "line") + 
+  scale_color_brewer(palette = "Dark2")
 
 # Calculate True Effect: Difference in time in state 1 (Home)
 es_calc <- calc_time_in_state_diff(markov_data, target_state = 1)
@@ -86,6 +87,8 @@ t2 <- Sys.time()
 t2 - t1
 ```
 
+## Step 4: Plot Bootstrap Results
+
 
 ```{r}
 # Filter to treatment group and reshape to long format
@@ -112,5 +115,40 @@ ggplot(ci_bands, aes(x = time, y = median, color = state)) +
   geom_ribbon(aes(ymin = lower, ymax = upper, fill = state, group = interaction(state, tx)), alpha = 0.2, color = NA) +
   scale_fill_brewer(palette = "Dark2") +
   scale_color_brewer(palette = "Dark2") +
-  labs(title = "Standardized SOPs with 95% CI")
+  labs(title = "Standardized SOPs with boostrapped 95% confidence bands",
+  y = "State Occupation Probability")
+```
+
+## Step 5: Difference in Time in State 1
+
+
+```{r}
+time_in_state1_diff <- sops_tx_long |>
+  filter(state == "1") |> 
+  group_by(tx, boot_id) |>
+  summarise(
+    time_in_state1 = sum(probability),
+    .groups = "drop"
+  ) |>
+  pivot_wider(names_from = tx, values_from = time_in_state1, names_prefix = "tx_") |>
+  mutate(diff = tx_1 - tx_0)
+
+# Plot
+
+ggplot(time_in_state1_diff, aes(x = diff)) +
+  ggdist::stat_dots(side = "bottom") +
+  ggdist::stat_halfeye() +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Bootstrap Distribution of Difference in Time in State 1",
+    x = "Difference in Time in State 1 (Treatment - Control)",
+    y = ""
+  )
+```
+
+
+```{r}
+# Clean up temporary files
+unlink(DATA_PATH, recursive = TRUE)
+unlink(OUTPUT_PATH, recursive = TRUE)
 ```
