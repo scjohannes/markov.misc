@@ -298,7 +298,8 @@ bootstrap_model_coefs <- function(
   n_boot,
   workers = NULL,
   parallel = FALSE,
-  id_var = "id"
+  id_var = "id",
+  use_coefstart = FALSE
 ) {
   # Check model class
   if (!inherits(model, "orm") && !inherits(model, "vglm")) {
@@ -348,7 +349,8 @@ bootstrap_model_coefs <- function(
       original_data = data,
       ylevels = NULL,
       absorb = NULL,
-      update_datadist = inherits(model, "orm")
+      update_datadist = inherits(model, "orm"),
+      use_coefstart = use_coefstart
     )
 
     m_boot <- boot_result$model
@@ -530,11 +532,11 @@ bootstrap_standardized_sops <- function(
   n_boot,
   workers = NULL,
   parallel = FALSE,
-  ylevels = 1:6,
+  ylevels = factor(1:6),
   absorb = 6,
   times = NULL,
   update_datadist = TRUE,
-  use_coefstart = TRUE,
+  use_coefstart = FALSE,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 ) {
   # Check model class
@@ -592,7 +594,7 @@ bootstrap_standardized_sops <- function(
         model = m_boot,
         data = boot_data,
         times = times,
-        ylevels = boot_ylevels,
+        ylevels = factor(boot_ylevels),
         absorb = boot_absorb,
         varnames = list(
           tvarname = varnames$tvarname,
