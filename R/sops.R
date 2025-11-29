@@ -278,7 +278,7 @@ standardize_sops <- function(
   model,
   data = NULL,
   times = NULL,
-  ylevels = 1:6,
+  ylevels = factor(1:6),
   absorb = 6,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 ) {
@@ -389,4 +389,54 @@ standardize_sops <- function(
     sop_tx = sop_tx,
     sop_ctrl = sop_ctrl
   ))
+}
+
+#' Simulate state occupancy probabilities
+sop_sim <- function(
+  model,
+  baseline_data,
+  varname = "y",
+  pvarname = "yprev",
+  tvarname = "time",
+  times = 1:30,
+  ylevels = factor(1:6, ordered = TRUE),
+  absorb = "6",
+  n_sim = 1000
+) {
+  data <- baseline_data[rep(1:nrow(baseline_data), each = n_sim), ]
+  y <- matrix(absorb, nrow = nrow(data), ncol = length(times))
+
+  for (i in times) {
+    alive_idx <- which(data[[varname]] != absorb)
+    if (length(alive_idx) == 0) {
+      break
+    }
+
+    subset_data <- data[alive_idx, , drop = FALSE]
+    subset_data[[tvarname]] <- i
+
+    prob_matrix <- predict(model, newdata = subset_data, type = "response")
+    y_next <- apply(prob_matrix, 1, function(p) {
+      sample(1:length(p), size = 1, prob = p)
+    })
+    y[alive_idx, i] <- y_next
+    data[alive_idx, varname] <- factor(y_next, levels = 1:6, ordered = TRUE)
+    survivors <- y_next != absorb
+
+    if (any(survivors)) {
+      # Map the survivor boolean back to the main data indices
+      survivor_idx <- alive_idx[survivors]
+
+      # Assign only valid 1-5 values.
+      # R handles the factor level assignment automatically here
+      # as long as y_next contains strings/ints matching the factor levels.
+      data[survivor_idx, pvarname] <- factor(y_next[survivors], levels = 1:5)
+    }
+  }
+
+  apply(y, 2, function(col) {
+    # We convert to factor with explicit levels to ensure
+    # zero-count states are included in the output
+    prop.table(table(factor(col, levels = ylevels)))
+  })
 }
