@@ -24,13 +24,12 @@ library(tidyr)
 library(furrr)
 library(rms)
 library(VGAM)
-library(survival)
+library(ggplot2)
 
-# Configuration for Vignette (Fast Run)
-N_PATIENTS <- 30      # Real analysis: 250,000+
+N_PATIENTS <- 200
+R <- 64
 SEED <- 123456
 
-# Use temporary directory for vignette to avoid writing to persistent storage
 DATA_PATH <- file.path(tempdir(), "sim_data")
 OUTPUT_PATH <- file.path(tempdir(), "sim_output")
 
@@ -44,7 +43,7 @@ if (!dir.exists(OUTPUT_PATH)) dir.create(OUTPUT_PATH)
 ```{r superpop}
 markov_data <- sim_trajectories_brownian(
   n_patients = N_PATIENTS,
-  follow_up_time = 15,
+  follow_up_time = 30,
   treatment_prob = 0.5,
   absorbing_state = 6,
   seed = SEED,
@@ -64,28 +63,33 @@ es <- es_calc$true_effect[1]
 ```{r}
 data <- prepare_markov_data(markov_data)
 
-m <- vglm(y ~ rcs(time, 4) + tx + yprev, family = cumulative(reverse = TRUE, parallel = TRUE), data = data)
+# using a non-portional effect for treatment work as well
+m <- vglm(ordered(y) ~ rcs(time, 4) + tx + yprev, family = cumulative(reverse = TRUE, parallel = FALSE ~tx), data = data)
 ```
 
 ## Step 3: Bootstrap SOPs
 
 ```{r}
+t1 <- Sys.time()
 bs_sops <- bootstrap_standardized_sops(
   model = m,
   data = data,
-  times = 1:15,
-  n_boot = 100,
+  times = 1:30,
+  n_boot = R,
   ylevels = factor(1:6),
   absorb = "6",
-  use_coefstart = TRUE,
-  update_datadist = FALSE,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
+  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
+  parallel = TRUE,
+  workers = 8
 )
+t2 <- Sys.time()
+t2 - t1
+```
 
 
+```{r}
 # Filter to treatment group and reshape to long format
 sops_tx_long <- bs_sops |>
-  filter(tx == 1) |>
   pivot_longer(
     cols = starts_with("state_"),
     names_to = "state",
@@ -95,7 +99,7 @@ sops_tx_long <- bs_sops |>
 
 # Compute confidence intervals
 ci_bands <- sops_tx_long |>
-  group_by(time, state) |>
+  group_by(tx, time, state) |>
   summarise(
     lower = quantile(probability, 0.025),
     median = median(probability),
@@ -103,12 +107,10 @@ ci_bands <- sops_tx_long |>
     .groups = "drop"
   )
 
-# Plot with confidence bands
-library(ggplot2)
 ggplot(ci_bands, aes(x = time, y = median, color = state)) +
-  geom_line() +
-  geom_ribbon(aes(ymin = lower, ymax = upper, fill = state), alpha = 0.2) +
-  facet_wrap(~state) +
-  labs(title = "Standardized SOPs under Treatment with 95% CI")
-}
+  geom_line(aes(linetype = factor(tx))) +
+  geom_ribbon(aes(ymin = lower, ymax = upper, fill = state, group = interaction(state, tx)), alpha = 0.2, color = NA) +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Dark2") +
+  labs(title = "Standardized SOPs with 95% CI")
 ```
