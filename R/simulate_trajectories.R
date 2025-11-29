@@ -451,6 +451,7 @@ sim_trajectories_brownian <- function(
 
     # Generate observation at day 0 using selected CDF
     pcat <- diff(c(0, cdf_fun(thresholds - X[i, 1]), 1))
+    pcat[absorbing_state] <- 0 # nobody should start in absorbing state
     Y[i, 1] <- sample.int(n_states, 1, prob = pcat)
 
     # Simulate remaining days (1 to follow_up_time)

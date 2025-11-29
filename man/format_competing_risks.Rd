@@ -4,7 +4,12 @@
 \alias{format_competing_risks}
 \title{Format Time-to-Event Output for Competing Risks}
 \usage{
-format_competing_risks(data, event_status = 1, death_status = 6)
+format_competing_risks(
+  data,
+  event_status = 1,
+  death_status = 6,
+  version_old = TRUE
+)
 }
 \arguments{
 \item{data}{A data frame produced by \code{states_to_tte()} containing at least
