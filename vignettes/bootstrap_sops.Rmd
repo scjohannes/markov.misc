@@ -27,7 +27,7 @@ library(VGAM)
 library(ggplot2)
 
 N_PATIENTS <- 200
-R <- 64*8
+R <- 8
 SEED <- 123456
 
 DATA_PATH <- file.path(tempdir(), "sim_data")
@@ -64,11 +64,154 @@ es <- es_calc$true_effect[1]
 ```{r}
 data <- prepare_markov_data(markov_data)
 
-# using a non-portional effect for treatment work as well
-m <- vglm(ordered(y) ~ rcs(time, 4) + tx + yprev, family = cumulative(reverse = TRUE, parallel = FALSE ~tx), data = data)
+time_spl_m <- rcs(data$time, 4)
+knots <- attr(time_spl_m, "parms")
+
+data$time_lin <- as.vector(time_spl_m[, 1])
+data$time_nlin_1 <- as.vector(time_spl_m[, 2])
+data$time_nlin_2 <- as.vector(time_spl_m[, 3])
+
+t_covs <-  data |> 
+  select(time_lin, time_nlin_1, time_nlin_2) |> 
+  distinct() |> 
+  arrange(time_lin) |> 
+  data.frame()
+
+M <- 5
+
+cons_tx <- list(
+  # Intercept need identift matrix
+  "(Intercept)"     = diag(M),
+
+  # Proportional odds terms need column of ones
+  "rcs(time, 4)"              = cbind(PO_effect = 1),
+  "yprev"                     = cbind(PO_effect = 1),
+
+  # Linear constraint for baseline effect
+  "tx" = cbind(
+    tx_1_4 = c(1, 1, 1, 1, 0),
+    tx_5    = c(0, 0, 0, 0, 1)
+  )
+)
+
+cons_time <- list(
+  # Intercept need identity matrix
+  "(Intercept)"     = diag(M),
+  # PO effect for tx and yprev
+  "yprev"           = cbind(PO_effect = 1),
+  "tx"              = cbind(PO_effect = 1),
+
+  # linear time can have non-PO effect
+  "time_lin" = cbind(
+    time_lin_1 = 1,
+    time_lin_5 = 0:(M-1)
+  ),
+  "time_nlin_1" = cbind(PO_effect = 1),
+  "time_nlin_2" = cbind(PO_effect = 1)
+)
+
+cons_time_tx <- list(
+  # Intercept need identity matrix
+  "(Intercept)"     = diag(M),
+  # PO effect for tx and yprev
+  "yprev"           = cbind(PO_effect = 1),
+  "tx"              = cbind(PO_effect = 1),
+
+  # linear time can have non-PO effect
+  "time_lin" = cbind(
+    time_lin_1 = 1,
+    time_lin_5 = 0:(M-1)
+  ),
+  "time_nlin_1" = cbind(PO_effect = 1),
+  "time_nlin_2" = cbind(PO_effect = 1),
+  # interaction terms
+  "time_lin:tx" = cbind(PO_effect = 1)
+)
+
+
+# non-linear effect of time using rcs()
+m1 <- vglm(ordered(y) ~ rcs(time, 4) + tx + yprev, family = cumulative(reverse = TRUE, parallel = TRUE), data = data)
+
+# non-linear effect of time using manually created spline terms from rcs() --> this doesn't work with soprobmarkovordm from Hmisc, but is needed for partial PO of linear time of linear interactions
+m2 <- vglm(ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev, family = cumulative(reverse = TRUE, parallel = TRUE), data = data)
+
+# non-linear effect of time with interaction of treatment and linear time
+m3 <- vglm(ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + time_lin:tx + yprev, family = cumulative(reverse = TRUE, parallel = TRUE), data = data)
+
+# non-linear effect of time and non-proportional effect of linear time with linear constraint
+m4 <- vglm(ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev, family = cumulative(reverse = TRUE, parallel = FALSE ~ time_lin), data = data, constraints = cons_time)
+# bake constraint matrix into the model object
+m4@call$constraints  <- cons_time
+
+# non-linear effect of time and non-proportional effect of linear time and interaction of treatment and linear time with linear constraint
+m5 <- vglm(ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev + tx:time_lin, family = cumulative(reverse = TRUE, parallel = FALSE ~ time_lin), data = data, constraints = cons_time_tx)
+m5@call$constraints  <- cons_time_tx
+
+
+# check that Hmisc and markov.misc give same results
+sops_hmisc <- soprobMarkovOrdm(
+  m1,
+  data = data[1, ],
+  time = 1:30,
+  ylevels = factor(1:6),
+  absorb = "6"
+)
+
+sops_1 <- soprob_markov_ord_m(
+  m1,
+  data = data[1, ],
+  time = 1:30,
+  ylevels = factor(1:6),
+  absorb = "6"
+)
+
+all(sops_hmisc == sops_1)
+
+# check that using rcs() within model formula or manually creating splines gives same results
+sops_2 <- soprob_markov_ord_m(
+  m2,
+  data = data[1, ],
+  time = 1:30,
+  ylevels = factor(1:6),
+  absorb = "6",
+  t_covs = t_covs
+)
+
+all(sops_2 == sops_1)
+
+# testing interactions and partial po models
+
+sops_3 <- soprob_markov_ord_m(
+  m3,
+  data = data[1, ],
+  time = 1:30,
+  ylevels = factor(1:6),
+  absorb = "6",
+  t_covs = t_covs
+)
+
+sops_4 <- soprob_markov_ord_m(
+  m4,
+  data = data[1, ],
+  time = 1:30,
+  ylevels = factor(1:6),
+  absorb = "6",
+  t_covs = t_covs
+)
+
+sops_5 <- soprob_markov_ord_m(
+  m5,
+  data = data[1, ],
+  time = 1:30,
+  ylevels = factor(1:6),
+  absorb = "6",
+  t_covs = t_covs
+)
 ```
 
 ## Step 3: Bootstrap SOPs
+
+This doesn't yet work with soprob_markov_ord_m. Need to update all bootstrap functions.
 
 ```{r}
 t1 <- Sys.time()
