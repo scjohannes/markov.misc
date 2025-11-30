@@ -318,7 +318,8 @@ bootstrap_analysis_wrapper <- function(
   original_data,
   ylevels = NULL,
   absorb = NULL,
-  update_datadist = TRUE
+  update_datadist = TRUE,
+  use_coefstart = FALSE
 ) {
   # Relevel factors to handle missing states
   releveled <- relevel_factors_consecutive(
@@ -343,9 +344,32 @@ bootstrap_analysis_wrapper <- function(
 
   # Refit model
   m_boot <- tryCatch(
-    update(model, data = boot_data),
+    {
+      # Attempt with coefstart if conditions met
+      if (
+        use_coefstart && inherits(model, "vglm") && length(missing_states) == 0
+      ) {
+        tryCatch(
+          {
+            stats::update(
+              model,
+              data = boot_data,
+              coefstart = stats::coef(model)
+            )
+          },
+          error = function(e) {
+            # If coefstart fails (e.g. non-conformable due to dropped predictor levels),
+            # fall back to standard update
+            stats::update(model, data = boot_data)
+          }
+        )
+      } else {
+        # Standard update without coefstart
+        stats::update(model, data = boot_data)
+      }
+    },
     error = function(e) {
-      warning("Bootstrap iteration failed: ", e$message)
+      warning("Bootstrap model fitting failed: ", e$message)
       return(NULL)
     }
   )

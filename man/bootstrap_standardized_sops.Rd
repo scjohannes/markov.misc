@@ -10,9 +10,11 @@ bootstrap_standardized_sops(
   n_boot,
   workers = NULL,
   parallel = FALSE,
-  ylevels = 1:6,
+  ylevels = factor(1:6),
   absorb = 6,
   times = NULL,
+  update_datadist = TRUE,
+  use_coefstart = FALSE,
   varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
 )
 }
@@ -115,6 +117,7 @@ m <- orm(y ~ tx + yprev + time, data = my_data, x = TRUE, y = TRUE)
 bs_sops <- bootstrap_standardized_sops(
   model = m,
   data = my_data,
+  times = 1:30,
   n_boot = 1000,
   ylevels = 1:6,
   absorb = 6
