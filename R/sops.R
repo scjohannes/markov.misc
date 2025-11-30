@@ -440,3 +440,220 @@ sop_sim <- function(
     prop.table(table(factor(col, levels = ylevels)))
   })
 }
+
+#' Calculate State Occupation Probabilities for First-Order Markov Models
+#'
+#' Estimates state occupation probabilities over time by iterating a transition
+#' matrix derived from a fitted model object (e.g., `vglm`, `rms`, or `rmsb`).
+#' This function supports linear time iteration as well as complex, non-linear
+#' time specifications (e.g., splines) via a covariate lookup table.
+#'
+#' @param object A fitted model object. Supported classes include:
+#'   \code{"lrm"}, \code{"orm"} (from package `rms`),
+#'   \code{"blrm"} (from package `rmsb`), and
+#'   \code{"vglm"}, \code{"vgam"} (from package `VGAM`).
+#' @param data A data frame containing the baseline covariates for the prediction.
+#'   Should generally contain a single row representing the subject profile.
+#'   Must contain the variable specified in \code{tvarname} (usually initialized to 0 or start time).
+#' @param times A numeric vector of time points to iterate over.
+#'   The function calculates probabilities for each time point in this sequence.
+#' @param ylevels A character vector defining the names of the outcome levels (states).
+#'   These must match the levels used in the fitted `object`.
+#' @param absorb (Optional) A character vector of absorbing states (states from which
+#'   transitions out are impossible). Defaults to \code{NULL}.
+#' @param tvarname A character string specifying the name of the time variable in the
+#'   model formula. Defaults to \code{"time"}.
+#' @param pvarname A character string specifying the name of the previous state variable
+#'   used in the model formula. Defaults to \code{"yprev"}.
+#' @param gap (Optional) A character string specifying the name of the variable representing
+#'   the time gap (delta time) between observations, if used in the model. Defaults to \code{NULL}.
+#' @param t_covs (Optional) A data frame used for non-linear time handling (e.g., splines
+#'   or basis functions).
+#'   \itemize{
+#'     \item **Structure:** The number of rows in \code{t_covs} must exactly match the length of \code{times}.
+#'     \item **Columns:** Column names must match the specific basis variables used in the model formula (e.g., \code{t1}, \code{t2}).
+#'     \item **Usage:** At step \code{i}, the values from the \code{i}-th row of \code{t_covs} are injected into the prediction data.
+#'   }
+#'   This allows for `vglm` models where basis functions are supplied as separate columns rather than calculated on the fly.
+#'
+#' @details
+#' The function iterates through the vector \code{times}. At each time point \eqn{t}, it:
+#' 1. Updates the time variable (and `t_covs` if supplied).
+#' 2. Predicts the transition probability matrix \eqn{T(t)} based on the covariates and the previous state.
+#' 3. Updates the state occupation probability vector \eqn{P(t)} using the matrix multiplication:
+#'    \eqn{P(t) = P(t-1) \times T(t)}.
+#'
+#' If the model is Bayesian (\code{rmsb}), the output preserves the posterior draws.
+#'
+#' @return
+#' An array of state probabilities.
+#' \itemize{
+#'   \item **Frequentist fit:** A matrix of dimension \code{[length(times) x length(ylevels)]}.
+#'   \item **Bayesian fit:** An array of dimension \code{[n_draws x length(times) x length(ylevels)]}.
+#' }
+#'
+#' @export
+soprob_markov_ord_m <- function(
+  object,
+  data,
+  times,
+  ylevels,
+  absorb = NULL,
+  tvarname = "time",
+  pvarname = "yprev",
+  gap = NULL,
+  t_covs = NULL
+) {
+  # --- Initial Checks ---
+  cl <- class(object)[1]
+  ftypes <- c(
+    lrm = "rms",
+    orm = "rms",
+    blrm = "rmsb",
+    vglm = "vgam",
+    vgam = "vgam"
+  )
+  ftype <- ftypes[cl]
+  if (is.na(ftype)) {
+    stop(paste(
+      "object must be a fit from one of:",
+      paste(ftypes, collapse = " ")
+    ))
+  }
+
+  # --- Define Prediction Function ---
+  prd <- switch(
+    ftype,
+    rms = function(obj, data) predict(obj, data, type = "fitted.ind"),
+    vgam = function(obj, data) VGAM::predict(obj, data, type = "response"),
+    rmsb = function(obj, data) {
+      predict(obj, data, type = "fitted.ind", posterior.summary = "all")
+    }
+  )
+
+  if (pvarname %nin% names(data)) {
+    stop(paste(pvarname, "is not in data"))
+  }
+  if (length(absorb) && (pvarname %in% absorb)) {
+    stop("initial state cannot be an absorbing state")
+  }
+
+  # --- Check Time Covariates (New Logic) ---
+  if (!is.null(t_covs)) {
+    if (!is.data.frame(t_covs)) {
+      stop("'t_covs' must be a data frame")
+    }
+    if (nrow(t_covs) != length(times)) {
+      stop("The number of rows in 't_covs' must match the length of 'times'")
+    }
+  }
+
+  # --- Setup Output Arrays ---
+  nd <- if (ftype == "rmsb" && length(object$draws)) nrow(object$draws) else 0
+  if ((nd == 0) != (ftype != "rmsb")) {
+    stop("model fit inconsistent with having posterior draws")
+  }
+
+  k <- length(ylevels)
+  s <- length(times)
+
+  P <- if (nd == 0) {
+    array(
+      NA,
+      c(s, k),
+      dimnames = list(as.character(times), as.character(ylevels))
+    )
+  } else {
+    array(
+      NA,
+      c(nd, s, k),
+      dimnames = list(
+        paste("draw", 1:nd),
+        as.character(times),
+        as.character(ylevels)
+      )
+    )
+  }
+
+  # --- Initialize Time 1 ---
+  data[[tvarname]] <- times[1]
+  if (length(gap)) {
+    data[[gap]] <- times[1]
+  }
+
+  # Inject basis functions for Time 1
+  if (!is.null(t_covs)) {
+    for (nm in names(t_covs)) {
+      data[[nm]] <- t_covs[1, nm]
+    }
+  }
+
+  data <- as.data.frame(data)
+
+  # --- Prediction at Time 1 ---
+  p <- prd(object, data)
+  if (nd == 0) {
+    P[1, ] <- p
+  } else {
+    P[, 1, ] <- p
+  }
+
+  # --- Setup Transition Matrices ---
+  rnameprev <- paste("t-1", ylevels)
+  rnameprevna <- paste("t-1", setdiff(ylevels, absorb))
+  if (length(absorb)) {
+    rnamepreva <- paste("t-1", absorb)
+    cnamea <- paste("t", absorb)
+  }
+
+  cp <- matrix(
+    0,
+    nrow = k,
+    ncol = k,
+    dimnames = list(rnameprev, paste("t", ylevels))
+  )
+  if (length(absorb)) {
+    cp[cbind(rnamepreva, cnamea)] <- 1
+  }
+
+  # --- Prepare Expansion Data ---
+  data <- as.list(data)
+  yna <- setdiff(ylevels, absorb)
+  data[[pvarname]] <- yna
+  edata <- expand.grid(data) # creates rows for every previous state
+
+  # --- Iterate Through Time ---
+  for (it in 2:s) {
+    # Update standard time variable
+    edata[[tvarname]] <- times[it]
+
+    # Update gap if necessary
+    if (length(gap)) {
+      edata[[gap]] <- times[it] - times[it - 1]
+    }
+
+    # NEW: Update basis function variables for current time 'it'
+    if (!is.null(t_covs)) {
+      for (nm in names(t_covs)) {
+        # We assign the scalar value from the lookup table to the whole column in edata
+        edata[[nm]] <- t_covs[it, nm]
+      }
+    }
+
+    # Calculate transition probabilities
+    pp <- prd(object, edata)
+
+    # Matrix Multiplication (Markov Step)
+    if (nd == 0) {
+      cp[rnameprevna, ] <- pp
+      P[it, ] <- t(cp) %*% P[it - 1, ] # State t = TransMatrix * State t-1
+    } else {
+      for (idraw in 1:nd) {
+        cp[rnameprevna, ] <- pp[idraw, , ]
+        P[idraw, it, ] <- t(cp) %*% P[idraw, it - 1, ]
+      }
+    }
+  }
+
+  P
+}
