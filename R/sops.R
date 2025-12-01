@@ -239,8 +239,6 @@ taooh <- function(
 #'
 #' @keywords standardization g-computation state occupancy causal inference
 #'
-#' @importFrom Hmisc soprobMarkovOrdm
-#'
 #' @examples
 #' \dontrun{
 #' # Fit initial model
@@ -280,7 +278,8 @@ standardize_sops <- function(
   times = NULL,
   ylevels = factor(1:6),
   absorb = 6,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
+  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
+  t_covs = NULL
 ) {
   # Check model class
   if (!inherits(model, "orm") && !inherits(model, "vglm")) {
@@ -348,7 +347,7 @@ standardize_sops <- function(
     X_ctrl[[tx_var]] <- 0
 
     # Predict SOPs under treatment
-    sop_full_tx <- soprobMarkovOrdm(
+    sop_full_tx <- soprob_markov_ord_m(
       object = model,
       data = X_tx,
       times = times,
@@ -356,11 +355,12 @@ standardize_sops <- function(
       absorb = absorb,
       tvarname = varnames$tvarname,
       pvarname = varnames$pvarname,
-      gap = 1
+      gap = 1,
+      t_covs = t_covs
     )
 
     # Predict SOPs under control
-    sop_full_ctrl <- soprobMarkovOrdm(
+    sop_full_ctrl <- soprob_markov_ord_m(
       object = model,
       data = X_ctrl,
       times = times,
@@ -368,7 +368,8 @@ standardize_sops <- function(
       absorb = absorb,
       tvarname = varnames$tvarname,
       pvarname = varnames$pvarname,
-      gap = 1
+      gap = 1,
+      t_covs = t_covs
     )
 
     # Store predictions for all states
