@@ -25,8 +25,9 @@ library(furrr)
 library(rms)
 library(VGAM)
 library(ggplot2)
+library(patchwork)
 
-N_PATIENTS <- 200
+N_PATIENTS <- 1062
 R <- 8
 SEED <- 123456
 
@@ -51,8 +52,18 @@ markov_data <- sim_trajectories_brownian(
 )
 
 # Plot state occupation probabilities (SOPs)
-plot_sops(markov_data, geom = "line") + 
-  scale_color_brewer(palette = "Dark2")
+esop <- plot_sops(
+  markov_data, 
+  geom = "line", 
+  facet_var = NULL, 
+  linetype_var = "tx") + 
+  scale_color_brewer(palette = "Dark2") +
+  coord_cartesian(ylim = c(0, 0.8)) +
+  theme(
+    legend.position = ""
+  )
+
+esop
 
 # Calculate True Effect: Difference in time in state 1 (Home)
 es_calc <- calc_time_in_state_diff(markov_data, target_state = 1)
@@ -216,7 +227,7 @@ This doesn't yet work with soprob_markov_ord_m. Need to update all bootstrap fun
 ```{r}
 t1 <- Sys.time()
 bs_sops <- bootstrap_standardized_sops(
-  model = m,
+  model = m1,
   data = data,
   times = 1:30,
   n_boot = R,
@@ -230,36 +241,49 @@ t2 <- Sys.time()
 t2 - t1
 ```
 
-## Step 4: Plot Bootstrap Results
-
-
 ```{r}
-# Filter to treatment group and reshape to long format
-sops_tx_long <- bs_sops |>
-  pivot_longer(
-    cols = starts_with("state_"),
-    names_to = "state",
-    values_to = "probability",
-    names_prefix = "state_"
-  )
-
-# Compute confidence intervals
-ci_bands <- sops_tx_long |>
-  group_by(tx, time, state) |>
-  summarise(
-    lower = quantile(probability, 0.025),
-    median = median(probability),
-    upper = quantile(probability, 0.975),
-    .groups = "drop"
-  )
-
-ggplot(ci_bands, aes(x = time, y = median, color = state)) +
-  geom_line(aes(linetype = factor(tx))) +
-  geom_ribbon(aes(ymin = lower, ymax = upper, fill = state, group = interaction(state, tx)), alpha = 0.2, color = NA) +
+po_sops <- plot_bootstrap_sops(
+  bs_sops,
+  title = "PO-Model: Standardized SOPs with bootstrapped 95% confidence bands"
+) +
   scale_fill_brewer(palette = "Dark2") +
   scale_color_brewer(palette = "Dark2") +
-  labs(title = "Standardized SOPs with boostrapped 95% confidence bands",
-  y = "State Occupation Probability")
+  coord_cartesian(ylim = c(0, 0.8))
+```
+
+```{r}
+t1 <- Sys.time()
+bs_sops_ppo <- bootstrap_standardized_sops(
+  model = m5,
+  data = data,
+  times = 1:30,
+  n_boot = R,
+  ylevels = factor(1:6),
+  absorb = "6",
+  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
+  parallel = TRUE,
+  workers = 8,
+  t_covs = t_covs
+)
+t2 <- Sys.time()
+t2 - t1
+```
+
+```{r}
+ppo_sops <- plot_bootstrap_sops(
+  bs_sops_ppo,
+  title = "Partial PO-Model + tx:time_lin: Standardized SOPs with bootstrapped 95% confidence bands"
+) +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Dark2") +
+  coord_cartesian(ylim = c(0, 0.8))
+```
+
+## Step 4: Plot Bootstrap Results
+
+```{r}
+esop + po_sops + ppo_sops +
+  plot_layout(guides = "collect")
 ```
 
 ## Step 5: Difference in Time in State 1
