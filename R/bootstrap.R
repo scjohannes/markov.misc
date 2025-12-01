@@ -537,7 +537,8 @@ bootstrap_standardized_sops <- function(
   times = NULL,
   update_datadist = TRUE,
   use_coefstart = FALSE,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
+  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
+  t_covs = NULL
 ) {
   # Check model class
   if (!inherits(model, "orm") && !inherits(model, "vglm")) {
@@ -601,7 +602,8 @@ bootstrap_standardized_sops <- function(
           pvarname = varnames$pvarname,
           id = "new_id",
           tx = varnames$tx
-        )
+        ),
+        t_covs = t_covs
       ),
       error = function(e) {
         warning("standardize_sops failed: ", e$message)
@@ -656,7 +658,8 @@ bootstrap_standardized_sops <- function(
       "absorb",
       "varnames",
       "n_times",
-      "n_states"
+      "n_states",
+      "t_covs"
     )
   )
 
