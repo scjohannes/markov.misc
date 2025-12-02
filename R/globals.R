@@ -44,5 +44,8 @@ utils::globalVariables(c(
   "upper",
   "lower",
   "new_id",
-  "block_count"
+  "block_count",
+  "state",
+  "probability",
+  "median"
 ))
