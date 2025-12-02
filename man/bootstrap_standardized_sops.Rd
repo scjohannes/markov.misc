@@ -15,7 +15,8 @@ bootstrap_standardized_sops(
   times = NULL,
   update_datadist = TRUE,
   use_coefstart = FALSE,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
+  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
+  t_covs = NULL
 )
 }
 \arguments{

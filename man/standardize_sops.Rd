@@ -2,7 +2,7 @@
 % Please edit documentation in R/sops.R
 \name{standardize_sops}
 \alias{standardize_sops}
-\title{Compute standardized state occupancy probabilities under treatment and control}
+\title{Compute standardized state occupancy probabilities (Vectorized)}
 \usage{
 standardize_sops(
   model,
@@ -10,105 +10,32 @@ standardize_sops(
   times = NULL,
   ylevels = factor(1:6),
   absorb = 6,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
+  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx", gap =
+    NULL),
+  t_covs = NULL
 )
 }
 \arguments{
-\item{model}{A fitted model object from \code{rms::orm}. The model is used
-as-is without refitting.}
+\item{model}{A fitted model object (orm, vglm, rmsb).}
 
-\item{data}{A data frame containing patient trajectory data. If NULL, attempts
-to extract data from the model object (requires model fitted with
-\code{x = TRUE, y = TRUE}).}
+\item{data}{A data frame containing patient trajectory data.}
 
-\item{times}{Time points in the data. Default is \code{1:max(data[["time"]])}}
+\item{times}{Time points to predict.}
 
-\item{ylevels}{States in the data (e.g., 1:6)}
+\item{ylevels}{States in the data.}
 
-\item{absorb}{Absorbing state (e.g., 6 for death)}
+\item{absorb}{Absorbing state name.}
 
-\item{varnames}{List of variable names in the data with components:
-\itemize{
-\item tvarname: time variable name (default "time")
-\item pvarname: previous state variable name (default "yprev")
-\item id: patient identifier (default "id")
-\item tx: treatment indicator (default "tx")
-}}
+\item{varnames}{List of variable names: tvarname, pvarname, id, tx, gap (optional).}
+
+\item{t_covs}{Time-dependent covariate lookup table.}
 }
 \value{
 A list with two components:
-\itemize{
-\item sop_tx: Matrix of state occupancy probabilities under treatment
-(rows = time points, columns = states)
-\item sop_ctrl: Matrix of state occupancy probabilities under control
-(rows = time points, columns = states)
-}
+\item{sop_tx}{Matrix (Time x State) or Array (Draws x Time x State) for Treatment}
+\item{sop_ctrl}{Matrix (Time x State) or Array (Draws x Time x State) for Control}
 }
 \description{
-Calculates marginalized (standardized) state occupancy probabilities using
-g-computation. For each individual, predictions are made under both treatment
-(tx=1) and control (tx=0), then averaged across the population to obtain the
-marginal state occupancy probabilities for each state at each time point.
+Updates the standardize_sops wrapper to use the optimized
+soprob_markov_vectorized function.
 }
-\details{
-This function implements g-computation (standardization) to estimate the
-marginal causal effect of treatment:
-\enumerate{
-\item For each individual, create two counterfactual datasets: one with tx=1
-(treatment) and one with tx=0 (control)
-\item For each counterfactual dataset, predict state occupancy probabilities
-at each time point using \code{soprobMarkovOrdm}
-\item Average predictions across all individuals to obtain marginal
-(population-averaged) state occupancy probabilities
-}
-
-Unlike \code{\link{taooh}}, which averages within observed treatment groups,
-this function estimates what would happen if the entire population received
-treatment vs. if the entire population received control, thus providing
-a causal estimate under the assumption of no unmeasured confounding.
-
-The returned matrices can be used for:
-\itemize{
-\item Plotting standardized state occupancy curves
-\item Computing treatment effects for specific states and time periods
-\item Calculating summary measures like total time in target states
-}
-}
-\examples{
-\dontrun{
-# Fit initial model
-d <- rms::datadist(my_data)
-options(datadist = "d")
-m <- orm(y ~ tx + yprev + time, data = my_data, x = TRUE, y = TRUE)
-
-# Get standardized state occupancy probabilities
-sop_std <- standardize_sops(
-  model = m,
-  data = my_data,
-  ylevels = 1:6,
-  absorb = 6
-)
-
-# Plot results
-library(ggplot2)
-library(tidyr)
-sop_df <- bind_rows(
-  as.data.frame(sop_std$sop_tx) |> mutate(time = row_number(), tx = "Treatment"),
-  as.data.frame(sop_std$sop_ctrl) |> mutate(time = row_number(), tx = "Control")
-) |>
-  pivot_longer(cols = -c(time, tx), names_to = "state", values_to = "probability")
-
-ggplot(sop_df, aes(x = time, y = probability, color = state)) +
-  geom_line() +
-  facet_wrap(~tx)
-
-# Calculate treatment effect for time in state 1 (home)
-sum(sop_std$sop_tx[, "1"]) - sum(sop_std$sop_ctrl[, "1"])
-}
-}
-\keyword{causal}
-\keyword{g-computation}
-\keyword{inference}
-\keyword{occupancy}
-\keyword{standardization}
-\keyword{state}

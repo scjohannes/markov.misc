@@ -9,6 +9,7 @@ plot_sops(
   time_var = "time",
   y_var = "y",
   facet_var = "tx",
+  linetype_var = NULL,
   geom = c("bar", "line")
 )
 }
@@ -20,7 +21,13 @@ plot_sops(
 
 \item{y_var}{Character string. Name of the state variable column (default: "y").}
 
-\item{facet_var}{Character string. Name of the variable to facet by (default: "tx").}
+\item{facet_var}{Character string or NULL. Name of the variable to facet by (default: "tx").
+Set to NULL to disable faceting.}
+
+\item{linetype_var}{Character string or NULL. Name of the variable to map to linetype
+(default: NULL). Useful for comparing groups within the same plot. When both
+\code{facet_var} and \code{linetype_var} are specified, you can facet by one variable
+(e.g., site) and distinguish groups by linetype (e.g., treatment).}
 
 \item{geom}{Character string. Type of plot: "bar" for stacked bar chart (default)
 or "line" for line plot.}
@@ -45,6 +52,8 @@ probability for each state over time, which can be useful for seeing trends
 in individual states.
 
 Faceting allows comparison between groups (e.g., treatment vs. control).
+The \code{linetype_var} parameter allows distinguishing groups by linetype instead
+of (or in addition to) faceting, enabling more flexible plot layouts.
 }
 \examples{
 \dontrun{
@@ -54,8 +63,14 @@ trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
 # Basic stacked bar plot
 plot_sops(trajectories)
 
-# Line plot
+# Line plot with faceting by treatment
 plot_sops(trajectories, geom = "line")
+
+# Line plot with linetype by treatment (no faceting)
+plot_sops(trajectories, geom = "line", facet_var = NULL, linetype_var = "tx")
+
+# Facet by one variable, linetype by another
+plot_sops(trajectories, facet_var = "site", linetype_var = "tx", geom = "line")
 
 # Customize variable names
 plot_sops(trajectories, time_var = "day", y_var = "state", facet_var = "treatment")
