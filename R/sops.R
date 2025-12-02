@@ -1,447 +1,3 @@
-#' Compute time in target state(s) for treatment groups
-#'
-#' Calculates the expected time spent in specified target state(s) for treatment
-#' and control groups using a proportional odds Markov model. Uses an existing
-#' fitted model and state occupancy probabilities to estimate the total time in
-#' the target state(s).
-#'
-#' @param model A fitted model object from \code{rms::orm} or \code{VGAM::vglm}.
-#'   The model is used as-is without refitting.
-#' @param data A data frame containing patient trajectory data. If NULL, attempts
-#'   to extract data from the model object (requires model fitted with
-#'   \code{x = TRUE, y = TRUE}).
-#' @param times Time points in the data. Default is \code{1:max(data[["time"]])}
-#' @param ylevels States in the data (e.g., 1:6)
-#' @param absorb Absorbing state (e.g., 6 for death)
-#' @param target_states Integer vector of target state(s) to calculate time in.
-#'   Default is 1 (typically "home" or baseline state). Can specify multiple
-#'   states, e.g., c(1, 2) to sum time across states 1 and 2.
-#' @param varnames List of variable names in the data with components:
-#'   \itemize{
-#'     \item tvarname: time variable name (default "time")
-#'     \item pvarname: previous state variable name (default "yprev")
-#'     \item id: patient identifier (default "id")
-#'     \item tx: treatment indicator (default "tx")
-#'   }
-#'
-#' @return A named numeric vector with three elements:
-#'   \itemize{
-#'     \item delta_taooh: difference in time in target state(s) (treatment - control)
-#'     \item SOP_tx: expected time in target state(s) for treatment group
-#'     \item SOP_ctrl: expected time in target state(s) for control group
-#'   }
-#'
-#' @details
-#' The function:
-#' \enumerate{
-#'   \item Takes a pre-fitted model (no refitting occurs in this function)
-#'   \item Computes state occupancy probabilities for each individual at each time point
-#'   \item Sums probabilities across target states and time points
-#'   \item Averages within treatment groups to get expected time in target state(s)
-#' }
-#'
-#' This function assumes the model has already been fitted on the appropriate
-#' data. For bootstrap inference, see \code{\link{taooh_bootstrap}}, which handles
-#' model refitting for each bootstrap sample.
-#'
-#' @keywords time alive out of hospital state occupancy
-#'
-#' @importFrom Hmisc soprobMarkovOrdm
-#' @importFrom stats aggregate
-#'
-#' @examples
-#' \dontrun{
-#' # Fit initial model
-#' d <- rms::datadist(my_data)
-#' options(datadist = "d")
-#' m <- orm(y ~ tx + yprev + time, data = my_data, x = TRUE, y = TRUE)
-#'
-#' # Calculate time at home (state 1) for a dataset
-#' result <- taooh(
-#'   model = m,
-#'   data = my_data,
-#'   ylevels = 1:6,
-#'   absorb = 6,
-#'   target_states = 1
-#' )
-#'
-#' # Calculate time in states 1 or 2 combined
-#' result <- taooh(
-#'   model = m,
-#'   data = my_data,
-#'   target_states = c(1, 2)
-#' )
-#' }
-#' @export
-
-# Planned extensions:
-# - If beta == TRUE, stop the function and return beta treatment (for beta bootstrapping)
-# - Handle missing states in the data (change ylevels and absorb depending on the data)
-# - Expand to support vgam models in addition to orm
-
-taooh <- function(
-  model,
-  data = NULL,
-  times = NULL,
-  ylevels = as.character(1:6),
-  absorb = 6,
-  target_states = 1,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx")
-) {
-  # Check model class
-  if (!inherits(model, "orm") && !inherits(model, "vglm")) {
-    stop(
-      "model must be an orm object (rms package) or vglm object (VGAM package)."
-    )
-  }
-
-  # Check data
-  if (is.null(data)) {
-    stop(
-      "Provide data used for model fitting."
-    )
-  }
-
-  # Check that yprev is a factor
-  if (!is.factor(data[[varnames$pvarname]])) {
-    warning(
-      "Variable '",
-      varnames$pvarname,
-      "' should be a factor but is not. "
-    )
-  }
-
-  # Determine id variable
-  id_var <- varnames$id
-
-  # Set times if not provided
-  if (is.null(times)) {
-    times <- 1:max(data[[varnames$tvarname]])
-  }
-
-  # Generate covariate data.frame to predict on
-  X <- data[!duplicated(data[[id_var]]), ] # first row of each individual
-
-  # Run soprobMarkovOrdm to get state probability predictions for each individual
-  n_ids <- length(unique(data[[id_var]]))
-  n_times <- max(times)
-  n_states <- length(target_states)
-
-  # Initialize array to store SOPs for target states
-  sop_array <- array(
-    dim = c(n_times, n_ids, n_states),
-    dimnames = list(NULL, unique(data[[id_var]]), target_states)
-  )
-
-  for (i in 1:n_ids) {
-    sop_full <- soprobMarkovOrdm(
-      object = model,
-      data = X[i, ],
-      times = times,
-      ylevels = ylevels,
-      absorb = absorb,
-      tvarname = varnames$tvarname,
-      pvarname = varnames$pvarname,
-      gap = 1
-    )
-
-    # Extract SOPs for target states
-    for (s_idx in seq_along(target_states)) {
-      state <- target_states[s_idx]
-      sop_array[, i, s_idx] <- sop_full[, state]
-    }
-  }
-
-  # Sum across target states to get total time in any target state
-  sop_mat <- apply(sop_array, c(1, 2), sum)
-  colnames(sop_mat) <- unique(data[[id_var]])
-
-  # Indicate treatment and control ids
-  id_tx <- aggregate(
-    data[[varnames$tx]],
-    by = list(data[[id_var]]),
-    FUN = unique,
-    simplify = TRUE
-  )
-
-  # Compute time in target state(s) by treatment group
-  SOP_tx <- sum(rowMeans(sop_mat[,
-    colnames(sop_mat) %in% id_tx[id_tx[, 2] == 1, 1],
-    drop = FALSE
-  ]))
-  SOP_ctrl <- sum(rowMeans(sop_mat[,
-    colnames(sop_mat) %in% id_tx[id_tx[, 2] == 0, 1],
-    drop = FALSE
-  ]))
-
-  return(c(
-    delta_taooh = SOP_tx - SOP_ctrl,
-    SOP_tx = SOP_tx,
-    SOP_ctrl = SOP_ctrl
-  ))
-}
-
-
-#' Compute standardized state occupancy probabilities under treatment and control
-#'
-#' Calculates marginalized (standardized) state occupancy probabilities using
-#' g-computation. For each individual, predictions are made under both treatment
-#' (tx=1) and control (tx=0), then averaged across the population to obtain the
-#' marginal state occupancy probabilities for each state at each time point.
-#'
-#' @param model A fitted model object from \code{rms::orm}. The model is used
-#'   as-is without refitting.
-#' @param data A data frame containing patient trajectory data. If NULL, attempts
-#'   to extract data from the model object (requires model fitted with
-#'   \code{x = TRUE, y = TRUE}).
-#' @param times Time points in the data. Default is \code{1:max(data[["time"]])}
-#' @param ylevels States in the data (e.g., 1:6)
-#' @param absorb Absorbing state (e.g., 6 for death)
-#' @param varnames List of variable names in the data with components:
-#'   \itemize{
-#'     \item tvarname: time variable name (default "time")
-#'     \item pvarname: previous state variable name (default "yprev")
-#'     \item id: patient identifier (default "id")
-#'     \item tx: treatment indicator (default "tx")
-#'   }
-#'
-#' @return A list with two components:
-#'   \itemize{
-#'     \item sop_tx: Matrix of state occupancy probabilities under treatment
-#'       (rows = time points, columns = states)
-#'     \item sop_ctrl: Matrix of state occupancy probabilities under control
-#'       (rows = time points, columns = states)
-#'   }
-#'
-#' @details
-#' This function implements g-computation (standardization) to estimate the
-#' marginal causal effect of treatment:
-#' \enumerate{
-#'   \item For each individual, create two counterfactual datasets: one with tx=1
-#'     (treatment) and one with tx=0 (control)
-#'   \item For each counterfactual dataset, predict state occupancy probabilities
-#'     at each time point using \code{soprobMarkovOrdm}
-#'   \item Average predictions across all individuals to obtain marginal
-#'     (population-averaged) state occupancy probabilities
-#' }
-#'
-#' Unlike \code{\link{taooh}}, which averages within observed treatment groups,
-#' this function estimates what would happen if the entire population received
-#' treatment vs. if the entire population received control, thus providing
-#' a causal estimate under the assumption of no unmeasured confounding.
-#'
-#' The returned matrices can be used for:
-#' \itemize{
-#'   \item Plotting standardized state occupancy curves
-#'   \item Computing treatment effects for specific states and time periods
-#'   \item Calculating summary measures like total time in target states
-#' }
-#'
-#' @keywords standardization g-computation state occupancy causal inference
-#'
-#' @examples
-#' \dontrun{
-#' # Fit initial model
-#' d <- rms::datadist(my_data)
-#' options(datadist = "d")
-#' m <- orm(y ~ tx + yprev + time, data = my_data, x = TRUE, y = TRUE)
-#'
-#' # Get standardized state occupancy probabilities
-#' sop_std <- standardize_sops(
-#'   model = m,
-#'   data = my_data,
-#'   ylevels = 1:6,
-#'   absorb = 6
-#' )
-#'
-#' # Plot results
-#' library(ggplot2)
-#' library(tidyr)
-#' sop_df <- bind_rows(
-#'   as.data.frame(sop_std$sop_tx) |> mutate(time = row_number(), tx = "Treatment"),
-#'   as.data.frame(sop_std$sop_ctrl) |> mutate(time = row_number(), tx = "Control")
-#' ) |>
-#'   pivot_longer(cols = -c(time, tx), names_to = "state", values_to = "probability")
-#'
-#' ggplot(sop_df, aes(x = time, y = probability, color = state)) +
-#'   geom_line() +
-#'   facet_wrap(~tx)
-#'
-#' # Calculate treatment effect for time in state 1 (home)
-#' sum(sop_std$sop_tx[, "1"]) - sum(sop_std$sop_ctrl[, "1"])
-#' }
-#' @export
-
-standardize_sops <- function(
-  model,
-  data = NULL,
-  times = NULL,
-  ylevels = factor(1:6),
-  absorb = 6,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
-  t_covs = NULL
-) {
-  # Check model class
-  if (!inherits(model, "orm") && !inherits(model, "vglm")) {
-    stop(
-      "model must be an orm object (rms package) or vglm object (VGAM package)."
-    )
-  }
-
-  # If no data provided, extract from model
-  if (is.null(data)) {
-    data <- model$x
-    if (is.null(data)) {
-      stop("No data provided and model was not fitted with x=TRUE")
-    }
-    # Add response variable
-    data$y <- model$y
-  }
-
-  # Check that yprev is a factor
-  if (!is.factor(data[[varnames$pvarname]])) {
-    warning(
-      "Variable '",
-      varnames$pvarname,
-      "' should be a factor but is not. "
-    )
-  }
-
-  # Determine id variable
-  id_var <- varnames$id
-  tx_var <- varnames$tx
-
-  # Set times if not provided
-  if (is.null(times)) {
-    times <- 1:max(data[[varnames$tvarname]])
-  }
-
-  # Generate covariate data.frame to predict on (one row per individual)
-  X <- data[!duplicated(data[[id_var]]), ]
-
-  # Number of individuals, time points, and states
-  n_ids <- nrow(X)
-  n_times <- max(times)
-  n_states <- length(ylevels)
-
-  # Initialize arrays to store SOPs under treatment and control
-  # Dimensions: [time, individual, state]
-  sop_array_tx <- array(
-    dim = c(n_times, n_ids, n_states),
-    dimnames = list(NULL, unique(data[[id_var]]), as.character(ylevels))
-  )
-
-  sop_array_ctrl <- array(
-    dim = c(n_times, n_ids, n_states),
-    dimnames = list(NULL, unique(data[[id_var]]), as.character(ylevels))
-  )
-
-  # Loop through each individual
-  for (i in 1:n_ids) {
-    # Create counterfactual dataset with tx = 1 (treatment)
-    X_tx <- X[i, , drop = FALSE]
-    X_tx[[tx_var]] <- 1
-
-    # Create counterfactual dataset with tx = 0 (control)
-    X_ctrl <- X[i, , drop = FALSE]
-    X_ctrl[[tx_var]] <- 0
-
-    # Predict SOPs under treatment
-    sop_full_tx <- soprob_markov_ord_m(
-      object = model,
-      data = X_tx,
-      times = times,
-      ylevels = ylevels,
-      absorb = absorb,
-      tvarname = varnames$tvarname,
-      pvarname = varnames$pvarname,
-      gap = 1,
-      t_covs = t_covs
-    )
-
-    # Predict SOPs under control
-    sop_full_ctrl <- soprob_markov_ord_m(
-      object = model,
-      data = X_ctrl,
-      times = times,
-      ylevels = ylevels,
-      absorb = absorb,
-      tvarname = varnames$tvarname,
-      pvarname = varnames$pvarname,
-      gap = 1,
-      t_covs = t_covs
-    )
-
-    # Store predictions for all states
-    sop_array_tx[, i, ] <- sop_full_tx
-    sop_array_ctrl[, i, ] <- sop_full_ctrl
-  }
-
-  # Average across individuals to get marginal SOPs
-  # Result: matrix with rows = time points, columns = states
-  sop_tx <- apply(sop_array_tx, c(1, 3), mean)
-  sop_ctrl <- apply(sop_array_ctrl, c(1, 3), mean)
-
-  # Ensure column names are character versions of ylevels
-  colnames(sop_tx) <- as.character(ylevels)
-  colnames(sop_ctrl) <- as.character(ylevels)
-
-  return(list(
-    sop_tx = sop_tx,
-    sop_ctrl = sop_ctrl
-  ))
-}
-
-#' Simulate state occupancy probabilities
-sop_sim <- function(
-  model,
-  baseline_data,
-  varname = "y",
-  pvarname = "yprev",
-  tvarname = "time",
-  times = 1:30,
-  ylevels = factor(1:6, ordered = TRUE),
-  absorb = "6",
-  n_sim = 1000
-) {
-  data <- baseline_data[rep(1:nrow(baseline_data), each = n_sim), ]
-  y <- matrix(absorb, nrow = nrow(data), ncol = length(times))
-
-  for (i in times) {
-    alive_idx <- which(data[[varname]] != absorb)
-    if (length(alive_idx) == 0) {
-      break
-    }
-
-    subset_data <- data[alive_idx, , drop = FALSE]
-    subset_data[[tvarname]] <- i
-
-    prob_matrix <- predict(model, newdata = subset_data, type = "response")
-    y_next <- apply(prob_matrix, 1, function(p) {
-      sample(1:length(p), size = 1, prob = p)
-    })
-    y[alive_idx, i] <- y_next
-    data[alive_idx, varname] <- factor(y_next, levels = 1:6, ordered = TRUE)
-    survivors <- y_next != absorb
-
-    if (any(survivors)) {
-      # Map the survivor boolean back to the main data indices
-      survivor_idx <- alive_idx[survivors]
-
-      # Assign only valid 1-5 values.
-      # R handles the factor level assignment automatically here
-      # as long as y_next contains strings/ints matching the factor levels.
-      data[survivor_idx, pvarname] <- factor(y_next[survivors], levels = 1:5)
-    }
-  }
-
-  apply(y, 2, function(col) {
-    # We convert to factor with explicit levels to ensure
-    # zero-count states are included in the output
-    prop.table(table(factor(col, levels = ylevels)))
-  })
-}
-
 #' Calculate State Occupation Probabilities for First-Order Markov Models
 #'
 #' Estimates state occupation probabilities over time by iterating a transition
@@ -454,8 +10,8 @@ sop_sim <- function(
 #'   \code{"blrm"} (from package `rmsb`), and
 #'   \code{"vglm"}, \code{"vgam"} (from package `VGAM`).
 #' @param data A data frame containing the baseline covariates for the prediction.
-#'   Should generally contain a single row representing the subject profile.
-#'   Must contain the variable specified in \code{tvarname} (usually initialized to 0 or start time).
+#'   Rows represent unique patients. Columns must contain baseline covariates and
+#'   initial values for time-varying variables.
 #' @param times A numeric vector of time points to iterate over.
 #'   The function calculates probabilities for each time point in this sequence.
 #' @param ylevels A character vector defining the names of the outcome levels (states).
@@ -478,23 +34,53 @@ sop_sim <- function(
 #'   This allows for `vglm` models where basis functions are supplied as separate columns rather than calculated on the fly.
 #'
 #' @details
-#' The function iterates through the vector \code{times}. At each time point \eqn{t}, it:
-#' 1. Updates the time variable (and `t_covs` if supplied).
-#' 2. Predicts the transition probability matrix \eqn{T(t)} based on the covariates and the previous state.
-#' 3. Updates the state occupation probability vector \eqn{P(t)} using the matrix multiplication:
-#'    \eqn{P(t) = P(t-1) \times T(t)}.
 #'
-#' If the model is Bayesian (\code{rmsb}), the output preserves the posterior draws.
+#' \strong{1. Data Expansion:}
+#' We construct a "long" expansion dataset at every time point. For \eqn{N} patients
+#' and \eqn{K} non-absorbing states, the expansion dataset contains \eqn{N \times K} rows.
+#' \itemize{
+#'   \item Rows \eqn{1 \dots N}: All patients assuming \eqn{y_{prev} = \text{State } 1}
+#'   \item Rows \eqn{(N+1) \dots 2N}: All patients assuming \eqn{y_{prev} = \text{State } 2}
+#'   \item ... and so on.
+#' }
+#' This allows a single \code{predict()} call to generate transition probabilities for the entire
+#' cohort for all possible previous states in one step.
+#'
+#' \strong{2. Element-wise weighted sum}
+#' We use an element-wise weighted sum approach based on the
+#' Law of Total Probability:
+#' \deqn{P(S_t = k) = \sum_{j} P(S_{t-1} = j) \times P(S_t = k | S_{t-1} = j)}
+#'
+#' where:
+#' \itemize{
+#'   \item \eqn{S_t}: State occupied at time \eqn{t}.
+#'   \item \eqn{S_{t-1}}: State occupied at time \eqn{t-1}.
+#'   \item \eqn{k}: The target state at time \eqn{t}.
+#'   \item \eqn{j}: The origin state at time \eqn{t-1}.
+#' }
+#'
+#' Let \eqn{\mathbf{v}_{prev, j}} be a vector of length \eqn{N} containing the probability that each
+#' patient was in state \eqn{j} at time \eqn{t-1}.
+#' Let \eqn{\mathbf{M}_{trans, j \to k}} be a vector of length \eqn{N} containing the transition
+#' probability from \eqn{j} to \eqn{k} for each patient (derived from the batched prediction).
+#'
+#' The probability of being in state \eqn{k} at time \eqn{t} is updated as:
+#' \deqn{\mathbf{v}_{curr, k} = \sum_{j} (\mathbf{v}_{prev, j} \odot \mathbf{M}_{trans, j \to k})}
+#' where \eqn{\odot} denotes element-wise multiplication.
+#'
+#' \strong{3. Absorbing States:}
+#' If an absorbing state \eqn{a} is present, the update logic handles the accumulation of probability mass:
+#' \deqn{P(S_t = a) = P(S_{t-1} = a) + \sum_{j \neq a} P(S_{t-1} = j) \times P(S_t = a | S_{t-1} = j)}
 #'
 #' @return
 #' An array of state probabilities.
 #' \itemize{
-#'   \item **Frequentist fit:** A matrix of dimension \code{[length(times) x length(ylevels)]}.
-#'   \item **Bayesian fit:** An array of dimension \code{[n_draws x length(times) x length(ylevels)]}.
+#'   \item **Frequentist fit:** An array of dimension \code{[n_patients x n_times x n_states]}.
+#'   \item **Bayesian fit:** An array of dimension \code{[n_draws x n_patients x n_times x n_states]}.
 #' }
 #'
 #' @export
-soprob_markov_ord_m <- function(
+soprob_markov <- function(
   object,
   data,
   times,
@@ -505,7 +91,7 @@ soprob_markov_ord_m <- function(
   gap = NULL,
   t_covs = NULL
 ) {
-  # --- Initial Checks ---
+  # --- 1. Initial Checks & Setup ---
   cl <- class(object)[1]
   ftypes <- c(
     lrm = "rms",
@@ -515,146 +101,494 @@ soprob_markov_ord_m <- function(
     vgam = "vgam"
   )
   ftype <- ftypes[cl]
+
   if (is.na(ftype)) {
-    stop(paste(
-      "object must be a fit from one of:",
-      paste(ftypes, collapse = " ")
-    ))
+    stop("Object class not supported")
   }
 
-  # --- Define Prediction Function ---
+  # Define prediction function
   prd <- switch(
     ftype,
-    rms = function(obj, data) predict(obj, data, type = "fitted.ind"),
-    vgam = function(obj, data) VGAM::predict(obj, data, type = "response"),
-    rmsb = function(obj, data) {
-      predict(obj, data, type = "fitted.ind", posterior.summary = "all")
+    rms = function(obj, d) predict(obj, d, type = "fitted.ind"),
+    vgam = function(obj, d) VGAM::predict(obj, d, type = "response"),
+    rmsb = function(obj, d) {
+      predict(obj, d, type = "fitted.ind", posterior.summary = "all")
     }
   )
 
-  if (pvarname %nin% names(data)) {
-    stop(paste(pvarname, "is not in data"))
-  }
-  if (length(absorb) && (pvarname %in% absorb)) {
-    stop("initial state cannot be an absorbing state")
-  }
+  # Prepare dimensions
+  n_pat <- nrow(data)
+  n_times <- length(times)
+  n_states <- length(ylevels)
+  yna <- setdiff(ylevels, absorb) # Non-absorbing states
+  n_yna <- length(yna)
 
-  # --- Check Time Covariates (New Logic) ---
-  if (!is.null(t_covs)) {
-    if (!is.data.frame(t_covs)) {
-      stop("'t_covs' must be a data frame")
-    }
-    if (nrow(t_covs) != length(times)) {
-      stop("The number of rows in 't_covs' must match the length of 'times'")
-    }
-  }
-
-  # --- Setup Output Arrays ---
+  # Check Bayesian draws
   nd <- if (ftype == "rmsb" && length(object$draws)) nrow(object$draws) else 0
-  if ((nd == 0) != (ftype != "rmsb")) {
-    stop("model fit inconsistent with having posterior draws")
-  }
 
-  k <- length(ylevels)
-  s <- length(times)
-
-  P <- if (nd == 0) {
-    array(
-      NA,
-      c(s, k),
-      dimnames = list(as.character(times), as.character(ylevels))
+  # Initialize Output Array
+  # Structure: [Patients, Time, States]
+  if (nd == 0) {
+    P <- array(
+      0,
+      dim = c(n_pat, n_times, n_states),
+      dimnames = list(rownames(data), times, ylevels)
     )
   } else {
-    array(
-      NA,
-      c(nd, s, k),
-      dimnames = list(
-        paste("draw", 1:nd),
-        as.character(times),
-        as.character(ylevels)
-      )
+    P <- array(
+      0,
+      dim = c(nd, n_pat, n_times, n_states),
+      dimnames = list(1:nd, rownames(data), times, ylevels)
     )
   }
 
-  # --- Initialize Time 1 ---
+  # --- 2. Time 1 Initialization (Start) ---
+  # Update time variables for T1
   data[[tvarname]] <- times[1]
-  if (length(gap)) {
+  if (!is.null(gap)) {
     data[[gap]] <- times[1]
   }
 
-  # Inject basis functions for Time 1
+  # Inject T1 basis functions
   if (!is.null(t_covs)) {
     for (nm in names(t_covs)) {
       data[[nm]] <- t_covs[1, nm]
     }
   }
 
-  data <- as.data.frame(data)
+  # Predict probabilities at T1
+  p_t1 <- prd(object, data) # Returns [n_pat x n_states] or [nd x n_pat x n_states]
 
-  # --- Prediction at Time 1 ---
-  p <- prd(object, data)
   if (nd == 0) {
-    P[1, ] <- p
+    P[, 1, ] <- p_t1
   } else {
-    P[, 1, ] <- p
+    P[,, 1, ] <- p_t1
   }
 
-  # --- Setup Transition Matrices ---
-  rnameprev <- paste("t-1", ylevels)
-  rnameprevna <- paste("t-1", setdiff(ylevels, absorb))
-  if (length(absorb)) {
-    rnamepreva <- paste("t-1", absorb)
-    cnamea <- paste("t", absorb)
-  }
+  # --- 3. Prepare Expansion Data for Transitions ---
+  # We create a long dataframe where every patient is repeated for every possible PREVIOUS state.
+  # Order: Patient 1 (State A), Patient 2 (State A)... Patient 1 (State B)...
+  # This ordering is crucial for the vectorized update logic later.
 
-  cp <- matrix(
-    0,
-    nrow = k,
-    ncol = k,
-    dimnames = list(rnameprev, paste("t", ylevels))
-  )
-  if (length(absorb)) {
-    cp[cbind(rnamepreva, cnamea)] <- 1
-  }
+  edata_base <- data[rep(1:n_pat, times = n_yna), , drop = FALSE]
 
-  # --- Prepare Expansion Data ---
-  data <- as.list(data)
-  yna <- setdiff(ylevels, absorb)
-  data[[pvarname]] <- yna
-  edata <- expand.grid(data) # creates rows for every previous state
+  # Assign the previous state variable
+  # We repeat each state n_pat times
+  edata_base[[pvarname]] <- rep(yna, each = n_pat)
 
-  # --- Iterate Through Time ---
-  for (it in 2:s) {
-    # Update standard time variable
-    edata[[tvarname]] <- times[it]
+  # --- 4. Iterate Through Time (Vectorized over Patients) ---
+  for (it in 2:n_times) {
+    # Update time in the expanded dataset
+    edata_base[[tvarname]] <- times[it]
 
-    # Update gap if necessary
-    if (length(gap)) {
-      edata[[gap]] <- times[it] - times[it - 1]
+    if (!is.null(gap)) {
+      edata_base[[gap]] <- times[it] - times[it - 1]
     }
 
-    # NEW: Update basis function variables for current time 'it'
     if (!is.null(t_covs)) {
       for (nm in names(t_covs)) {
-        # We assign the scalar value from the lookup table to the whole column in edata
-        edata[[nm]] <- t_covs[it, nm]
+        edata_base[[nm]] <- t_covs[it, nm]
       }
     }
 
-    # Calculate transition probabilities
-    pp <- prd(object, edata)
+    # Get Transition Probabilities
+    # This returns matrix: [ (n_pat * n_yna) x n_states ]
+    # Rows 1:N are transitions from State 1, Rows N+1:2N from State 2, etc.
+    trans_probs <- prd(object, edata_base)
 
-    # Matrix Multiplication (Markov Step)
+    # --- 5. The Update Step (Markov) ---
+    # Formula: P(S_t = k) = Sum_over_j [ P(S_t-1 = j) * P(S_t=k | S_t-1=j) ]
+
     if (nd == 0) {
-      cp[rnameprevna, ] <- pp
-      P[it, ] <- t(cp) %*% P[it - 1, ] # State t = TransMatrix * State t-1
+      # Initialize current time probabilities with 0
+      p_current <- matrix(0, nrow = n_pat, ncol = n_states)
+      colnames(p_current) <- ylevels
+
+      # Add contribution from Non-Absorbing Previous States
+      for (i in seq_along(yna)) {
+        prev_state_name <- yna[i]
+
+        # Extract prob of being in this previous state for all patients
+        # Vector of length n_pat
+        prob_prev <- P[, it - 1, prev_state_name]
+
+        # Extract transition probs GIVEN this previous state
+        # Rows correspond to the block for this state in edata_base
+        row_indices <- ((i - 1) * n_pat + 1):(i * n_pat)
+        probs_transition <- trans_probs[row_indices, ]
+
+        # Weighted sum: multiply column-wise by the probability of being in prev state
+        p_current <- p_current + (probs_transition * prob_prev)
+      }
+
+      # Add contribution from Absorbing States (if any)
+      # Absorbing states transition to themselves with Prob 1
+      if (!is.null(absorb)) {
+        for (a_state in absorb) {
+          # If you were in absorb state at t-1, you are in absorb state at t
+          p_current[, a_state] <- p_current[, a_state] + P[, it - 1, a_state]
+        }
+      }
+
+      P[, it, ] <- p_current
     } else {
-      for (idraw in 1:nd) {
-        cp[rnameprevna, ] <- pp[idraw, , ]
-        P[idraw, it, ] <- t(cp) %*% P[idraw, it - 1, ]
+      # --- Bayesian Block (Complex due to extra dimension) ---
+      # trans_probs is [nd x (n_pat*n_yna) x n_states]
+
+      # Iterate draws (hard to vectorize draws + patients + states simultaneously without memory issues)
+      for (d in 1:nd) {
+        p_current_d <- matrix(0, nrow = n_pat, ncol = n_states)
+
+        for (i in seq_along(yna)) {
+          prev_state_name <- yna[i]
+          prob_prev <- P[d, , it - 1, prev_state_name] # [n_pat]
+
+          row_indices <- ((i - 1) * n_pat + 1):(i * n_pat)
+          probs_transition <- trans_probs[d, row_indices, ] # [n_pat x n_states]
+
+          p_current_d <- p_current_d + (probs_transition * prob_prev)
+        }
+
+        if (!is.null(absorb)) {
+          for (a_state in absorb) {
+            # total dead at t = new deaths + already dead
+            p_current_d[, a_state] <- p_current_d[, a_state] +
+              P[d, , it - 1, a_state]
+          }
+        }
+        P[d, , it, ] <- p_current_d
       }
     }
   }
 
-  P
+  return(P)
+}
+
+#' Compute standardized state occupancy probabilities (Vectorized)
+#'
+#' Updates the standardize_sops wrapper to use the optimized
+#' soprob_markov_vectorized function.
+#'
+#' @param model A fitted model object (orm, vglm, rmsb).
+#' @param data A data frame containing patient trajectory data.
+#' @param times Time points to predict.
+#' @param ylevels States in the data.
+#' @param absorb Absorbing state name.
+#' @param varnames List of variable names: tvarname, pvarname, id, tx, gap (optional).
+#' @param t_covs Time-dependent covariate lookup table.
+#'
+#' @return A list with two components:
+#'   \item{sop_tx}{Matrix (Time x State) or Array (Draws x Time x State) for Treatment}
+#'   \item{sop_ctrl}{Matrix (Time x State) or Array (Draws x Time x State) for Control}
+#'
+#' @export
+standardize_sops <- function(
+  model,
+  data = NULL,
+  times = NULL,
+  ylevels = factor(1:6),
+  absorb = 6,
+  varnames = list(
+    tvarname = "time",
+    pvarname = "yprev",
+    id = "id",
+    tx = "tx",
+    gap = NULL
+  ),
+  t_covs = NULL
+) {
+  # --- 1. Setup & Data Extraction ---
+  if (
+    !inherits(model, "orm") &&
+      !inherits(model, "vglm") &&
+      !inherits(model, "rmsb")
+  ) {
+    stop("model must be an orm, rmsb, or vglm object.")
+  }
+
+  if (is.null(data)) {
+    data <- model$x
+    if (is.null(data)) {
+      stop("No data provided and model was not fitted with x=TRUE")
+    }
+    data$y <- model$y
+  }
+
+  # Variable mapping
+  id_var <- varnames$id
+  tx_var <- varnames$tx
+  tvar <- varnames$tvarname
+  pvar <- varnames$pvarname
+  gap_var <- varnames$gap %||% NULL # Helper if varnames$gap is missing
+
+  if (is.null(times)) {
+    times <- 1:max(data[[tvar]], na.rm = TRUE)
+  }
+
+  # Check factors
+  if (!is.factor(data[[pvar]])) {
+    warning(paste(pvar, "should be a factor."))
+  }
+
+  # --- 2. Create Counterfactual Cohorts ---
+  # Extract one row per patient (baseline)
+  X_base <- data[!duplicated(data[[id_var]]), ]
+
+  # Create Treated Cohort (Everyone tx=1)
+  X_tx <- X_base
+  X_tx[[tx_var]] <- 1
+
+  # Create Control Cohort (Everyone tx=0)
+  X_ctrl <- X_base
+  X_ctrl[[tx_var]] <- 0
+
+  # --- 3. Vectorized Prediction ---
+  # These calls replace the loop.
+  # Returns: [Patients x Time x States] (Freq) OR [Draws x Patients x Time x States] (Bayes)
+
+  # Note: ensure soprob_markov_vectorized is sourced/loaded
+  res_tx <- soprob_markov(
+    object = model,
+    data = X_tx,
+    times = times,
+    ylevels = ylevels,
+    absorb = absorb,
+    tvarname = tvar,
+    pvarname = pvar,
+    gap = gap_var,
+    t_covs = t_covs
+  )
+
+  res_ctrl <- soprob_markov(
+    object = model,
+    data = X_ctrl,
+    times = times,
+    ylevels = ylevels,
+    absorb = absorb,
+    tvarname = tvar,
+    pvarname = pvar,
+    gap = gap_var,
+    t_covs = t_covs
+  )
+
+  # --- 4. Marginalize (Average over Patients) ---
+
+  # Helper to average over the patient dimension
+  # Freq dims: [Pat, Time, State] -> Target: [Time, State] (Ave over dim 1)
+  # Bayes dims: [Draw, Pat, Time, State] -> Target: [Draw, Time, State] (Ave over dim 2)
+
+  calc_marginal <- function(arr) {
+    ndims <- length(dim(arr))
+    if (ndims == 3) {
+      # Frequentist: Average over rows (Patients)
+      # Result: [Time x States]
+      return(apply(arr, c(2, 3), mean, na.rm = TRUE))
+    } else if (ndims == 4) {
+      # Bayesian: Average over dim 2 (Patients)
+      # Result: [Draws x Time x States]
+      return(apply(arr, c(1, 3, 4), mean, na.rm = TRUE))
+    } else {
+      stop("Unexpected array dimensions returned from vectorized function.")
+    }
+  }
+
+  sop_tx_marg <- calc_marginal(res_tx)
+  sop_ctrl_marg <- calc_marginal(res_ctrl)
+
+  # Ensure column names
+  if (length(dim(sop_tx_marg)) == 2) {
+    colnames(sop_tx_marg) <- as.character(ylevels)
+    colnames(sop_ctrl_marg) <- as.character(ylevels)
+  } else {
+    dimnames(sop_tx_marg)[[3]] <- as.character(ylevels)
+    dimnames(sop_ctrl_marg)[[3]] <- as.character(ylevels)
+  }
+
+  return(list(
+    sop_tx = sop_tx_marg,
+    sop_ctrl = sop_ctrl_marg
+  ))
+}
+
+#' Compute Total Time in Target State(s)
+#'
+#' Calculates the expected total time spent in specified target state(s).
+#' This function integrates state occupancy probabilities over time assuming unit steps.
+#' It automatically adapts to the input format:
+#' \itemize{
+#'   \item **Patient-Level:** If input is an array from \code{\link{soprob_markov_vectorized}}, it returns time-in-state for each patient.
+#'   \item **Bootstrap-Level:** If input is a data frame from \code{\link{bootstrap_standardized_sops}}, it returns mean time-in-state per treatment group and the difference for each bootstrap sample.
+#' }
+#'
+#' @param sops Input object.
+#'   \itemize{
+#'     \item **Array:** `[Patients x Time x States]` (Frequentist) or `[Draws x Patients x Time x States]` (Bayes).
+#'     \item **Data Frame:** Output from `bootstrap_standardized_sops` containing columns `boot_id`, `time`, `tx`, and `state_*`.
+#'   }
+#' @param target_states Vector of target state(s) to include in the time calculation.
+#'   Can be integer indices or character names (e.g., \code{1} or \code{c("Home", "Rehab")}).
+#'   For bootstrap outputs, these must match the suffix of the `state_` columns (e.g., if column is `state_1`, use `1`).
+#'
+#' @return
+#' \itemize{
+#'   \item **Input = Array (Frequentist):** A named numeric vector of length \code{n_patients}.
+#'   \item **Input = Array (Bayesian):** A matrix of dimension \code{[n_draws x n_patients]}.
+#'   \item **Input = Bootstrap DF:** A tibble with columns:
+#'     \itemize{
+#'       \item `boot_id`: Bootstrap iteration
+#'       \item `SOP_tx`: Mean time in target state (Treatment)
+#'       \item `SOP_ctrl`: Mean time in target state (Control)
+#'       \item `delta`: Difference (Treatment - Control)
+#'     }
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' # --- Scenario 1: Patient-Level Estimates ---
+#' sops_arr <- soprob_markov(model, data, times = 1:30, ylevels = 1:6)
+#' days_home <- time_in_state(sops_arr, target_states = 1)
+#'
+#' # --- Scenario 2: Bootstrap Inference ---
+#' bs_res <- bootstrap_standardized_sops(model, data, n_boot=100)
+#' # Get distribution of treatment effects
+#' bs_effects <- time_in_state(bs_res, target_states = 1)
+#' }
+#'
+#' @keywords time-in-state auc bootstrap
+#' @export
+time_in_state <- function(sops, target_states = 1) {
+  # =========================================================================
+  # BRANCH 1: Bootstrap Data Frame Input
+  # =========================================================================
+  if (inherits(sops, "data.frame")) {
+    # 1. Validation
+    if (!all(c("boot_id", "time", "tx") %in% colnames(sops))) {
+      stop("Input data frame must contain 'boot_id', 'time', and 'tx' columns.")
+    }
+
+    # Identify state columns in the dataframe
+    # The bootstrap function outputs columns like "state_1", "state_2", etc.
+    state_cols_available <- grep("^state_", colnames(sops), value = TRUE)
+
+    if (length(state_cols_available) == 0) {
+      stop(
+        "Input data frame does not contain any columns starting with 'state_'."
+      )
+    }
+
+    # 2. Map target_states to column names
+    target_suffixes <- as.character(target_states)
+    target_cols <- paste0("state_", target_suffixes)
+
+    # Check for missing columns
+    missing_cols <- setdiff(target_cols, colnames(sops))
+    if (length(missing_cols) > 0) {
+      stop(paste(
+        "The following target state columns were not found in the bootstrap output:",
+        paste(missing_cols, collapse = ", ")
+      ))
+    }
+
+    # 3. Sum probabilities across target states (Row-wise)
+    # If multiple states are targeted (e.g. Home + Rehab), we sum their probabilities first
+    if (length(target_cols) == 1) {
+      prob_target <- sops[[target_cols]]
+    } else {
+      prob_target <- rowSums(sops[, target_cols, drop = FALSE])
+    }
+
+    # Add temporary column for aggregation
+    # We use base R aggregation for dependency minimization, or dplyr if available
+    # Using dplyr approach as it's cleaner and likely present with the bootstrap workflow
+
+    # We construct a minimal DF to aggregate
+    agg_df <- sops[, c("boot_id", "tx", "time")]
+    agg_df$prob <- prob_target
+
+    # 4. Sum over time (Area Under Curve)
+    # Group by boot_id and tx
+    # Result: One row per boot_id per tx group
+    res_grouped <- aggregate(prob ~ boot_id + tx, data = agg_df, FUN = sum)
+
+    # 5. Pivot to Wide Format (Tx vs Ctrl)
+    # Split into two dataframes
+    res_tx <- res_grouped[res_grouped$tx == 1, c("boot_id", "prob")]
+    res_ctrl <- res_grouped[res_grouped$tx == 0, c("boot_id", "prob")]
+
+    # Merge
+    res_wide <- merge(
+      res_tx,
+      res_ctrl,
+      by = "boot_id",
+      suffixes = c("_tx", "_ctrl")
+    )
+
+    # Calculate difference
+    colnames(res_wide)[colnames(res_wide) == "prob_tx"] <- "SOP_tx"
+    colnames(res_wide)[colnames(res_wide) == "prob_ctrl"] <- "SOP_ctrl"
+    res_wide$delta <- res_wide$SOP_tx - res_wide$SOP_ctrl
+
+    # Return tibble if tibble package is available, otherwise DF
+    if (requireNamespace("tibble", quietly = TRUE)) {
+      return(tibble::as_tibble(res_wide))
+    } else {
+      return(res_wide)
+    }
+  }
+
+  # =========================================================================
+  # BRANCH 2: Array Input (Original Logic)
+  # =========================================================================
+
+  # --- 1. Detect Dimensions ---
+  dims <- dim(sops)
+  if (is.null(dims)) {
+    stop("Input 'sops' must be an array or data frame.")
+  }
+
+  ndim <- length(dims)
+  dnames <- dimnames(sops)
+
+  if (ndim == 3) {
+    # Frequentist: [Patients, Time, States]
+    state_dim <- 3
+  } else if (ndim == 4) {
+    # Bayesian: [Draws, Patients, Time, States]
+    state_dim <- 4
+  } else {
+    stop("Input array must be 3D or 4D.")
+  }
+
+  # --- 2. Resolve Target States ---
+  state_names <- dnames[[state_dim]]
+  if (is.null(state_names)) {
+    state_names <- as.character(1:dims[state_dim])
+  }
+
+  target_chars <- as.character(target_states)
+  missing_states <- setdiff(target_chars, state_names)
+  if (length(missing_states) > 0) {
+    stop(paste(
+      "Target states not found in input array:",
+      paste(missing_states, collapse = ", ")
+    ))
+  }
+
+  # --- 3. Filter & Aggregate States ---
+  subset_args <- rep(list(TRUE), ndim)
+  subset_args[[state_dim]] <- target_chars
+
+  sops_slice <- do.call("[", c(list(sops), subset_args, drop = FALSE))
+  prob_in_target <- apply(sops_slice, (1:ndim)[-state_dim], sum)
+
+  # --- 4. Integrate Over Time ---
+  if (ndim == 3) {
+    # Freq Input -> [Pat, Time] -> Apply over rows
+    res <- rowSums(prob_in_target)
+  } else {
+    # Bayes Input -> [Draws, Pat, Time] -> Apply over Draws & Pat
+    res <- apply(prob_in_target, c(1, 2), sum)
+  }
+
+  return(res)
 }
