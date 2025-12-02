@@ -414,12 +414,12 @@ states_to_tte_old <- function(
   data$state_change <- data[["y"]] - data[["yprev"]]
 
   # Keep state changes and ...
-  data <- data[data$state_change != 0 |
-                 # ... the last entry of each individual, unless they died
-                 (data[["time"]] == ave(data[["time"]],
-                                        data[["id"]],
-                                        FUN = max) &
-                    !data[["y"]] == 6), ]
+  data <- data[
+    data$state_change != 0 |
+      # ... the last entry of each individual, unless they died
+      (data[["time"]] == ave(data[["time"]], data[["id"]], FUN = max) &
+        !data[["y"]] == 6),
+  ]
 
   data[["start"]] <- ave(data$time, data$id, FUN = function(t) {
     c(0, t[-length(t)])
@@ -431,11 +431,11 @@ states_to_tte_old <- function(
   if (!is.null(covariates)) {
     available_covs <- intersect(covariates, colnames(data))
     data <- data[,
-                 colnames(data) %in%
-                   c(
-                     c("id", "tx", "yprev", "start", "stop", "y"),
-                     available_covs
-                   )
+      colnames(data) %in%
+        c(
+          c("id", "tx", "yprev", "start", "stop", "y"),
+          available_covs
+        )
     ]
   }
 
@@ -609,9 +609,11 @@ calc_time_in_state_diff <- function(data, target_state = 1) {
 
   # Calculate time spent in target state for each group
   time_in_state <- data |>
-    dplyr::filter(y == target_state) |>
     dplyr::group_by(id, tx) |>
-    dplyr::summarise(time_in_state = n(), .groups = "drop") |>
+    dplyr::summarise(
+      time_in_state = sum(y %in% target_state),
+      .groups = "drop"
+    ) |>
     dplyr::group_by(tx) |>
     dplyr::summarise(
       mean_time = mean(time_in_state),
@@ -891,8 +893,12 @@ tidy_bootstrap_coefs <- function(
 #'
 #' @importFrom dplyr arrange group_by mutate lead filter ungroup select everything
 #' @export
-format_competing_risks <- function(data, event_status = 1, death_status = 6,
-                                   version_old = TRUE) {
+format_competing_risks <- function(
+  data,
+  event_status = 1,
+  death_status = 6,
+  version_old = TRUE
+) {
   # Basic validation
   required_cols <- c("id", "start", "stop", "y", "tx")
   missing_cols <- setdiff(required_cols, names(data))
@@ -900,49 +906,49 @@ format_competing_risks <- function(data, event_status = 1, death_status = 6,
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  if(!version_old) {
-  data <- data |>
-    dplyr::arrange(id, start) |>
-    dplyr::group_by(id) |>
-    dplyr::mutate(
-      # Look at the NEXT state to see if an event happens at the end of THIS interval
-      next_y = dplyr::lead(y),
+  if (!version_old) {
+    data <- data |>
+      dplyr::arrange(id, start) |>
+      dplyr::group_by(id) |>
+      dplyr::mutate(
+        # Look at the NEXT state to see if an event happens at the end of THIS interval
+        next_y = dplyr::lead(y),
 
-      # Assign Status to the interval PRECEDING the event
-      # E.g., 1 = Discharge, 2 = Death, 0 = Censored (no event or loss to follow up)
-      status = dplyr::case_when(
-        next_y == event_status ~ 1L,
-        next_y == death_status ~ 2L,
-        TRUE ~ 0L
-      ),
-      # 2. Drop all rows appearing AFTER the first event
-      # Calculate cumulative events.
-      # Once this hits 1, the current row is the event.
-      cum_events = cumsum(status > 0),
+        # Assign Status to the interval PRECEDING the event
+        # E.g., 1 = Discharge, 2 = Death, 0 = Censored (no event or loss to follow up)
+        status = dplyr::case_when(
+          next_y == event_status ~ 1L,
+          next_y == death_status ~ 2L,
+          TRUE ~ 0L
+        ),
+        # 2. Drop all rows appearing AFTER the first event
+        # Calculate cumulative events.
+        # Once this hits 1, the current row is the event.
+        cum_events = cumsum(status > 0),
 
-      # We want to remove rows where the event occurred PREVIOUSLY.
-      # lag(cum_events, default=0) will be 0 for the event row,
-      # but 1 for all subsequent rows.
-      prev_events = dplyr::lag(cum_events, default = 0)
-    ) |>
-    # Keep rows where no event has happened in the past
-    dplyr::filter(prev_events == 0) |>
-    dplyr::ungroup() |>
-    dplyr::select(
-      id,
-      tx,
-      start,
-      stop,
-      status,
-      y,
-      dplyr::everything(),
-      -next_y,
-      -cum_events,
-      -prev_events
-    )
+        # We want to remove rows where the event occurred PREVIOUSLY.
+        # lag(cum_events, default=0) will be 0 for the event row,
+        # but 1 for all subsequent rows.
+        prev_events = dplyr::lag(cum_events, default = 0)
+      ) |>
+      # Keep rows where no event has happened in the past
+      dplyr::filter(prev_events == 0) |>
+      dplyr::ungroup() |>
+      dplyr::select(
+        id,
+        tx,
+        start,
+        stop,
+        status,
+        y,
+        dplyr::everything(),
+        -next_y,
+        -cum_events,
+        -prev_events
+      )
   }
 
-  if(version_old) {
+  if (version_old) {
     # Split data into id groups
     data_split <- split(data, data[["id"]])
 
@@ -950,19 +956,22 @@ format_competing_risks <- function(data, event_status = 1, death_status = 6,
     data_split <- lapply(data_split, FUN = function(d) {
       # ...if any event occurred in this group, select the according rows...
       event_or_death <- d[["y"]] == event_status | d[["y"]] == death_status
-      if(any(event_or_death)) {
+      if (any(event_or_death)) {
         d <- d[event_or_death, ]
-      # ...else select the last row
+        # ...else select the last row
       } else {
         d <- d[nrow(d), ]
       }
       # introduce status variable, which indicates event (1) or death (2)
-      d[["status"]] <- factor(ifelse(d[["y"]] == event_status, 1,
-                              ifelse(d[["y"]] == death_status, 2, 0)))
+      d[["status"]] <- factor(ifelse(
+        d[["y"]] == event_status,
+        1,
+        ifelse(d[["y"]] == death_status, 2, 0)
+      ))
       d <- d[1, ]
       d[["etime"]] <- as.numeric(d[["stop"]])
       return(d)
-      })
+    })
     return(do.call(rbind, data_split))
   }
 }
