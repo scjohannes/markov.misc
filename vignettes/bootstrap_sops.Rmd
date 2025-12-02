@@ -27,9 +27,10 @@ library(VGAM)
 library(ggplot2)
 library(patchwork)
 
-N_PATIENTS <- 1062
-R <- 8
-SEED <- 123456
+N_PATIENTS <- 250
+R <- 300
+SEED <- 234567
+FU <- 60
 
 DATA_PATH <- file.path(tempdir(), "sim_data")
 OUTPUT_PATH <- file.path(tempdir(), "sim_output")
@@ -44,7 +45,7 @@ if (!dir.exists(OUTPUT_PATH)) dir.create(OUTPUT_PATH)
 ```{r superpop}
 markov_data <- sim_trajectories_brownian(
   n_patients = N_PATIENTS,
-  follow_up_time = 30,
+  follow_up_time = FU,
   treatment_prob = 0.5,
   absorbing_state = 6,
   seed = SEED,
@@ -58,7 +59,7 @@ esop <- plot_sops(
   facet_var = NULL, 
   linetype_var = "tx") + 
   scale_color_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 0.8)) +
+  coord_cartesian(ylim = c(0, 1.0)) +
   theme(
     legend.position = ""
   )
@@ -136,7 +137,10 @@ cons_time_tx <- list(
   "time_nlin_1" = cbind(PO_effect = 1),
   "time_nlin_2" = cbind(PO_effect = 1),
   # interaction terms
-  "time_lin:tx" = cbind(PO_effect = 1)
+  "time_lin:tx" = cbind(PO_effect = 1),
+  "time_nlin_1:tx" = cbind(PO_effect = 1),
+  "time_nlin_2:tx" = cbind(PO_effect = 1),
+  "time_lin:yprev" = cbind(PO_effect = 1)
 )
 
 
@@ -147,7 +151,7 @@ m1 <- vglm(ordered(y) ~ rcs(time, 4) + tx + yprev, family = cumulative(reverse =
 m2 <- vglm(ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev, family = cumulative(reverse = TRUE, parallel = TRUE), data = data)
 
 # non-linear effect of time with interaction of treatment and linear time
-m3 <- vglm(ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + time_lin:tx + yprev, family = cumulative(reverse = TRUE, parallel = TRUE), data = data)
+m3 <- vglm(ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev + time_lin:tx + yprev:time_lin, family = cumulative(reverse = TRUE, parallel = TRUE), data = data)
 
 # non-linear effect of time and non-proportional effect of linear time with linear constraint
 m4 <- vglm(ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev, family = cumulative(reverse = TRUE, parallel = FALSE ~ time_lin), data = data, constraints = cons_time)
@@ -155,7 +159,7 @@ m4 <- vglm(ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev, famil
 m4@call$constraints  <- cons_time
 
 # non-linear effect of time and non-proportional effect of linear time and interaction of treatment and linear time with linear constraint
-m5 <- vglm(ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev + tx:time_lin, family = cumulative(reverse = TRUE, parallel = FALSE ~ time_lin), data = data, constraints = cons_time_tx)
+m5 <- vglm(ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + yprev + yprev:time_lin, family = cumulative(reverse = TRUE, parallel = FALSE ~ time_lin), data = data, constraints = cons_time_tx)
 m5@call$constraints  <- cons_time_tx
 
 
@@ -163,57 +167,57 @@ m5@call$constraints  <- cons_time_tx
 sops_hmisc <- soprobMarkovOrdm(
   m1,
   data = data[1, ],
-  time = 1:30,
+  time = 1:FU,
   ylevels = factor(1:6),
   absorb = "6"
 )
 
-sops_1 <- soprob_markov_ord_m(
+sops_1 <- soprob_markov(
   m1,
-  data = data[1, ],
-  time = 1:30,
+  data = data |> filter(time == 1), #use entire data 
+  time = 1:FU,
   ylevels = factor(1:6),
   absorb = "6"
 )
 
-all(sops_hmisc == sops_1)
+all(sops_hmisc == sops_1[1, , ])
 
 # check that using rcs() within model formula or manually creating splines gives same results
-sops_2 <- soprob_markov_ord_m(
+sops_2 <- soprob_markov(
   m2,
   data = data[1, ],
-  time = 1:30,
+  time = 1:FU,
   ylevels = factor(1:6),
   absorb = "6",
   t_covs = t_covs
 )
 
-all(sops_2 == sops_1)
+all(sops_2[1, , ] == sops_1[1, , ])
 
 # testing interactions and partial po models
 
-sops_3 <- soprob_markov_ord_m(
+sops_3 <- soprob_markov(
   m3,
   data = data[1, ],
-  time = 1:30,
+  time = 1:FU,
   ylevels = factor(1:6),
   absorb = "6",
   t_covs = t_covs
 )
 
-sops_4 <- soprob_markov_ord_m(
+sops_4 <- soprob_markov(
   m4,
   data = data[1, ],
-  time = 1:30,
+  time = 1:FU,
   ylevels = factor(1:6),
   absorb = "6",
   t_covs = t_covs
 )
 
-sops_5 <- soprob_markov_ord_m(
+sops_5 <- soprob_markov(
   m5,
-  data = data[1, ],
-  time = 1:30,
+  data = data |> filter(time == 1),
+  time = 1:FU,
   ylevels = factor(1:6),
   absorb = "6",
   t_covs = t_covs
@@ -222,14 +226,14 @@ sops_5 <- soprob_markov_ord_m(
 
 ## Step 3: Bootstrap SOPs
 
-This doesn't yet work with soprob_markov_ord_m. Need to update all bootstrap functions.
+Full which assumed PO for everything and no interactions.
 
 ```{r}
 t1 <- Sys.time()
 bs_sops <- bootstrap_standardized_sops(
   model = m1,
   data = data,
-  times = 1:30,
+  times = 1:FU,
   n_boot = R,
   ylevels = factor(1:6),
   absorb = "6",
@@ -241,22 +245,14 @@ t2 <- Sys.time()
 t2 - t1
 ```
 
-```{r}
-po_sops <- plot_bootstrap_sops(
-  bs_sops,
-  title = "PO-Model: Standardized SOPs with bootstrapped 95% confidence bands"
-) +
-  scale_fill_brewer(palette = "Dark2") +
-  scale_color_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 0.8))
-```
+Model which relaxes PO for linear time and adds linear time x treatment interaction.
 
 ```{r}
 t1 <- Sys.time()
 bs_sops_ppo <- bootstrap_standardized_sops(
   model = m5,
   data = data,
-  times = 1:30,
+  times = 1:FU,
   n_boot = R,
   ylevels = factor(1:6),
   absorb = "6",
@@ -269,6 +265,18 @@ t2 <- Sys.time()
 t2 - t1
 ```
 
+## Step 4: Plot Bootstrapped SOPs
+
+```{r}
+po_sops <- plot_bootstrap_sops(
+  bs_sops,
+  title = "PO-Model: Standardized SOPs with bootstrapped 95% confidence bands"
+) +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_color_brewer(palette = "Dark2") +
+  coord_cartesian(ylim = c(0, 1.0))
+```
+
 ```{r}
 ppo_sops <- plot_bootstrap_sops(
   bs_sops_ppo,
@@ -276,33 +284,20 @@ ppo_sops <- plot_bootstrap_sops(
 ) +
   scale_fill_brewer(palette = "Dark2") +
   scale_color_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 0.8))
+  coord_cartesian(ylim = c(0, 1.0))
 ```
-
-## Step 4: Plot Bootstrap Results
 
 ```{r}
 esop + po_sops + ppo_sops +
   plot_layout(guides = "collect")
 ```
 
-## Step 5: Difference in Time in State 1
-
+## Step 5: Calculate and Plot Bootstrap Distribution of Difference in Time in State 1
 
 ```{r}
-time_in_state1_diff <- sops_tx_long |>
-  filter(state == "1") |> 
-  group_by(tx, boot_id) |>
-  summarise(
-    time_in_state1 = sum(probability),
-    .groups = "drop"
-  ) |>
-  pivot_wider(names_from = tx, values_from = time_in_state1, names_prefix = "tx_") |>
-  mutate(diff = tx_1 - tx_0)
-
-# Plot
-
-ggplot(time_in_state1_diff, aes(x = diff)) +
+time_5 <- bs_sops_ppo |> 
+  time_in_state() |> 
+  ggplot(aes(x = delta)) +
   ggdist::stat_dots(side = "bottom") +
   ggdist::stat_halfeye() +
   geom_vline(xintercept = 0, linetype = "dashed") +
@@ -311,6 +306,34 @@ ggplot(time_in_state1_diff, aes(x = diff)) +
     x = "Difference in Time in State 1 (Treatment - Control)",
     y = ""
   )
+
+bs_sops_ppo |> 
+  time_in_state() |> 
+  reframe(
+    mean_tx = mean(SOP_tx),
+    mean_ctrl = mean(SOP_ctrl),
+  )
+
+time_1 <- bs_sops |> 
+  time_in_state() |> 
+  ggplot(aes(x = delta)) +
+  ggdist::stat_dots(side = "bottom") +
+  ggdist::stat_halfeye() +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Bootstrap Distribution of Difference in Time in State 1",
+    x = "Difference in Time in State 1 (Treatment - Control)",
+    y = ""
+  )
+
+bs_sops |> 
+  time_in_state() |> 
+  reframe(
+    mean_tx = mean(SOP_tx),
+    mean_ctrl = mean(SOP_ctrl),
+  )
+
+time_1 + time_5
 ```
 
 
