@@ -597,8 +597,9 @@ calc_time_in_state_diff <- function(data, target_state = 1) {
 
   # Calculate estimand (difference in probability of being in target state)
   estimand <- sops |>
-    dplyr::filter(y == target_state) |>
-    dplyr::select(tx, time, sop) |>
+    dplyr::filter(y %in% target_state) |>
+    dplyr::group_by(tx, time) |>
+    dplyr::summarise(sop = sum(sop), .groups = "drop") |>
     tidyr::pivot_wider(
       names_from = tx,
       values_from = sop,
