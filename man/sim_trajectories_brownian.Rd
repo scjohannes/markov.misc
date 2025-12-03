@@ -46,8 +46,9 @@ represent more severe states.}
 \item{treatment_prob}{Numeric. Probability of assignment to treatment group
 (default: 0.5).}
 
-\item{absorbing_state}{Integer. State number that represents death or other
-absorbing state (default: 6). Once entered, patients remain there.}
+\item{absorbing_state}{Integer or NULL. State number that represents death or other
+absorbing state (default: 6). Once entered, patients remain there.
+Set to NULL if no absorbing state is desired.}
 
 \item{drift_change_times}{Numeric vector of length 2 specifying when drift
 begins to decline and when it reaches zero (default: c(25, 50)).

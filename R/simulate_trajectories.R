@@ -305,8 +305,9 @@ sim_trajectories_markov <- function(
 #'   represent more severe states.
 #' @param treatment_prob Numeric. Probability of assignment to treatment group
 #'   (default: 0.5).
-#' @param absorbing_state Integer. State number that represents death or other
+#' @param absorbing_state Integer or NULL. State number that represents death or other
 #'   absorbing state (default: 6). Once entered, patients remain there.
+#'   Set to NULL if no absorbing state is desired.
 #' @param drift_change_times Numeric vector of length 2 specifying when drift
 #'   begins to decline and when it reaches zero (default: c(25, 50)).
 #'   Drift is constant until first time, then linearly declines to 0 by second time.
@@ -402,8 +403,10 @@ sim_trajectories_brownian <- function(
     stop("treatment_prob must be between 0 and 1")
   }
 
-  if (absorbing_state < 1 || absorbing_state > n_states) {
-    stop("absorbing_state must be between 1 and n_states")
+  if (!is.null(absorbing_state)) {
+    if (absorbing_state < 1 || absorbing_state > n_states) {
+      stop("absorbing_state must be between 1 and n_states")
+    }
   }
 
   if (
@@ -451,13 +454,15 @@ sim_trajectories_brownian <- function(
 
     # Generate observation at day 0 using selected CDF
     pcat <- diff(c(0, cdf_fun(thresholds - X[i, 1]), 1))
-    pcat[absorbing_state] <- 0 # nobody should start in absorbing state
+    if (!is.null(absorbing_state)) {
+      pcat[absorbing_state] <- 0 # nobody should start in absorbing state
+    }
     Y[i, 1] <- sample.int(n_states, 1, prob = pcat)
 
     # Simulate remaining days (1 to follow_up_time)
     for (t in 2:(follow_up_time + 1)) {
       # Check if patient is in absorbing state
-      if (Y[i, t - 1] == absorbing_state) {
+      if (!is.null(absorbing_state) && Y[i, t - 1] == absorbing_state) {
         Y[i, t] <- absorbing_state
         X[i, t] <- NA_real_ # Latent variable no longer evolves
       } else {
