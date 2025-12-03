@@ -913,7 +913,6 @@ taooh_bootstrap <- function(
 
 # Planned extensions:
 # - If beta == TRUE, stop the function and return beta treatment (for beta bootstrapping)
-# - Expand to support vgam models in addition to orm
 
 
 #' @keywords internal
