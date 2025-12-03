@@ -509,6 +509,7 @@ standardize_sops_old <- function(
 # - Expand to support vgam models in addition to orm
 
 #' @noRd
+#' @export
 #' @keywords internal
 taooh <- function(
   model,
@@ -914,6 +915,7 @@ taooh_bootstrap <- function(
 # - Expand to support vgam models in addition to orm
 
 #' @noRd
+#' @export
 #' @keywords internal
 taooh_bootstrap2 <- function(
   model,
@@ -1086,7 +1088,8 @@ taooh_bootstrap2 <- function(
     } else {
       return(NA_real_)
     }
-  })
+  },
+  .options = furrr_options(packages = c("rms", "markov.misc")))
 
   # Free memory
   plan("sequential")
