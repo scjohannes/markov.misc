@@ -40,7 +40,7 @@ if (!dir.exists(DATA_PATH)) dir.create(DATA_PATH)
 if (!dir.exists(OUTPUT_PATH)) dir.create(OUTPUT_PATH)
 ```
 
-## Step 1: Simualte Trial Data
+## Step 1: Simulate Trial Data
 
 ```{r superpop}
 markov_data <- sim_trajectories_brownian(
