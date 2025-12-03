@@ -509,8 +509,9 @@ standardize_sops_old <- function(
 # - Expand to support vgam models in addition to orm
 
 #' @noRd
-#' @export
 #' @keywords internal
+#' @export
+
 taooh <- function(
   model,
   data = NULL,
@@ -915,8 +916,9 @@ taooh_bootstrap <- function(
 # - Expand to support vgam models in addition to orm
 
 #' @noRd
-#' @export
 #' @keywords internal
+#' @export
+
 taooh_bootstrap2 <- function(
   model,
   data,
