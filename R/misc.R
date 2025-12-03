@@ -1,3 +1,85 @@
+#' Prepare Markov Data for Proportional Odds Modeling
+#'
+#' Prepares longitudinal Markov trajectory data for proportional odds regression
+#' by removing absorbing states and converting variables to appropriate types.
+#' Works with both VGAM::vglm and rms::orm models.
+#'
+#' @param data A data frame containing Markov trajectory data with columns
+#'   `y` (current state) and `yprev` (previous state).
+#' @param absorbing_state Integer. The absorbing state to filter out (default: 6
+#'   for death). Observations where `yprev` equals this value are removed.
+#' @param ordered_response Logical. Should `y` be converted to ordered factor?
+#'   (default: TRUE). Required for clm and vglm, not required for orm.
+#' @param factor_previous Logical. Should `yprev` be converted to factor?
+#'   (default: TRUE).
+#'
+#' @return A data frame with modified `y` and `yprev` columns and absorbing
+#'   states removed.
+#'
+#' @details
+#' This is a convenience function that performs standard data preparation for
+#' proportional odds models on Markov data:
+#' - Removes rows where patients were in an absorbing state at the previous time
+#' - Converts current state to ordered factor (for cumulative models)
+#' - Converts previous state to factor (for including as predictor)
+#'
+#' **Package compatibility**: This function prepares data for:
+#' - **VGAM::vglm**: Use `cumulative(parallel = TRUE, reverse = TRUE)` default
+#'   datasets.
+#' - **rms::orm**: Automatically treats integers as ordered factors.
+#' - **ordinal::clm**: Only accepts ordered factors.
+#'
+#' @examples
+#' \dontrun{
+#' # Prepare data
+#' model_data <- prepare_markov_data(trajectories)
+#'
+#' # Fit with VGAM (no robust SEs; use bootstrap for inference)
+#' library(VGAM)
+#' fit <- vglm(y ~ tx + rcs(time, 4) + yprev,
+#'             family = cumulative(parallel = TRUE, reverse = TRUE),
+#'             data = model_data)
+#'
+#' # Fit with rms (supports robust SEs via robcov)
+#' library(rms)
+#' dd <- datadist(model_data)
+#' options(datadist = "dd")
+#' fit <- orm(y ~ tx + rcs(time, 4) + yprev, data = model_data, x = TRUE, y = TRUE)
+#' fit_robust <- robcov(fit, cluster = model_data$id)
+#'
+#' # Fit with ordinal
+#' library(ordinal)
+#' fit <- clm(y ~ tx + time + yprev, data = model_data)
+#' }
+#'
+#' @importFrom dplyr filter mutate
+#'
+#' @export
+prepare_markov_data <- function(
+  data,
+  absorbing_state = 6,
+  ordered_response = TRUE,
+  factor_previous = TRUE
+) {
+  if (!is.null(absorbing_state)) {
+    data <- data |>
+      dplyr::filter(yprev != absorbing_state)
+  }
+
+  if (factor_previous) {
+    data <- data |>
+      dplyr::mutate(yprev = factor(yprev))
+  }
+
+  if (ordered_response) {
+    data <- data |>
+      dplyr::mutate(y = ordered(y))
+  }
+
+  data
+}
+
+
 #' Relevel Factors to Consecutive Integers
 #'
 #' Handles missing factor levels in data by releveling ordered factors to
