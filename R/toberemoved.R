@@ -508,7 +508,7 @@ standardize_sops_old <- function(
 # - Handle missing states in the data (change ylevels and absorb depending on the data)
 # - Expand to support vgam models in addition to orm
 
-#' @noRd
+
 #' @keywords internal
 #' @export
 
@@ -915,7 +915,7 @@ taooh_bootstrap <- function(
 # - If beta == TRUE, stop the function and return beta treatment (for beta bootstrapping)
 # - Expand to support vgam models in addition to orm
 
-#' @noRd
+
 #' @keywords internal
 #' @export
 
