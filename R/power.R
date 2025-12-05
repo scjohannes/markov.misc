@@ -461,7 +461,7 @@ assess_operating_characteristics <- function(
   id_var = "id",
   tx_var = "tx"
 ) {
-  set.seed(seed + iter_num)
+  if(!is.null(seed)) set.seed(seed + iter_num)
 
   results_list <- list()
 
