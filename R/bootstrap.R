@@ -191,7 +191,7 @@ bootstrap_model_coefs <- function(
 #' standardized state occupancy probabilities (SOPs) across all states and time
 #' points. Uses g-computation to estimate marginal (population-averaged) SOPs
 #' under treatment and control. Uses a custom fast bootstrap implementation that
-#' is dramatically faster than rsample::group_bootstraps() when working with
+#' is significantly faster than rsample::group_bootstraps() when working with
 #' many groups.
 #'
 #' @param model A fitted model object from \code{rms::orm} or \code{VGAM::vglm}.
@@ -207,6 +207,8 @@ bootstrap_model_coefs <- function(
 #'   to avoid nested parallelization and resource contention.
 #' @param ylevels States in the data (e.g., 1:6)
 #' @param absorb Absorbing state (e.g., 6 for death)
+#' @param coefs Should the coefficients of treatment for each bootstrap iteration
+#'    also be returned?
 #' @param times Time points in the data. Default is \code{1:max(data[["time"]])}
 #' @param varnames List of variable names in the data with components:
 #'   \itemize{
@@ -322,18 +324,19 @@ bootstrap_model_coefs <- function(
 #' @export
 
 bootstrap_standardized_sops <- function(
-  model,
-  data,
-  n_boot,
-  workers = NULL,
-  parallel = FALSE,
-  ylevels = factor(1:6),
-  absorb = 6,
-  times = NULL,
-  update_datadist = TRUE,
-  use_coefstart = FALSE,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
-  t_covs = NULL
+    model,
+    data,
+    n_boot,
+    workers = NULL,
+    parallel = FALSE,
+    ylevels = factor(1:6),
+    absorb = 6,
+    include_coefs = TRUE,
+    times = NULL,
+    update_datadist = TRUE,
+    use_coefstart = FALSE,
+    varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
+    t_covs = NULL
 ) {
   # Check model class
   if (!inherits(model, "orm") && !inherits(model, "vglm")) {
@@ -378,7 +381,10 @@ bootstrap_standardized_sops <- function(
     missing_states <- boot_result$missing_states
 
     if (is.null(m_boot)) {
-      return(NULL)
+      return(list(
+        sop_result = NULL,
+        coefs = NULL)
+      )
     }
 
     # Get states present in original numbering (for mapping back later)
@@ -406,39 +412,43 @@ bootstrap_standardized_sops <- function(
       }
     )
 
-    if (is.null(sop_result)) {
-      return(NULL)
-    }
+    if (include_coefs == TRUE) {
+      # Extract coefficients
+      coefs <- as.list(coef(m_boot))
+    } else {coefs <- NULL}
 
-    # Expand back to original state space with zeros for missing states
-    if (length(missing_states) > 0) {
-      # Initialize full matrices with zeros
-      sop_tx_full <- matrix(0, nrow = n_times, ncol = n_states)
-      sop_ctrl_full <- matrix(0, nrow = n_times, ncol = n_states)
-      colnames(sop_tx_full) <- as.character(ylevels)
-      colnames(sop_ctrl_full) <- as.character(ylevels)
+    if (!is.null(sop_result)) {
+      # Expand back to original state space with zeros for missing states
+      if (length(missing_states) > 0) {
+        # Initialize full matrices with zeros
+        sop_tx_full <- matrix(0, nrow = n_times, ncol = n_states)
+        sop_ctrl_full <- matrix(0, nrow = n_times, ncol = n_states)
+        colnames(sop_tx_full) <- as.character(ylevels)
+        colnames(sop_ctrl_full) <- as.character(ylevels)
 
-      # Fill in states that were present
-      for (i in seq_along(states_present)) {
-        original_state <- states_present[i]
-        sop_tx_full[, as.character(original_state)] <- sop_result$sop_tx[, i]
-        sop_ctrl_full[, as.character(original_state)] <- sop_result$sop_ctrl[,
-          i
-        ]
+        # Fill in states that were present
+        for (i in seq_along(states_present)) {
+          original_state <- states_present[i]
+          sop_tx_full[, as.character(original_state)] <- sop_result$sop_tx[, i]
+          sop_ctrl_full[, as.character(original_state)] <-
+            sop_result$sop_ctrl[,i]
+        }
+
+        sop_result <- list(
+          sop_tx = sop_tx_full,
+          sop_ctrl = sop_ctrl_full
+        )
+      } else {
+        # All states present - return as is
+        sop_result <- sop_result
       }
-
-      return(list(
-        sop_tx = sop_tx_full,
-        sop_ctrl = sop_ctrl_full
-      ))
-    } else {
-      # All states present - return as is
-      return(sop_result)
     }
+    return(list(sop_result = sop_result,
+                coefs = coefs))
   }
 
   # Apply analysis function to bootstrap samples with JIT materialization
-  sop_results <- apply_to_bootstrap(
+  boot_results <- apply_to_bootstrap(
     boot_samples = boot_ids,
     analysis_fn = analysis_fn,
     data = data,
@@ -458,12 +468,12 @@ bootstrap_standardized_sops <- function(
     )
   )
 
-  # Extract and reshape results into long format
+  # Extract and reshape SOPs into long format
   # Format: boot_id | time | tx | state_1 | state_2 | ... | state_k
-  result_list <- list()
+  sop_result_list <- list()
 
-  for (i in seq_along(sop_results)) {
-    sop_i <- sop_results[[i]]
+  for (i in seq_along(boot_results)) {
+    sop_i <- boot_results[[i]][["sop_result"]]
 
     if (!is.null(sop_i)) {
       # Convert treatment SOPs to tibble with time and state columns
@@ -481,13 +491,24 @@ bootstrap_standardized_sops <- function(
       ctrl_df$boot_id <- i
 
       # Combine treatment and control
-      result_list[[i]] <- dplyr::bind_rows(tx_df, ctrl_df)
+      sop_result_list[[i]] <- dplyr::bind_rows(tx_df, ctrl_df)
     }
   }
-
   # Combine all bootstrap iterations
-  result <- dplyr::bind_rows(result_list) |>
+  sop_results <- dplyr::bind_rows(sop_result_list) |>
     dplyr::select(boot_id, time, tx, dplyr::everything())
 
-  return(result)
+  # Extract coefs from boot_results
+  coefs <- lapply(boot_results, function(x) x[["coefs"]])
+  # Convert coefficients to tibble with boot_id and unnest coefficients
+  coefs_results <- tibble::tibble(
+    boot_id = seq_len(n_boot),
+    coefs = coefs
+  ) |>
+    tidyr::unnest_wider(coefs)
+
+  return(
+    list(sops = sop_results,
+         coefs = coefs_results)
+  )
 }
