@@ -12,6 +12,7 @@ bootstrap_standardized_sops(
   parallel = FALSE,
   ylevels = factor(1:6),
   absorb = 6,
+  include_coefs = TRUE,
   times = NULL,
   update_datadist = TRUE,
   use_coefstart = FALSE,
@@ -49,6 +50,9 @@ to avoid nested parallelization and resource contention.}
 \item id: patient identifier (default "id")
 \item tx: treatment indicator (default "tx")
 }}
+
+\item{coefs}{Should the coefficients of treatment for each bootstrap iteration
+also be returned?}
 }
 \value{
 A tibble with columns:
@@ -67,7 +71,7 @@ Performs fast group bootstrap resampling to compute confidence intervals for
 standardized state occupancy probabilities (SOPs) across all states and time
 points. Uses g-computation to estimate marginal (population-averaged) SOPs
 under treatment and control. Uses a custom fast bootstrap implementation that
-is dramatically faster than rsample::group_bootstraps() when working with
+is significantly faster than rsample::group_bootstraps() when working with
 many groups.
 }
 \details{
