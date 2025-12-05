@@ -305,8 +305,8 @@ sim_trajectories_markov <- function(
 #'   represent more severe states.
 #' @param treatment_prob Numeric. Probability of assignment to treatment group
 #'   (default: 0.5).
-#' @param allowed_start_state Integer vector. Defines one or more states allowed at 
-#'   time 0 (default: 2:5).
+#' @param allowed_start_state Integer vector or NULL. Defines one or more states allowed at 
+#'   time 0. If NULL, participants can start in all states (default: 2:5).
 #' @param absorbing_state Integer or NULL. State number that represents death or other
 #'   absorbing state (default: 6). Once entered, patients remain there.
 #'   Set to NULL if no absorbing state is desired.
@@ -404,6 +404,15 @@ sim_trajectories_brownian <- function(
 
   if (treatment_prob < 0 || treatment_prob > 1) {
     stop("treatment_prob must be between 0 and 1")
+  }
+
+  if (!is.null(allowed_start_state) {
+    if (!is.integer(allowed_start_state)) {
+      stop("allowed_start_state must be NULL or an integer")
+      }
+    if (!all(allowed_start_state %in% 1:n_states)) {
+      stop("All allowed_start_state must be between 1 and n_states")
+      }
   }
 
   if (!is.null(absorbing_state)) {
