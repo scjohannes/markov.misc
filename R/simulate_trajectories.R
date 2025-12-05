@@ -305,6 +305,8 @@ sim_trajectories_markov <- function(
 #'   represent more severe states.
 #' @param treatment_prob Numeric. Probability of assignment to treatment group
 #'   (default: 0.5).
+#' @param allowed_start_state Integer vector. Defines one or more states allowed at 
+#'   time 0 (default: 2:5).
 #' @param absorbing_state Integer or NULL. State number that represents death or other
 #'   absorbing state (default: 6). Once entered, patients remain there.
 #'   Set to NULL if no absorbing state is desired.
@@ -368,6 +370,7 @@ sim_trajectories_brownian <- function(
   x0_sd = 1.0,
   thresholds = c(-3.5, 0, 1, 3, 4.5),
   treatment_prob = 0.5,
+  allowed_start_state = 2:5,
   absorbing_state = 6,
   drift_change_times = c(25, 50),
   latent_dist = c("logistic", "normal"),
@@ -454,8 +457,8 @@ sim_trajectories_brownian <- function(
 
     # Generate observation at day 0 using selected CDF
     pcat <- diff(c(0, cdf_fun(thresholds - X[i, 1]), 1))
-    if (!is.null(absorbing_state)) {
-      pcat[absorbing_state] <- 0 # nobody should start in absorbing state
+    if (!is.null(allowed_start_state)) {
+      pcat[-allowed_start_state] <- 0 # states nobody should start in
     }
     Y[i, 1] <- sample.int(n_states, 1, prob = pcat)
 
