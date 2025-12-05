@@ -14,6 +14,7 @@ sim_trajectories_brownian(
   x0_sd = 1,
   thresholds = c(-3.5, 0, 1, 3, 4.5),
   treatment_prob = 0.5,
+  allowed_start_state = 2:5,
   absorbing_state = 6,
   drift_change_times = c(25, 50),
   latent_dist = c("logistic", "normal"),
@@ -45,6 +46,9 @@ represent more severe states.}
 
 \item{treatment_prob}{Numeric. Probability of assignment to treatment group
 (default: 0.5).}
+
+\item{allowed_start_state}{Integer vector or NULL. Defines one or more states allowed at
+time 0. If NULL, participants can start in all states (default: 2:5).}
 
 \item{absorbing_state}{Integer or NULL. State number that represents death or other
 absorbing state (default: 6). Once entered, patients remain there.
