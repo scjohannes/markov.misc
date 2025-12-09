@@ -434,8 +434,9 @@ sim_trajectories_brownian <- function(
   }
 
   if (
-    length(drift_change_times) != 2 ||
-      drift_change_times[1] >= drift_change_times[2]
+    !is.null(drift_change_times) &
+      (length(drift_change_times) != 2 ||
+        drift_change_times[1] >= drift_change_times[2])
   ) {
     stop(
       "drift_change_times must be a vector of length 2 with increasing values"
@@ -499,7 +500,9 @@ sim_trajectories_brownian <- function(
         mu_i <- mu_base + treatment[i] * mu_treatment_effect
 
         # Apply piecewise time-varying factor (for backward compatibility)
-        if (day <= drift_change_times[1]) {
+        if (is.null(drift_change_times)) {
+          mu_t <- mu_i
+        } else if (day <= drift_change_times[1]) {
           mu_t <- mu_i
         } else if (day <= drift_change_times[2]) {
           # Linear decline from mu_i to 0
