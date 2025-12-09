@@ -57,7 +57,7 @@ markov_data <- sim_trajectories_brownian(
   n_patients = N_PATIENTS,
   follow_up_time = FU,
   treatment_prob = 0.5,
-  absorbing_state = 6,
+  absorbing_state = 6, 
   seed = SEED,
   mu_treatment_effect = 0
 )
@@ -197,22 +197,46 @@ bs_flex   <- run_boot(m_flex,   "Model C")
 
 ## Step 5: Visualization
 
+### 0. Compare Coef with Time in State
+
+```{r}
+time_diff <- bs_simple$sops |> 
+  group_by(tx, boot_id) |> 
+  summarise(
+    time_in_state_1 = sum(state_1)
+  ) |> 
+  group_by(tx) |> 
+  pivot_wider(names_from = tx, values_from = time_in_state_1) |> 
+  mutate(diff = `1` - `0`) |> 
+  ungroup()
+
+tx_coef <- bs_simple$coefs |> 
+  select(boot_id, tx)
+
+
+# 1:1 relationship, but not perfectly straight because we marginalize?
+time_diff |> 
+  left_join(tx_coef, by = "boot_id") |> 
+  ggplot(aes(x = diff, y = tx)) +
+  geom_point(alpha = 0.5)
+```
+
 ### 1. State Occupation Probabilities
 
 We plot the SOPs with 95% confidence bands for all three models.
 
 ```{r}
-p1 <- plot_bootstrap_sops(bs_simple, title = "Model A: Simple PO") + 
+p1 <- plot_bootstrap_sops(bs_simple$sops, title = "Model A: Simple PO") + 
   scale_fill_brewer(palette = "Dark2") +
   scale_color_brewer(palette = "Dark2") +
   coord_cartesian(ylim = c(0, 1))
 
-p2 <- plot_bootstrap_sops(bs_inter, title = "Model B: PO + Interaction") + 
+p2 <- plot_bootstrap_sops(bs_inter$sops, title = "Model B: PO + Interaction") + 
   scale_fill_brewer(palette = "Dark2") +
   scale_color_brewer(palette = "Dark2") +
   coord_cartesian(ylim = c(0, 1))
 
-p3 <- plot_bootstrap_sops(bs_flex, title = "Model C: Partial PO + Interactions") + 
+p3 <- plot_bootstrap_sops(bs_flex$sops, title = "Model C: Partial PO + Interactions") + 
   scale_fill_brewer(palette = "Dark2") +
   scale_color_brewer(palette = "Dark2") +
   coord_cartesian(ylim = c(0, 1))
