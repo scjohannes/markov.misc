@@ -11,7 +11,5 @@ Closes #
 ## R Package Checklist
 - [ ] I have run `devtools::document()` to update .Rd files and NAMESPACE.
 - [ ] I have run `devtools::test()` and all tests pass locally.
-(- [ ] I have run `devtools::check()` and there are no new errors, warnings, or notes.)
-- [ ] I have added a news item to `NEWS.md` (if applicable).
 
 ## Screenshots (if applicable)
