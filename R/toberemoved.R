@@ -883,8 +883,6 @@ taooh_bootstrap <- function(
 #' @importFrom future.callr callr
 #' @importFrom future plan
 #' @importFrom furrr future_map_dbl
-#' @importFrom rms datadist
-#' @importFrom rms rcs
 #' @importFrom stats ave update
 #'
 #' @examples
