@@ -308,19 +308,20 @@ tidy_po <- function(
 #' @param allocation_ratio Numeric. Proportion assigned to treatment (default: 0.5).
 #' @param seed Integer. Base random seed (default: 123). Actual seed will be
 #'   `seed + iter_num`.
-#' @param output_path Character. Path to directory where additional results will
-#'   be saved (default: NULL). If NULL and fit functions return additional results,
-#'   an error will be raised. A subdirectory `details/` will be created under this
-#'   path, with further subdirectories for each analysis type.
+#' @param output_path Character. Path to directory where results will be saved
+#'   (required). Two subdirectories will be created:
+#'   - `summary/analysis_name/`: Summary statistics (first element of fit function return)
+#'   - `details/analysis_name/`: Additional results (remaining elements of fit function return)
 #' @param fit_functions Named list of functions that fit models and return results.
 #'   Each function receives `data` (sampled data) and `iter` (iteration number)
 #'   arguments. Must return a **list** where:
 #'   - First element: A one-row tibble/data frame with summary statistics containing
 #'     columns: `iter`, `analysis`, `se_type`, `term`, `estimate`, `std_error`,
-#'     `statistic`, `p_value`, `conf_low`, `conf_high`.
+#'     `statistic`, `p_value`, `conf_low`, `conf_high`. Saved to
+#'     `output_path/summary/analysis_name/analysis_name_iter_N.rds`.
 #'   - Remaining elements (optional): Additional results to save to disk (e.g.,
-#'     bootstrap distributions, SOPs, detailed model output). These will be saved
-#'     as RDS files in `output_path/details/analysis_name/analysis_name_iter_N.rds`.
+#'     bootstrap distributions, SOPs, detailed model output). Saved to
+#'     `output_path/details/analysis_name/analysis_name_iter_N.rds`.
 #'
 #' @return A tibble combining results from all analysis functions with columns:
 #'   - iter: Iteration number
@@ -360,12 +361,14 @@ tidy_po <- function(
 #'      SOPs, detailed output, etc.)
 #'
 #' **File saving**:
-#' When fitting functions return lists with more than one element, all elements
-#' after the first are saved to disk at:
-#' `output_path/details/analysis_name/analysis_name_iter_N.rds`
+#' The function saves results to two separate directory structures:
+#' 1. **Summary results** (first list element): Saved to
+#'    `output_path/summary/analysis_name/analysis_name_iter_N.rds`
+#' 2. **Additional results** (remaining list elements): Saved to
+#'    `output_path/details/analysis_name/analysis_name_iter_N.rds`
 #'
-#' The saved object is a list containing `results[-1]` (all elements except the
-#' first). Directories are created recursively as needed.
+#' The details file contains a list with `results[-1]` (all elements except the
+#' first). Both directory structures are created recursively as needed.
 #'
 #' **Bootstrap handling**: Bootstrap inference (if needed) should be implemented
 #' within individual fitting functions, not by this orchestrator. This design:
@@ -499,9 +502,14 @@ assess_operating_characteristics <- function(
     set.seed(seed + iter_num)
   }
 
-  if (!is.null(output_path)) {
-    out_dir <- paste0(output_path, "/details")
+  if (is.null(output_path)) {
+    stop(
+      "output_path must be provided."
+    )
   }
+
+  out_dir_details <- paste0(output_path, "/details")
+  out_dir_summary <- paste0(output_path, "/summary")
 
   results_list <- list()
 
@@ -556,29 +564,35 @@ assess_operating_characteristics <- function(
     }
 
     # Save additional results to disk if present
-    if (length(results) > 1) {
-      if (is.null(output_path)) {
-        stop(
-          "output_path is NULL, but fitting function returned additional results to save. ",
-          analysis_name
-        )
-      } else {
-        # Create directory recursively (including parent directories)
-        analysis_dir <- file.path(out_dir, analysis_name)
-        if (!dir.exists(analysis_dir)) {
-          dir.create(analysis_dir, recursive = TRUE, showWarnings = FALSE)
-        }
+    # Create directory recursively (including parent directories)
+    analysis_dir_details <- file.path(out_dir_details, analysis_name)
+    analysis_dir_summary <- file.path(out_dir_summary, analysis_name)
 
-        # Save all additional results (everything except first element)
-        saveRDS(
-          results[-1],
-          file = file.path(
-            analysis_dir,
-            paste0(analysis_name, "_iter_", iter_num, ".rds")
-          )
-        )
-      }
+    if (!dir.exists(analysis_dir_details)) {
+      dir.create(analysis_dir_details, recursive = TRUE, showWarnings = FALSE)
     }
+
+    if (!dir.exists(analysis_dir_summary)) {
+      dir.create(analysis_dir_summary, recursive = TRUE, showWarnings = FALSE)
+    }
+
+    # Save all additional results (everything except first element)
+    saveRDS(
+      results[-1],
+      file = file.path(
+        analysis_dir_details,
+        paste0(analysis_name, "_iter_", iter_num, ".rds")
+      )
+    )
+
+    # save summary
+    saveRDS(
+      results[[1]],
+      file = file.path(
+        analysis_dir_summary,
+        paste0(analysis_name, "_iter_", iter_num, ".rds")
+      )
+    )
 
     # Store summary results (first element)
     results_list[[analysis_name]] <- results[[1]]

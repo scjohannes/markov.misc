@@ -8,6 +8,7 @@
 assess_operating_characteristics(
   iter_num,
   data_paths,
+  output_path,
   fit_functions,
   sample_size = 250,
   allocation_ratio = 0.5,
@@ -20,6 +21,7 @@ assess_operating_characteristics(
 run_power_iteration(
   iter_num,
   data_paths,
+  output_path,
   fit_functions,
   sample_size = 250,
   allocation_ratio = 0.5,
@@ -36,13 +38,25 @@ run_power_iteration(
 fit_functions. Example:
 \code{list(markov = "ha_or_0.8.parquet", t_test = "t_data_or_0.8.parquet")}.}
 
-\item{fit_functions}{Named list of functions that fit models and return tidy
-results. Each function receives \code{data} (sampled data) and \code{iter} (iteration
-number) arguments. Must return a tibble with columns: \code{iter}, \code{analysis},
-\code{se_type}, \code{term}, \code{estimate}, \code{std_error}, \code{statistic}, \code{p_value},
-\code{conf_low}, \code{conf_high}. For bootstrap-based inference, \code{std_error} should
-be the bootstrap standard error, and confidence limits should be renamed
-from \code{lower}/\code{upper} to \code{conf_low}/\code{conf_high}.}
+\item{output_path}{Character. Path to directory where results will be saved
+(required). Two subdirectories will be created:
+\itemize{
+\item \verb{summary/analysis_name/}: Summary statistics (first element of fit function return)
+\item \verb{details/analysis_name/}: Additional results (remaining elements of fit function return)
+}}
+
+\item{fit_functions}{Named list of functions that fit models and return results.
+Each function receives \code{data} (sampled data) and \code{iter} (iteration number)
+arguments. Must return a \strong{list} where:
+\itemize{
+\item First element: A one-row tibble/data frame with summary statistics containing
+columns: \code{iter}, \code{analysis}, \code{se_type}, \code{term}, \code{estimate}, \code{std_error},
+\code{statistic}, \code{p_value}, \code{conf_low}, \code{conf_high}. Saved to
+\code{output_path/summary/analysis_name/analysis_name_iter_N.rds}.
+\item Remaining elements (optional): Additional results to save to disk (e.g.,
+bootstrap distributions, SOPs, detailed model output). Saved to
+\code{output_path/details/analysis_name/analysis_name_iter_N.rds}.
+}}
 
 \item{sample_size}{Integer. Total number of patients to sample (default: 250).}
 
@@ -79,6 +93,8 @@ superpopulation for this iteration (using \code{seed + iter_num})
 \item \strong{Multiple analyses}: Applies all fitting functions to the \emph{same} sample
 \item \strong{Within-analysis inference}: Individual fitting functions handle their
 own inference strategy (naive SEs, robust SEs, bootstrap, etc.)
+\item \strong{Save additional results}: If fitting functions return more than just
+summary statistics, additional results are saved to disk as RDS files
 }
 
 \strong{Key principle}: Each iteration gets a different sample from the superpopulation,
@@ -91,8 +107,25 @@ Each function should:
 \item Accept \code{data} (the sampled dataset) and \code{iter} (iteration number)
 \item Perform any necessary data preparation
 \item Fit the model (with or without bootstrap, as appropriate)
-\item Return a tibble with standardized columns
+\item Return a \strong{list} where:
+\itemize{
+\item First element: One-row tibble with summary statistics
+\item Remaining elements (optional): Additional data to save (bootstrap samples,
+SOPs, detailed output, etc.)
 }
+}
+
+\strong{File saving}:
+The function saves results to two separate directory structures:
+\enumerate{
+\item \strong{Summary results} (first list element): Saved to
+\code{output_path/summary/analysis_name/analysis_name_iter_N.rds}
+\item \strong{Additional results} (remaining list elements): Saved to
+\code{output_path/details/analysis_name/analysis_name_iter_N.rds}
+}
+
+The details file contains a list with \code{results[-1]} (all elements except the
+first). Both directory structures are created recursively as needed.
 
 \strong{Bootstrap handling}: Bootstrap inference (if needed) should be implemented
 within individual fitting functions, not by this orchestrator. This design:
@@ -118,7 +151,7 @@ results <- future_map_dfr(
 \dontrun{
 # Define fitting functions that receive sampled data
 
-# Markov analysis with bootstrap
+# Markov analysis with bootstrap - returns list with summary + bootstrap details
 fit_markov_boot <- function(data, iter) {
   model_data <- prepare_markov_data(data, absorbing_state = 6)
 
@@ -154,12 +187,22 @@ fit_markov_boot <- function(data, iter) {
     ) |>
     select(iter, analysis, se_type, term, estimate, std_error,
            statistic, p_value, conf_low, conf_high)
+
+  # Return list: summary + additional results to save
+  list(
+    summary_results,
+    list(
+      boot_coefs = boot_coef,
+      model_fit = fit
+    )
+  )
 }
 
-# T-test analysis (no bootstrap needed)
+# T-test analysis (no additional results) - returns list with just summary
 fit_ttest <- function(data, iter) {
   t_result <- t.test(y ~ tx, data = data)
-  tibble(
+
+  summary_results <- tibble(
     iter = iter,
     analysis = "t_test",
     se_type = "naive",
@@ -171,6 +214,9 @@ fit_ttest <- function(data, iter) {
     conf_low = -t_result$conf.int[2],
     conf_high = -t_result$conf.int[1]
   )
+
+  # Return list with just summary (no additional results to save)
+  list(summary_results)
 }
 
 # Parallelize across iterations - each gets different sample
@@ -184,6 +230,7 @@ results <- future_map_dfr(
       markov = "ha_or_0.8.parquet",
       t_test = "t_data_or_0.8.parquet"
     ),
+    output_path = "power_sim_results",
     sample_size = 250,
     fit_functions = list(
       markov = fit_markov_boot,
