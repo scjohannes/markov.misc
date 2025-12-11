@@ -308,13 +308,19 @@ tidy_po <- function(
 #' @param allocation_ratio Numeric. Proportion assigned to treatment (default: 0.5).
 #' @param seed Integer. Base random seed (default: 123). Actual seed will be
 #'   `seed + iter_num`.
-#' @param fit_functions Named list of functions that fit models and return tidy
-#'   results. Each function receives `data` (sampled data) and `iter` (iteration
-#'   number) arguments. Must return a tibble with columns: `iter`, `analysis`,
-#'   `se_type`, `term`, `estimate`, `std_error`, `statistic`, `p_value`,
-#'   `conf_low`, `conf_high`. For bootstrap-based inference, `std_error` should
-#'   be the bootstrap standard error, and confidence limits should be renamed
-#'   from `lower`/`upper` to `conf_low`/`conf_high`.
+#' @param output_path Character. Path to directory where additional results will
+#'   be saved (default: NULL). If NULL and fit functions return additional results,
+#'   an error will be raised. A subdirectory `details/` will be created under this
+#'   path, with further subdirectories for each analysis type.
+#' @param fit_functions Named list of functions that fit models and return results.
+#'   Each function receives `data` (sampled data) and `iter` (iteration number)
+#'   arguments. Must return a **list** where:
+#'   - First element: A one-row tibble/data frame with summary statistics containing
+#'     columns: `iter`, `analysis`, `se_type`, `term`, `estimate`, `std_error`,
+#'     `statistic`, `p_value`, `conf_low`, `conf_high`.
+#'   - Remaining elements (optional): Additional results to save to disk (e.g.,
+#'     bootstrap distributions, SOPs, detailed model output). These will be saved
+#'     as RDS files in `output_path/details/analysis_name/analysis_name_iter_N.rds`.
 #'
 #' @return A tibble combining results from all analysis functions with columns:
 #'   - iter: Iteration number
@@ -336,6 +342,8 @@ tidy_po <- function(
 #' 2. **Multiple analyses**: Applies all fitting functions to the *same* sample
 #' 3. **Within-analysis inference**: Individual fitting functions handle their
 #'    own inference strategy (naive SEs, robust SEs, bootstrap, etc.)
+#' 4. **Save additional results**: If fitting functions return more than just
+#'    summary statistics, additional results are saved to disk as RDS files
 #'
 #' **Key principle**: Each iteration gets a different sample from the superpopulation,
 #' but all analyses within an iteration see the same sample. This allows fair
@@ -346,7 +354,18 @@ tidy_po <- function(
 #' 1. Accept `data` (the sampled dataset) and `iter` (iteration number)
 #' 2. Perform any necessary data preparation
 #' 3. Fit the model (with or without bootstrap, as appropriate)
-#' 4. Return a tibble with standardized columns
+#' 4. Return a **list** where:
+#'    - First element: One-row tibble with summary statistics
+#'    - Remaining elements (optional): Additional data to save (bootstrap samples,
+#'      SOPs, detailed output, etc.)
+#'
+#' **File saving**:
+#' When fitting functions return lists with more than one element, all elements
+#' after the first are saved to disk at:
+#' `output_path/details/analysis_name/analysis_name_iter_N.rds`
+#'
+#' The saved object is a list containing `results[-1]` (all elements except the
+#' first). Directories are created recursively as needed.
 #'
 #' **Bootstrap handling**: Bootstrap inference (if needed) should be implemented
 #' within individual fitting functions, not by this orchestrator. This design:
@@ -370,7 +389,7 @@ tidy_po <- function(
 #' \dontrun{
 #' # Define fitting functions that receive sampled data
 #'
-#' # Markov analysis with bootstrap
+#' # Markov analysis with bootstrap - returns list with summary + bootstrap details
 #' fit_markov_boot <- function(data, iter) {
 #'   model_data <- prepare_markov_data(data, absorbing_state = 6)
 #'
@@ -406,12 +425,22 @@ tidy_po <- function(
 #'     ) |>
 #'     select(iter, analysis, se_type, term, estimate, std_error,
 #'            statistic, p_value, conf_low, conf_high)
+#'
+#'   # Return list: summary + additional results to save
+#'   list(
+#'     summary_results,
+#'     list(
+#'       boot_coefs = boot_coef,
+#'       model_fit = fit
+#'     )
+#'   )
 #' }
 #'
-#' # T-test analysis (no bootstrap needed)
+#' # T-test analysis (no additional results) - returns list with just summary
 #' fit_ttest <- function(data, iter) {
 #'   t_result <- t.test(y ~ tx, data = data)
-#'   tibble(
+#'
+#'   summary_results <- tibble(
 #'     iter = iter,
 #'     analysis = "t_test",
 #'     se_type = "naive",
@@ -423,6 +452,9 @@ tidy_po <- function(
 #'     conf_low = -t_result$conf.int[2],
 #'     conf_high = -t_result$conf.int[1]
 #'   )
+#'
+#'   # Return list with just summary (no additional results to save)
+#'   list(summary_results)
 #' }
 #'
 #' # Parallelize across iterations - each gets different sample
@@ -436,6 +468,7 @@ tidy_po <- function(
 #'       markov = "ha_or_0.8.parquet",
 #'       t_test = "t_data_or_0.8.parquet"
 #'     ),
+#'     output_path = "power_sim_results",
 #'     sample_size = 250,
 #'     fit_functions = list(
 #'       markov = fit_markov_boot,
@@ -453,6 +486,7 @@ tidy_po <- function(
 assess_operating_characteristics <- function(
   iter_num,
   data_paths,
+  output_path,
   fit_functions,
   sample_size = 250,
   allocation_ratio = 0.5,
@@ -461,7 +495,13 @@ assess_operating_characteristics <- function(
   id_var = "id",
   tx_var = "tx"
 ) {
-  if(!is.null(seed)) set.seed(seed + iter_num)
+  if (!is.null(seed)) {
+    set.seed(seed + iter_num)
+  }
+
+  if (!is.null(output_path)) {
+    out_dir <- paste0(output_path, "/details")
+  }
 
   results_list <- list()
 
@@ -499,10 +539,49 @@ assess_operating_characteristics <- function(
     }
 
     # Apply fitting function to this specific sample
-    results_list[[analysis_name]] <- fit_functions[[analysis_name]](
+    # All of the fit functions must return a list
+    # The first element should always be a one row tibble (or df) of summary
+    # results
+    # The second element contains everything else (may be multiplpe data frames)
+    # The second element should be saved to disk
+    results <- fit_functions[[analysis_name]](
       data = sampled_data,
       iter = iter_num
     )
+
+    if (is.data.frame(results)) {
+      stop(
+        "Fitting function must return a list with the first element as a data frame of results. You likely used an old fit function."
+      )
+    }
+
+    # Save additional results to disk if present
+    if (length(results) > 1) {
+      if (is.null(output_path)) {
+        stop(
+          "output_path is NULL, but fitting function returned additional results to save. ",
+          analysis_name
+        )
+      } else {
+        # Create directory recursively (including parent directories)
+        analysis_dir <- file.path(out_dir, analysis_name)
+        if (!dir.exists(analysis_dir)) {
+          dir.create(analysis_dir, recursive = TRUE, showWarnings = FALSE)
+        }
+
+        # Save all additional results (everything except first element)
+        saveRDS(
+          results[-1],
+          file = file.path(
+            analysis_dir,
+            paste0(analysis_name, "_iter_", iter_num, ".rds")
+          )
+        )
+      }
+    }
+
+    # Store summary results (first element)
+    results_list[[analysis_name]] <- results[[1]]
   }
 
   dplyr::bind_rows(results_list)
