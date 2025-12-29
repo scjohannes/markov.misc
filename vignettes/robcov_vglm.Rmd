@@ -1,0 +1,173 @@
+---
+title: "Robust Covariance Estimation for vglm Objects"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Robust Covariance Estimation for vglm Objects}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+## Introduction
+
+In longitudinal or clustered data analysis, standard errors based on model assumptions (inverse Hessian) can be biased if the model is misspecified or if there is within-cluster correlation. The "sandwich" or robust covariance estimator provides a way to obtain valid standard errors and inference even when these assumptions are violated.
+
+The `rms` package provides the `robcov()` function for this purpose, but it does not support `vglm` objects from the `VGAM` package. The `markov.misc` package introduces `robcov_vglm()`, which implements the Huber-White sandwich estimator for `vglm` objects, with support for:
+
+*   Unclustered robust standard errors (handling heteroscedasticity/misspecification)
+*   Cluster-robust standard errors (handling within-subject correlation)
+*   Small-sample adjustments (optional)
+
+This vignette demonstrates how to use `robcov_vglm()` and validates its results against `rms::orm()` + `rms::robcov()`.
+
+## Setup and Data Simulation
+
+First, we load the necessary packages and simulate some longitudinal data using the package's simulation tools.
+
+```{r setup, message=FALSE, warning=FALSE}
+library(markov.misc)
+library(VGAM)
+library(rms)
+library(dplyr)
+library(tibble)
+
+# Set seed for reproducibility
+set.seed(12345)
+```
+
+We generate a dataset of patients with multiple observations over time. This naturally creates a clustered data structure where observations within the same patient (`id`) are correlated.
+
+```{r simulate_data}
+# Simulate 200 patients with up to 10 days of follow-up
+sim_data <- sim_trajectories_brownian(
+  n_patients = 200,
+  follow_up_time = 10,
+  treatment_prob = 0.5,
+  mu_treatment_effect = 0.5 # Some treatment effect
+)
+
+# Prepare data for modeling (creates lagged variables etc.)
+model_data <- prepare_markov_data(sim_data)
+
+# View structure
+glimpse(model_data)
+```
+
+## Fitting Models
+
+We will fit a proportional odds model (cumulative probability) using both `VGAM::vglm()` and `rms::orm()`. 
+
+### vglm Fit
+
+```{r fit_vglm}
+# Fit using vglm (cumulative family, proportional odds)
+fit_vglm <- vglm(
+  ordered(y) ~ tx + time + yprev, 
+  family = cumulative(parallel = TRUE, reverse = TRUE), 
+  data = model_data
+)
+
+# Standard (model-based) summary
+# summary(fit_vglm) # (Output omitted for brevity)
+```
+
+### orm Fit
+
+```{r fit_orm}
+# Set datadist for rms
+dd <- datadist(model_data)
+options(datadist = "dd")
+
+# Fit equivalent model using orm
+fit_orm <- orm(
+  ordered(y) ~ tx + time + yprev,
+  data = model_data,
+  x = TRUE, y = TRUE
+)
+```
+
+## Robust Covariance Estimation
+
+Now we compute robust standard errors. Since we have repeated measures per patient, we should use cluster-robust standard errors clustering on `id`.
+
+### Using robcov_vglm
+
+```{r robcov_vglm}
+# Compute cluster-robust SEs
+rob_vglm <- robcov_vglm(fit_vglm, cluster = model_data$id)
+rob_vglm
+```
+
+You can also get a full summary with z-statistics and p-values:
+
+```{r summary_robcov}
+summary(rob_vglm)
+```
+
+### Using rms::robcov
+
+For comparison, we compute the same thing using `rms`. The results are very similar.
+
+```{r robcov_orm}
+rob_orm <- robcov(fit_orm, cluster = model_data$id)
+rob_orm
+```
+
+## Extracting Information
+
+The `robcov_vglm` object contains all the components of the sandwich estimator.
+
+```{r extraction}
+# Extract robust variance-covariance matrix
+V <- vcov(rob_vglm)
+V[1:3, 1:3]
+
+# Extract robust standard errors
+se <- rob_vglm$se
+se
+
+# Meat and Bread matrices
+# Bread = Inverse Hessian * n
+dim(rob_vglm$bread)
+
+# Meat = Variance of scores
+dim(rob_vglm$meat)
+```
+
+## Unclustered Standard Errors
+
+If you just want heteroscedasticity-consistent standard errors (without clustering), you can omit the `cluster` argument.
+
+```{r unclustered}
+rob_vglm_unclustered <- robcov_vglm(fit_vglm)
+
+# Compare model-based vs robust (unclustered) SEs
+data.frame(
+  Model_SE = rob_vglm_unclustered$original_se,
+  Robust_SE = rob_vglm_unclustered$se,
+  Ratio = rob_vglm_unclustered$se / rob_vglm_unclustered$original_se
+)
+```
+
+## Small-Sample Adjustment
+
+For datasets with a small number of clusters, the sandwich estimator can be biased downwards. `robcov_vglm` allows for a small-sample adjustment factor $G/(G-1)$ where $G$ is the number of clusters.
+
+```{r adjustment}
+rob_vglm_adj <- robcov_vglm(fit_vglm, cluster = model_data$id, adjust = TRUE)
+
+# Compare adjusted vs unadjusted SEs
+data.frame(
+  Unadjusted = rob_vglm$se,
+  Adjusted = rob_vglm_adj$se,
+  Percent_Increase = (rob_vglm_adj$se / rob_vglm$se - 1) * 100
+)
+```
