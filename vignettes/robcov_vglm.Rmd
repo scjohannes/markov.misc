@@ -22,11 +22,11 @@ In longitudinal or clustered data analysis, standard errors based on model assum
 
 The `rms` package provides the `robcov()` function for this purpose, but it does not support `vglm` objects from the `VGAM` package. The `markov.misc` package introduces `robcov_vglm()`, which implements the Huber-White sandwich estimator for `vglm` objects, with support for:
 
-*   Unclustered robust standard errors (handling heteroscedasticity/misspecification)
-*   Cluster-robust standard errors (handling within-subject correlation)
-*   Small-sample adjustments (optional)
+*   Unclustered robust standard errors
+*   Cluster-robust standard errors
+*   Small-sample adjustments
 
-This vignette demonstrates how to use `robcov_vglm()` and validates its results against `rms::orm()` + `rms::robcov()`.
+This vignette demonstrates how to use `robcov_vglm()`.
 
 ## Setup and Data Simulation
 
@@ -48,10 +48,10 @@ We generate a dataset of patients with multiple observations over time. This nat
 ```{r simulate_data}
 # Simulate 200 patients with up to 10 days of follow-up
 sim_data <- sim_trajectories_brownian(
-  n_patients = 200,
-  follow_up_time = 10,
+  n_patients = 400,
+  follow_up_time = 30,
   treatment_prob = 0.5,
-  mu_treatment_effect = 0.5 # Some treatment effect
+  mu_treatment_effect = 0.013 # Some treatment effect
 )
 
 # Prepare data for modeling (creates lagged variables etc.)
@@ -76,7 +76,7 @@ fit_vglm <- vglm(
 )
 
 # Standard (model-based) summary
-# summary(fit_vglm) # (Output omitted for brevity)
+summary(fit_vglm)
 ```
 
 ### orm Fit
@@ -140,21 +140,6 @@ dim(rob_vglm$bread)
 
 # Meat = Variance of scores
 dim(rob_vglm$meat)
-```
-
-## Unclustered Standard Errors
-
-If you just want heteroscedasticity-consistent standard errors (without clustering), you can omit the `cluster` argument.
-
-```{r unclustered}
-rob_vglm_unclustered <- robcov_vglm(fit_vglm)
-
-# Compare model-based vs robust (unclustered) SEs
-data.frame(
-  Model_SE = rob_vglm_unclustered$original_se,
-  Robust_SE = rob_vglm_unclustered$se,
-  Ratio = rob_vglm_unclustered$se / rob_vglm_unclustered$original_se
-)
 ```
 
 ## Small-Sample Adjustment
