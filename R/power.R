@@ -563,30 +563,13 @@ assess_operating_characteristics <- function(
       )
     }
 
-    # Save additional results to disk if present
-    # Create directory recursively (including parent directories)
-    analysis_dir_details <- file.path(out_dir_details, analysis_name)
+    # Save summary (deprecated)
     #analysis_dir_summary <- file.path(out_dir_summary, analysis_name)
-
-    if (!dir.exists(analysis_dir_details)) {
-      dir.create(analysis_dir_details, recursive = TRUE, showWarnings = FALSE)
-    }
 
     #if (!dir.exists(analysis_dir_summary)) {
     #  dir.create(analysis_dir_summary, recursive = TRUE, showWarnings = FALSE)
     #}
-
-    # Save all additional results (everything except first element)
-    if(length(results[-1]) > 0) {
-    saveRDS(
-      results[-1],
-      file = file.path(
-        analysis_dir_details,
-        paste0(analysis_name, "_iter_", iter_num, ".rds")
-      )
-    )
-      }
-
+    
     # save summary
     #saveRDS(
     #  results[[1]],
@@ -595,6 +578,25 @@ assess_operating_characteristics <- function(
     #    paste0(analysis_name, "_iter_", iter_num, ".rds")
     #  )
     #)
+
+    # Save additional details to disk if present
+    if(length(results[-1]) > 0) {
+      # Create directory recursively (including parent directories)
+      analysis_dir_details <- file.path(out_dir_details, analysis_name)
+
+      if (!dir.exists(analysis_dir_details)) {
+        dir.create(analysis_dir_details, recursive = TRUE, showWarnings = FALSE)
+      }
+     
+      # Save all additional results (everything except first element)
+      saveRDS(
+        results[-1],
+        file = file.path(
+          analysis_dir_details,
+          paste0(analysis_name, "_iter_", iter_num, ".rds")
+        )
+      )
+      }
 
     # Store summary results (first element)
     results_list[[analysis_name]] <- results[[1]]
