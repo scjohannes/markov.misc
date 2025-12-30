@@ -310,7 +310,7 @@ tidy_po <- function(
 #'   `seed + iter_num`.
 #' @param output_path Character. Path to directory where results will be saved
 #'   (required). Two subdirectories will be created:
-#'   - `summary/analysis_name/`: Summary statistics (first element of fit function return)
+#'   - `summary/analysis_name/`: (Deprecated) Summary statistics (first element of fit function return)
 #'   - `details/analysis_name/`: Additional results (remaining elements of fit function return)
 #' @param fit_functions Named list of functions that fit models and return results.
 #'   Each function receives `data` (sampled data) and `iter` (iteration number)
@@ -362,7 +362,7 @@ tidy_po <- function(
 #'
 #' **File saving**:
 #' The function saves results to two separate directory structures:
-#' 1. **Summary results** (first list element): Saved to
+#' 1. **Summary results** (first list element) (Deprecated): Saved to
 #'    `output_path/summary/analysis_name/analysis_name_iter_N.rds`
 #' 2. **Additional results** (remaining list elements): Saved to
 #'    `output_path/details/analysis_name/analysis_name_iter_N.rds`
@@ -509,7 +509,7 @@ assess_operating_characteristics <- function(
   }
 
   out_dir_details <- paste0(output_path, "/details")
-  out_dir_summary <- paste0(output_path, "/summary")
+  #out_dir_summary <- paste0(output_path, "/summary")
 
   results_list <- list()
 
@@ -566,17 +566,18 @@ assess_operating_characteristics <- function(
     # Save additional results to disk if present
     # Create directory recursively (including parent directories)
     analysis_dir_details <- file.path(out_dir_details, analysis_name)
-    analysis_dir_summary <- file.path(out_dir_summary, analysis_name)
+    #analysis_dir_summary <- file.path(out_dir_summary, analysis_name)
 
     if (!dir.exists(analysis_dir_details)) {
       dir.create(analysis_dir_details, recursive = TRUE, showWarnings = FALSE)
     }
 
-    if (!dir.exists(analysis_dir_summary)) {
-      dir.create(analysis_dir_summary, recursive = TRUE, showWarnings = FALSE)
-    }
+    #if (!dir.exists(analysis_dir_summary)) {
+    #  dir.create(analysis_dir_summary, recursive = TRUE, showWarnings = FALSE)
+    #}
 
     # Save all additional results (everything except first element)
+    if(length(results[-1]) > 0) {
     saveRDS(
       results[-1],
       file = file.path(
@@ -584,15 +585,16 @@ assess_operating_characteristics <- function(
         paste0(analysis_name, "_iter_", iter_num, ".rds")
       )
     )
+      }
 
     # save summary
-    saveRDS(
-      results[[1]],
-      file = file.path(
-        analysis_dir_summary,
-        paste0(analysis_name, "_iter_", iter_num, ".rds")
-      )
-    )
+    #saveRDS(
+    #  results[[1]],
+    #  file = file.path(
+    #    analysis_dir_summary,
+    #    paste0(analysis_name, "_iter_", iter_num, ".rds")
+    #  )
+    #)
 
     # Store summary results (first element)
     results_list[[analysis_name]] <- results[[1]]
