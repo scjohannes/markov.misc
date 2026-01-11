@@ -35,7 +35,7 @@ library(ggdist)
 library(patchwork)
 
 N_PATIENTS <- 250
-R <- 320 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
+R <- 32 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
 SEED <- 2375678
 FU <- 60
 M <- 5 # Number of tresholds
@@ -180,7 +180,7 @@ run_boot <- function(model, name) {
     data = data,
     times = 1:FU,
     n_boot = R,
-    ylevels = factor(1:6),
+    ylevels = 1:6,
     absorb = "6",
     varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
     parallel = TRUE,
@@ -260,9 +260,9 @@ get_diff_dist <- function(bs_obj, label) {
 
 # Combine results
 diff_res <- bind_rows(
-  get_diff_dist(bs_simple, "Model A (Simple)"),
-  get_diff_dist(bs_inter,  "Model B (Interact)"),
-  get_diff_dist(bs_flex,   "Model C (Flexible)")
+  get_diff_dist(bs_simple$sops, "Model A (Simple)"),
+  get_diff_dist(bs_inter$sops,  "Model B (Interact)"),
+  get_diff_dist(bs_flex$sops,   "Model C (Flexible)")
 )
 
 # Plot
