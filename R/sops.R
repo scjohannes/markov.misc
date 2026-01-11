@@ -174,7 +174,17 @@ soprob_markov <- function(
 
   # Assign the previous state variable
   # We repeat each state n_pat times
-  edata_base[[pvarname]] <- rep(yna, each = n_pat)
+  
+  if (is.factor(data[[pvarname]])) {
+    # If the original variable is a factor, ensure the new column is also a factor
+    # with the same levels
+    edata_base[[pvarname]] <- factor(
+      rep(yna, each = n_pat), 
+      levels = levels(data[[pvarname]])
+    )
+  } else {
+    edata_base[[pvarname]] <- rep(yna, each = n_pat)
+  }
 
   # --- 4. Iterate Through Time (Vectorized over Patients) ---
   for (it in 2:n_times) {
@@ -327,7 +337,11 @@ standardize_sops <- function(
 
   # Check factors
   if (!is.factor(data[[pvar]])) {
-    warning(paste(pvar, "should be a factor."))
+    # Enforce factor conversion for robustness
+    if (getOption("markov.misc.verbose", default = FALSE)) {
+      warning(paste(pvar, "should be a factor. Converting automatically."))
+    }
+    data[[pvar]] <- factor(data[[pvar]])
   }
 
   # --- 2. Create Counterfactual Cohorts ---

@@ -120,8 +120,9 @@ bootstrap_model_coefs <- function(
   # Check for yprev variable and warn if not a factor
   if ("yprev" %in% names(data) && !is.factor(data$yprev)) {
     warning(
-      "Variable 'yprev' should be a factor but is not. "
+      "Variable 'yprev' should be a factor but is not. Converting to factor."
     )
+    data$yprev <- factor(data$yprev)
   }
 
   # Identify factor columns

@@ -329,17 +329,15 @@ standardize_sops_old <- function(
     if (is.null(data)) {
       stop("No data provided and model was not fitted with x=TRUE")
     }
-    # Add response variable
-    data$y <- model$y
   }
-
   # Check that yprev is a factor
   if (!is.factor(data[[varnames$pvarname]])) {
     warning(
       "Variable '",
       varnames$pvarname,
-      "' should be a factor but is not. "
+      "' should be a factor but is not. Converting to factor."
     )
+    data[[varnames$pvarname]] <- factor(data[[varnames$pvarname]])
   }
 
   # Determine id variable
@@ -508,7 +506,6 @@ standardize_sops_old <- function(
 # - Handle missing states in the data (change ylevels and absorb depending on the data)
 # - Expand to support vgam models in addition to orm
 
-
 #' @keywords internal
 #' @export
 
@@ -540,8 +537,9 @@ taooh <- function(
     warning(
       "Variable '",
       varnames$pvarname,
-      "' should be a factor but is not. "
+      "' should be a factor but is not. Converting to factor."
     )
+    data[[varnames$pvarname]] <- factor(data[[varnames$pvarname]])
   }
 
   # Determine id variable
@@ -912,7 +910,6 @@ taooh_bootstrap <- function(
 # Planned extensions:
 # - If beta == TRUE, stop the function and return beta treatment (for beta bootstrapping)
 
-
 #' @keywords internal
 #' @export
 
@@ -964,131 +961,134 @@ taooh_bootstrap2 <- function(
   }
 
   # Loop through the resamples
-  result <- future_map_dbl(as.data.frame(sample_IDs), function(x) {
-    # Create resample based on selected IDs
-    boot_data <- do.call(
-      rbind,
-      lapply(x, function(id) {
-        df_split[[as.character(id)]]
-      })
-    )
+  result <- future_map_dbl(
+    as.data.frame(sample_IDs),
+    function(x) {
+      # Create resample based on selected IDs
+      boot_data <- do.call(
+        rbind,
+        lapply(x, function(id) {
+          df_split[[as.character(id)]]
+        })
+      )
 
-    # Assign new unique IDs
-    boot_data$block_count <- ave(
-      boot_data[[varnames$id]],
-      boot_data[[varnames$id]],
-      boot_data[[varnames$tvarname]],
-      FUN = seq_along
-    )
+      # Assign new unique IDs
+      boot_data$block_count <- ave(
+        boot_data[[varnames$id]],
+        boot_data[[varnames$id]],
+        boot_data[[varnames$tvarname]],
+        FUN = seq_along
+      )
 
-    boot_data$new_id <- factor(paste(
-      boot_data[[varnames$id]],
-      boot_data$block_count,
-      sep = "_"
-    ))
+      boot_data$new_id <- factor(paste(
+        boot_data[[varnames$id]],
+        boot_data$block_count,
+        sep = "_"
+      ))
 
-    # Handle missing states in bootstrap sample by releveling
-    # Get actual states present in bootstrap sample
-    states_in_y <- unique(boot_data$y)
-    states_in_yprev <- unique(boot_data[[varnames$pvarname]])
-    states_present <- sort(unique(c(states_in_y, states_in_yprev)))
+      # Handle missing states in bootstrap sample by releveling
+      # Get actual states present in bootstrap sample
+      states_in_y <- unique(boot_data$y)
+      states_in_yprev <- unique(boot_data[[varnames$pvarname]])
+      states_present <- sort(unique(c(states_in_y, states_in_yprev)))
 
-    # Check if all original states are present
-    original_states <- if (is.factor(data$y)) {
-      as.numeric(levels(data$y))
-    } else {
-      ylevels
-    }
-
-    missing_states <- setdiff(original_states, states_present)
-
-    if (length(missing_states) > 0) {
-      # Some states are missing - need to relevel to consecutive integers
-      # Create mapping from old to new state numbers
-      state_mapping <- setNames(seq_along(states_present), states_present)
-
-      # Relevel y and yprev to consecutive integers
-      boot_data$y <- state_mapping[as.character(boot_data$y)]
-      boot_data[[varnames$pvarname]] <- state_mapping[
-        as.character(boot_data[[varnames$pvarname]])
-      ]
-
-      # Update ylevels to new consecutive sequence
-      boot_ylevels <- seq_along(states_present)
-
-      # Update absorbing state if it was in the original states
-      if (absorb %in% states_present) {
-        boot_absorb <- state_mapping[as.character(absorb)]
+      # Check if all original states are present
+      original_states <- if (is.factor(data$y)) {
+        as.numeric(levels(data$y))
       } else {
-        # If absorbing state is missing, use the highest state
-        boot_absorb <- max(boot_ylevels)
-        warning(
-          "Absorbing state ",
-          absorb,
-          " not present in bootstrap sample. ",
-          "Using state ",
-          boot_absorb,
-          " as absorbing state."
-        )
+        ylevels
       }
-    } else {
-      # All states present - use original values
-      boot_ylevels <- ylevels
-      boot_absorb <- absorb
-    }
 
-    # Now convert to factors with the appropriate levels
-    boot_data$y <- factor(boot_data$y, levels = boot_ylevels)
-    boot_data[[varnames$pvarname]] <- factor(
-      boot_data[[varnames$pvarname]],
-      levels = boot_ylevels
-    )
-    boot_data$yprev <- factor(boot_data$yprev)
+      missing_states <- setdiff(original_states, states_present)
 
-    # Update datadist and assign to global environment
-    # This works because we use future.callr which has isolated processes
-    if (inherits(model, "orm")) {
-      dd <- rms::datadist(boot_data)
-      assign("dd", dd, envir = .GlobalEnv)
-      options(datadist = "dd")
-    }
+      if (length(missing_states) > 0) {
+        # Some states are missing - need to relevel to consecutive integers
+        # Create mapping from old to new state numbers
+        state_mapping <- setNames(seq_along(states_present), states_present)
 
-    # Refit model with bootstrap data
-    m_boot <- tryCatch(
-      update(model, data = boot_data),
-      error = function(e) {
-        warning("Bootstrap iteration failed: ", e$message)
-        return(NULL)
-      }
-    )
+        # Relevel y and yprev to consecutive integers
+        boot_data$y <- state_mapping[as.character(boot_data$y)]
+        boot_data[[varnames$pvarname]] <- state_mapping[
+          as.character(boot_data[[varnames$pvarname]])
+        ]
 
-    # Calculate taooh with refitted model
-    if (!is.null(m_boot)) {
-      tryCatch(
-        taooh(
-          model = m_boot,
-          data = boot_data,
-          times = times,
-          ylevels = boot_ylevels,
-          absorb = boot_absorb,
-          target_states = target_states,
-          varnames = list(
-            tvarname = varnames$tvarname,
-            pvarname = varnames$pvarname,
-            id = "new_id", # Use the new_id for bootstrap samples
-            tx = varnames$tx
+        # Update ylevels to new consecutive sequence
+        boot_ylevels <- seq_along(states_present)
+
+        # Update absorbing state if it was in the original states
+        if (absorb %in% states_present) {
+          boot_absorb <- state_mapping[as.character(absorb)]
+        } else {
+          # If absorbing state is missing, use the highest state
+          boot_absorb <- max(boot_ylevels)
+          warning(
+            "Absorbing state ",
+            absorb,
+            " not present in bootstrap sample. ",
+            "Using state ",
+            boot_absorb,
+            " as absorbing state."
           )
-        )[1],
+        }
+      } else {
+        # All states present - use original values
+        boot_ylevels <- ylevels
+        boot_absorb <- absorb
+      }
+
+      # Now convert to factors with the appropriate levels
+      boot_data$y <- factor(boot_data$y, levels = boot_ylevels)
+      boot_data[[varnames$pvarname]] <- factor(
+        boot_data[[varnames$pvarname]],
+        levels = boot_ylevels
+      )
+      boot_data$yprev <- factor(boot_data$yprev)
+
+      # Update datadist and assign to global environment
+      # This works because we use future.callr which has isolated processes
+      if (inherits(model, "orm")) {
+        dd <- rms::datadist(boot_data)
+        assign("dd", dd, envir = .GlobalEnv)
+        options(datadist = "dd")
+      }
+
+      # Refit model with bootstrap data
+      m_boot <- tryCatch(
+        update(model, data = boot_data),
         error = function(e) {
-          warning("taooh calculation failed: ", e$message)
-          return(NA_real_)
+          warning("Bootstrap iteration failed: ", e$message)
+          return(NULL)
         }
       )
-    } else {
-      return(NA_real_)
-    }
-  },
-  .options = furrr_options(packages = c("rms", "markov.misc")))
+
+      # Calculate taooh with refitted model
+      if (!is.null(m_boot)) {
+        tryCatch(
+          taooh(
+            model = m_boot,
+            data = boot_data,
+            times = times,
+            ylevels = boot_ylevels,
+            absorb = boot_absorb,
+            target_states = target_states,
+            varnames = list(
+              tvarname = varnames$tvarname,
+              pvarname = varnames$pvarname,
+              id = "new_id", # Use the new_id for bootstrap samples
+              tx = varnames$tx
+            )
+          )[1],
+          error = function(e) {
+            warning("taooh calculation failed: ", e$message)
+            return(NA_real_)
+          }
+        )
+      } else {
+        return(NA_real_)
+      }
+    },
+    .options = furrr_options(packages = c("rms", "markov.misc"))
+  )
 
   # Free memory
   plan("sequential")

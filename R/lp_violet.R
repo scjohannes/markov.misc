@@ -101,6 +101,11 @@
 #'
 #' @export
 lp_violet <- function(yprev, t, age, sofa, tx, parameter = 0, extra_params) {
+  # Enforce yprev is a factor
+  if (!is.factor(yprev)) {
+    yprev <- factor(yprev)
+  }
+
   # 1. Treatment Effect
   tx_effect <- parameter * tx
 

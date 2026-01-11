@@ -202,8 +202,9 @@ sim_trajectories_markov <- function(
 
     # Build argument list for lp_function
     # This allows dynamic passing of covariates
+    # We pass yprev as a factor to ensure compatibility with lp functions that expect it
     lp_args <- list(
-      yprev = yprev_active
+      yprev = factor(yprev_active, levels = 1:n_states)
     )
 
     # MoreArgs for scalar values that don't vary across patients
