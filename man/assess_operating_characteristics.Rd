@@ -41,7 +41,7 @@ fit_functions. Example:
 \item{output_path}{Character. Path to directory where results will be saved
 (required). Two subdirectories will be created:
 \itemize{
-\item \verb{summary/analysis_name/}: Summary statistics (first element of fit function return)
+\item \verb{summary/analysis_name/}: (Deprecated) Summary statistics (first element of fit function return)
 \item \verb{details/analysis_name/}: Additional results (remaining elements of fit function return)
 }}
 
@@ -118,7 +118,7 @@ SOPs, detailed output, etc.)
 \strong{File saving}:
 The function saves results to two separate directory structures:
 \enumerate{
-\item \strong{Summary results} (first list element): Saved to
+\item \strong{Summary results} (first list element) (Deprecated): Saved to
 \code{output_path/summary/analysis_name/analysis_name_iter_N.rds}
 \item \strong{Additional results} (remaining list elements): Saved to
 \code{output_path/details/analysis_name/analysis_name_iter_N.rds}
