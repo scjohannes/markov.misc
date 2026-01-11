@@ -300,16 +300,29 @@ apply_to_bootstrap <- function(
 #' @param absorb Absorbing state in original levels
 #' @param update_datadist Logical indicating whether to update datadist
 #'   (only needed for rms::orm models)
+#' @param use_coefstart Logical indicating whether to use starting coefficients
+#'   from the original model when refitting (only for vglm models).
 #'
 #' @return A list with components:
-#'   - model: Refitted model on bootstrap data (or NULL if fitting failed)
-#'   - data: Bootstrap data with releveled factors
-#'   - ylevels: Updated ylevels (or NULL if not provided)
-#'   - absorb: Updated absorb (or NULL if not provided)
-#'   - missing_states: Character vector of missing state levels
+#'   \itemize{
+#'     \item model: Refitted model on bootstrap data (or NULL if fitting failed)
+#'     \item data: Bootstrap data with releveled factors
+#'     \item ylevels: Updated ylevels (or NULL if not provided)
+#'     \item absorb: Updated absorb (or NULL if not provided)
+#'     \item missing_states: Character vector of missing state levels
+#'   }
 #'
-#' @keywords internal
-#' @noRd
+#' @details
+#' This function wraps common bootstrap operations:
+#' 1. Relevel factors to consecutive integers if states are missing
+#' 2. Update datadist for rms models
+
+#' 3. Refit the model on the bootstrap data
+#'
+#' @seealso [relevel_factors_consecutive()], [fast_group_bootstrap()],
+#'   [apply_to_bootstrap()]
+#'
+#' @export
 
 bootstrap_analysis_wrapper <- function(
   boot_data,
