@@ -94,7 +94,7 @@
 #'   the results are practically equivalent
 #'
 #' @examples
-#' \\dontrun{
+#' \dontrun{
 #' library(VGAM)
 #'
 #' # Fit a proportional odds model
@@ -220,6 +220,9 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = FALSE) {
     n = n,
     n_clusters = n_clusters,
     adjust = adjust,
+
+    # Original vglm fit (for prediction)
+    vglm_fit = fit,
 
     # Model information from vglm
     fitted.values = fit@fitted.values,
