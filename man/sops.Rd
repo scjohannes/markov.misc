@@ -2,7 +2,7 @@
 % Please edit documentation in R/sops_new.R
 \name{sops}
 \alias{sops}
-\title{Calculate Individual State Occupation Probabilities (Tidy)}
+\title{Calculate Individual State Occupation Probabilities}
 \usage{
 sops(
   model,

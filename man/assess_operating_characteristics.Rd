@@ -139,7 +139,7 @@ within individual fitting functions, not by this orchestrator. This design:
 simulation iterations:
 
 \if{html}{\out{<div class="sourceCode r">}}\preformatted{library(furrr)
-plan(multisession, workers = 8)
+plan(future.callr::callr, workers = 8)
 results <- future_map_dfr(
   1:1000,
   ~assess_operating_characteristics(iter_num = ., ...),
@@ -221,7 +221,7 @@ fit_ttest <- function(data, iter) {
 
 # Parallelize across iterations - each gets different sample
 library(furrr)
-plan(multisession, workers = 8)
+plan(future.callr::callr, workers = 8)
 results <- future_map_dfr(
   1:1000,
   ~assess_operating_characteristics(

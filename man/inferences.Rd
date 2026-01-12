@@ -2,39 +2,67 @@
 % Please edit documentation in R/sops_new.R
 \name{inferences}
 \alias{inferences}
-\title{Bootstrap Inference for State Occupation Probabilities}
+\title{Inference for State Occupation Probabilities}
 \usage{
 inferences(
   object,
-  method = "bootstrap",
-  n_boot = 1000,
+  method = "simulation",
+  n_sim = 1000,
+  n_boot = NULL,
+  vcov = NULL,
   parallel = FALSE,
   workers = NULL,
-  update_datadist = TRUE,
   conf_level = 0.95,
-  return_bootstrap = FALSE,
+  conf_type = "perc",
+  return_draws = FALSE,
+  update_datadist = TRUE,
+  use_coefstart = FALSE,
   ...
 )
 }
 \arguments{
-\item{object}{A \code{markov_avg_sops} object from \code{avg_sops()}.}
+\item{object}{A \code{markov_avg_sops} object from \code{avg_sops()} or a
+\code{markov_sops} object from \code{sops()}.}
 
-\item{method}{Character. Currently only "bootstrap" is supported.}
+\item{method}{Character. Inference method:
+\itemize{
+\item \code{"simulation"} (default): Draws from MVN(beta_hat, Sigma). Fast,
+does not refit models. Works for both individual and averaged SOPs.
+\item \code{"bootstrap"}: Resamples patients with replacement, refits model.
+More robust but slower. Only works for \code{markov_avg_sops} objects.
+}}
 
-\item{n_boot}{Number of bootstrap iterations.}
+\item{n_sim}{Number of simulation draws (for simulation) or bootstrap
+iterations (for bootstrap). Default is 1000.}
 
-\item{parallel}{Logical. Use parallel processing?}
+\item{n_boot}{Deprecated alias for \code{n_sim} when using bootstrap method.
+For backward compatibility.}
+
+\item{vcov}{Optional custom variance-covariance matrix. If provided,
+overrides the vcov extracted from the model. This is useful for sensitivity
+analyses with inflated variance.}
+
+\item{parallel}{Logical. Use parallel processing? Default is FALSE.}
 
 \item{workers}{Number of parallel workers. If NULL, uses detectCores() - 1.}
 
-\item{update_datadist}{Logical. Whether to update datadist for rms models.}
-
 \item{conf_level}{Confidence level for intervals (default 0.95).}
 
-\item{return_bootstrap}{Logical. If TRUE, stores all individual bootstrap
-estimates as an attribute that can be extracted with \code{draw_bootstrap()}.
-This allows users to plot distributions, compute custom statistics, or
-aggregate across time. Default is FALSE to save memory.}
+\item{conf_type}{Type of confidence interval (simulation method only):
+\itemize{
+\item \code{"perc"} (default): Percentile-based intervals from the simulation
+distribution.
+\item \code{"wald"}: Uses simulation standard errors with normal quantiles.
+}}
+
+\item{return_draws}{Logical. If TRUE, stores all individual simulation/bootstrap
+draws as an attribute. Extract with \code{get_draws()}. Default is FALSE.}
+
+\item{update_datadist}{Logical. Whether to update datadist for rms models
+during bootstrap. Default is TRUE.}
+
+\item{use_coefstart}{Logical. Use original coefficients as starting values
+for bootstrap refitting. Default is FALSE.}
 
 \item{...}{Additional arguments (currently unused).}
 }
@@ -42,80 +70,149 @@ aggregate across time. Default is FALSE to save memory.}
 The input object with added columns:
 \item{conf.low}{Lower confidence bound}
 \item{conf.high}{Upper confidence bound}
-\item{std.error}{Bootstrap standard error}
+\item{std.error}{Standard error from simulation/bootstrap}
 
-If \code{return_bootstrap = TRUE}, the object also has a "bootstrap_draws"
-attribute containing a data frame with all individual bootstrap estimates.
-Extract with \code{get_draws()}.
+If \code{return_draws = TRUE}, the object also has a \code{"simulation_draws"} or
+\code{"bootstrap_draws"} attribute containing all individual draws. Extract
+with \code{get_draws()}.
 }
 \description{
-Adds bootstrap confidence intervals to \code{avg_sops} objects. Implements the
-same robust approach as \code{bootstrap_standardized_sops()} for handling rare
-states in bootstrap samples.
+Adds confidence intervals to SOP objects using simulation-based (MVN) or
+bootstrap methods. The default method is simulation, which draws coefficient
+vectors from a multivariate normal distribution centered at the point
+estimates. This is typically much faster than bootstrap as it does not
+require refitting the model.
 }
 \details{
-This function implements group bootstrap resampling (by patient ID) with
-proper handling of rare states that may be missing from bootstrap samples:
+\subsection{Simulation Method (Default)}{
 
-\strong{Bootstrap Procedure:}
+The simulation method (Krinsky & Robb, 1986) proceeds as follows:
 \enumerate{
-\item Sample patient IDs with replacement using \code{fast_group_bootstrap()}
-\item For each bootstrap sample:
-\itemize{
-\item Relevel factors to consecutive integers if states are missing
-\item Refit the model on the bootstrap data
-\item Predict on the ORIGINAL counterfactual grid (not bootstrap sample)
-\item Map predictions back to original state space
-\item Zero-pad missing states (they have 0 probability in that bootstrap)
-}
-\item Compute quantile-based confidence intervals across bootstrap iterations
+\item Extract coefficient vector beta_hat and (robust) variance-covariance Sigma
+\item Draw n_sim coefficient vectors from MVN(beta_hat, Sigma)
+\item For each draw, replace model coefficients and compute SOPs
+\item Compute confidence intervals from the empirical distribution
 }
 
-\strong{Missing State Handling:}
-When a state is absent from a bootstrap sample:
+\strong{Advantages:}
 \itemize{
-\item The model is refit without that state level
-\item The \code{pvarname} values in the prediction data are mapped to the new levels
-\item Results are expanded back to the original state space
-\item Missing states receive probability 0 (not NA)
+\item Much faster than bootstrap (no model refitting)
+\item Works for both individual-level (\code{sops()}) and averaged (\code{avg_sops()}) SOPs
+\item Supports robust (cluster) variance estimation via \code{cluster} argument
 }
 
-This approach maintains valid probability distributions (sum to 1) and
-avoids the need for imputation or jittering strategies.
+\strong{When to use:}
+\itemize{
+\item Default choice for most applications
+\item When speed is important
+\item When the normal approximation for coefficients is reasonable
+}
+}
+
+\subsection{Bootstrap Method}{
+
+The bootstrap method resamples patients and refits the model:
+\enumerate{
+\item Sample patient IDs with replacement
+\item Refit model on bootstrap sample (handles missing states)
+\item Compute SOPs using G-computation
+\item Compute percentile-based confidence intervals
+}
+
+\strong{Advantages:}
+\itemize{
+\item Makes no distributional assumptions about coefficients
+\item Properly handles rare states that may be missing from samples
+}
+
+\strong{When to use:}
+\itemize{
+\item When the normal approximation may be poor (small samples, near boundaries)
+\item When you need to verify simulation-based results
+}
+
+\strong{Important:} Bootstrap requires the full longitudinal dataset (all time
+points) in the original \code{newdata} passed to \code{avg_sops()}, not just baseline
+data. This is because the model must be refit on each bootstrap sample.
+}
+
+\subsection{Cluster-Robust Variance}{
+
+For longitudinal data with repeated measurements per patient, you should
+use cluster-robust standard errors. To do this, wrap your model with
+\code{robcov_vglm()} (for vglm) or \code{rms::robcov()} (for orm) \strong{before} passing
+it to \code{sops()} or \code{avg_sops()}:
+
+\if{html}{\out{<div class="sourceCode r">}}\preformatted{# Fit model
+fit <- vglm(y ~ time + tx + yprev, family = cumulative(...), data = data)
+
+# Wrap with cluster-robust vcov
+fit_robust <- robcov_vglm(fit, cluster = data$id)
+
+# Use in workflow - vcov is automatically extracted
+avg_sops(model = fit_robust, ...) |> inferences()
+}\if{html}{\out{</div>}}
+
+This design ensures consistency: the same vcov is used for both point
+estimates and inference, regardless of how \code{inferences()} is called.
+}
 }
 \examples{
 \dontrun{
-# Compute marginal SOPs with bootstrap CIs
-result <- avg_sops(
-  model = fit,
-  newdata = data,
+# Step 1: Fit model and wrap with cluster-robust vcov
+fit <- vglm(y ~ time + tx + yprev, family = cumulative(...), data = data)
+fit_robust <- robcov_vglm(fit, cluster = data$id)
+
+# Step 2a: Simulation inference (use baseline data only)
+baseline_data <- data |> filter(time == 1)
+result_sim <- avg_sops(
+  model = fit_robust,
+  newdata = baseline_data,  # Baseline only for simulation
   variables = list(tx = c(0, 1)),
   times = 1:60,
   ylevels = 1:6,
   absorb = 6,
   id_var = "id"
 ) |>
-  inferences(n_boot = 500, parallel = TRUE, workers = 4)
+  inferences(method = "simulation", n_sim = 1000)
 
-# Extract individual bootstrap draws for custom analyses
-result_with_draws <- avg_sops(...) |>
-  inferences(n_boot = 500, return_bootstrap = TRUE)
+# Step 2b: Bootstrap inference (must use full data)
+result_boot <- avg_sops(
+  model = fit_robust,
+  newdata = data,  # Full longitudinal data for bootstrap
+  variables = list(tx = c(0, 1)),
+  times = 1:60,
+  ylevels = 1:6,
+  absorb = 6,
+  id_var = "id"
+) |>
+  inferences(method = "bootstrap", n_sim = 500, parallel = TRUE)
 
-# Get all bootstrap estimates
-boot_draws <- draw_bootstrap(result_with_draws)
+# Individual-level SOPs with simulation inference
+ind_result <- sops(model = fit_robust, newdata = test_data, times = 1:30) |>
+  inferences(n_sim = 500)
 
-# Example: Compute mean time in state 1 for each bootstrap iteration
+# Extract draws for custom analyses
+result_draws <- avg_sops(model = fit_robust, ...) |>
+  inferences(return_draws = TRUE)
+draws <- get_draws(result_draws)
+
+# Compute treatment effect on time in state
 library(dplyr)
-time_in_state <- boot_draws |>
-  filter(state == 1, tx == 1) |>
-  group_by(boot_id) |>
-  summarise(mean_time = sum(estimate))
+library(tidyr)
+treatment_effect <- draws |>
+  filter(state == 1) |>
+  group_by(draw_id, tx) |>
+  summarise(total_time = sum(estimate), .groups = "drop") |>
+  pivot_wider(names_from = tx, values_from = total_time) |>
+  mutate(effect = `1` - `0`)
+quantile(treatment_effect$effect, c(0.025, 0.5, 0.975))
 }
 
 }
 \seealso{
-\code{\link[=avg_sops]{avg_sops()}}, \code{\link[=bootstrap_standardized_sops]{bootstrap_standardized_sops()}},
-\code{\link[=fast_group_bootstrap]{fast_group_bootstrap()}}, \code{\link[=relevel_factors_consecutive]{relevel_factors_consecutive()}}
+\code{\link[=avg_sops]{avg_sops()}}, \code{\link[=sops]{sops()}}, \code{\link[=get_draws]{get_draws()}}, \code{\link[=robcov_vglm]{robcov_vglm()}},
+\code{\link[=set_coef]{set_coef()}}
 
-\code{\link[=get_draws]{get_draws()}} to extract all individual draws from any sampling procedure
+\code{\link[=get_draws]{get_draws()}} to extract individual draws from any inference method
 }

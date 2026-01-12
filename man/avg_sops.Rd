@@ -17,7 +17,10 @@ avg_sops(
 \arguments{
 \item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}).}
 
-\item{newdata}{Optional data frame. If NULL, extracts from model.}
+\item{newdata}{Data frame for prediction. For \strong{simulation inference}, pass
+baseline data only (one row per patient). For \strong{bootstrap inference}, you
+must pass the full longitudinal dataset (all time points) since the model
+needs to be refit on bootstrap samples. If NULL, extracts from model.}
 
 \item{variables}{A named list specifying the variable(s) to standardize over.
 E.g., \code{list(tx = c(0, 1))} creates counterfactual datasets for treatment
@@ -63,15 +66,26 @@ treatment vs. control, averaged over the observed covariate distribution.
 }
 \examples{
 \dontrun{
-# Compute marginal SOPs comparing tx=1 vs tx=0
-avg_sops(
+# For simulation inference: use baseline data (one row per patient)
+baseline_data <- data |> filter(time == 1)
+result <- avg_sops(
   model = fit,
-  newdata = data,
+  newdata = baseline_data,
   variables = list(tx = c(0, 1)),
   times = 1:60,
   ylevels = 1:6,
   absorb = 6
-)
+) |> inferences(method = "simulation", n_sim = 1000)
+
+# For bootstrap inference: must use full data (all time points)
+result_boot <- avg_sops(
+  model = fit,
+  newdata = data,  # Full longitudinal data
+  variables = list(tx = c(0, 1)),
+  times = 1:60,
+  ylevels = 1:6,
+  absorb = 6
+) |> inferences(method = "bootstrap", n_sim = 500)
 }
 
 }

@@ -7,7 +7,7 @@
 get_draws(object)
 }
 \arguments{
-\item{object}{An object returned by \code{inferences()} with \code{return_bootstrap = TRUE}
+\item{object}{An object returned by \code{inferences()} with \code{return_draws = TRUE}
 (or similar inference functions that support storing draws).}
 }
 \value{
@@ -24,7 +24,7 @@ combination.
 }
 \description{
 Extracts the individual draws (bootstrap samples, simulated values from MVN, etc.)
-from an object returned by \code{inferences()} with \code{return_bootstrap = TRUE}.
+from an object returned by \code{inferences()} with \code{return_draws = TRUE}.
 This allows users to analyze the full distribution, compute custom statistics,
 or create visualizations, regardless of the sampling method used.
 }
@@ -33,7 +33,7 @@ This function retrieves the draws from objects created by \code{inferences()}
 (or similar inference functions). The exact name of the draws attribute
 depends on the sampling method used (e.g., "bootstrap_draws" for bootstrap,
 potentially "mvn_draws" for MVN simulation). If the attribute is not present
-(i.e., the object was created without \code{return_bootstrap = TRUE}), an error is raised.
+(i.e., the object was created without \code{return_draws = TRUE}), an error is raised.
 
 \strong{Common Use Cases:}
 \itemize{
@@ -57,7 +57,7 @@ result <- avg_sops(
   absorb = 6,
   id_var = "id"
 ) |>
-  inferences(n_boot = 1000, return_bootstrap = TRUE)
+  inferences(n_boot = 1000, return_draws = TRUE)
 
 # Extract draws
 draws <- get_draws(result)

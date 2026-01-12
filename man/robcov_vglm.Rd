@@ -107,7 +107,7 @@ the results are practically equivalent
 }
 }
 \examples{
-\\dontrun{
+\dontrun{
 library(VGAM)
 
 # Fit a proportional odds model
