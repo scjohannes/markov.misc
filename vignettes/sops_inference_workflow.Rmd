@@ -1,0 +1,508 @@
+---
+title: "State Occupation Probabilities: The Modern Inference Workflow"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{State Occupation Probabilities: The Modern Inference Workflow}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  out.width = "100%",
+  fig.align = "center",
+  dpi = 150,
+  fig.retina = 2
+)
+```
+
+## Introduction
+
+This vignette introduces the workflow for computing state occupation probabilities (SOPs) with uncertainty quantification in `markov.misc`. The package provides two main approaches for inference:
+
+1. **Simulation-based inference (MVN)**: Draws coefficient vectors from a multivariate normal distribution. Fast and suitable for most applications.
+
+2. **Bootstrap inference**: Resamples patients and refits the model.
+ 
+The workflow follows a pipe-friendly API inspired by the `marginaleffects` package:
+
+```r
+# Individual-level SOPs
+sops(model, newdata, ...) |> inferences(...)
+
+# Marginal/standardized SOPs (G-computation)
+avg_sops(model, newdata, variables = list(tx = 0:1), ...) |> inferences(...)
+```
+
+## Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+devtools::load_all()
+library(VGAM)
+library(rms)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+
+# Simulation parameters
+N_PATIENTS <- 200
+FU <- 30
+SEED <- 42
+```
+
+## Step 1: Simulate Trial Data
+
+We simulate a discrete-time Markov process using a latent Brownian motion model with 6 ordered health states.
+
+```{r simulate}
+set.seed(SEED)
+markov_data <- sim_trajectories_brownian(
+ n_patients = N_PATIENTS,
+ follow_up_time = FU,
+ treatment_prob = 0.5,
+ absorbing_state = 6,
+ seed = SEED,
+ mu_treatment_effect = 0.01  # Small positive treatment effect
+)
+
+# Prepare data for modeling
+data <- prepare_markov_data(markov_data)
+```
+
+## Step 2: Fit a Proportional Odds Model
+
+```{r fit_model}
+# Fit using vglm (cumulative family, proportional odds)
+m_vglm_naive <- vglm(
+  ordered(y) ~ rcs(time, 4) + tx + yprev,
+  family = cumulative(reverse = TRUE, parallel = TRUE),
+  data = data
+)
+
+# Wrap with cluster-robust variance-covariance matrix
+# This is the recommended approach for longitudinal data
+m_vglm_robust <- robcov_vglm(m_vglm_naive, cluster = data$id)
+```
+
+## Step 3: Compute SOPs with sops()
+
+```{r}
+# Point estimates are the same regardless of which model we use
+sops_naive <- sops(
+  model = m_vglm_naive,
+  newdata = data |> filter(time == 1), # only use baseline data
+  variables = list(tx = c(0, 1)),  # Compare treatment vs control
+  times = 1:FU,
+  ylevels = 1:6,
+  absorb = 6,
+  id_var = "id"
+)
+
+sops_robust <- sops(
+  model = m_vglm_robust,
+  newdata = data |> filter(time == 1), # only use baseline data
+  variables = list(tx = c(0, 1)),  # Compare treatment vs control
+  times = 1:FU,
+  ylevels = 1:6,
+  absorb = 6,
+  id_var = "id"
+)
+
+# Point estimates should be identical
+all.equal(sops_naive$estimate, sops_robust$estimate)
+```
+
+
+## Step 3: Compute Marginal SOPs with avg_sops()
+ 
+The `avg_sops()` function implements G-computation (standardization) to compute population-average SOPs under different treatment scenarios.
+
+**Important Data Requirement:**
+- For **simulation inference** (default): Pass baseline data only (one row per patient)
+- For **bootstrap inference**: Must pass full longitudinal data (all time points)
+
+This is because bootstrap needs to refit the model on resampled data, while simulation only needs to draw coefficients from MVN and recompute predictions.
+
+```{r avg_sops}
+# Extract baseline data (one row per patient) for simulation inference
+baseline_data <- data |> filter(time == 1)
+
+# Compute marginal SOPs comparing tx=1 vs tx=0
+# Using robust model for proper inference with BASELINE DATA
+avg_result <- avg_sops(
+  model = m_vglm_robust,
+  newdata = baseline_data,  # Baseline only - sufficient for simulation
+  variables = list(tx = c(0, 1)),  # Compare treatment vs control
+  times = 1:FU,
+  ylevels = 1:6,
+  absorb = 6,
+  id_var = "id"
+)
+
+# For comparison: naive model (without cluster-robust SEs)
+avg_result_naive <- avg_sops(
+  model = m_vglm_naive,
+  newdata = baseline_data,  # Baseline only
+  variables = list(tx = c(0, 1)),
+  times = 1:FU,
+  ylevels = 1:6,
+  absorb = 6,
+  id_var = "id"
+)
+
+head(avg_result)
+head(avg_result_naive)
+# These are the same, because we ignore uncertainty
+```
+
+## Step 4: Add Inference with inferences()
+
+### Simulation-Based Inference (Default, Fast)
+
+The simulation method draws coefficient vectors from MVN(beta_hat, Sigma). The variance-covariance matrix Sigma is extracted directly from the model - if you used `robcov_vglm()` to wrap your model, the cluster-robust vcov is used automatically.
+
+```{r simulation_inference}
+# Time the simulation approach (with cluster-robust SEs via robcov_vglm)
+t_sim <- system.time({
+  result_sim <- avg_result |>
+    inferences(
+      method = "simulation",
+      n_sim = 100,
+      conf_level = 0.95,
+      return_draws = TRUE
+    )
+})
+
+cat("Simulation inference time:", round(t_sim["elapsed"], 2), "seconds\n")
+head(result_sim)
+
+# For comparison: naive SEs (model-based, ignoring clustering)
+result_sim_naive <- avg_result_naive |>
+    inferences(
+      method = "simulation",
+      n_sim = 100,
+      conf_level = 0.95,
+      return_draws = TRUE
+    )
+
+# Compare CI widths: robust vs naive
+cat("\nMean CI width (robust):", mean(result_sim$conf.high - result_sim$conf.low), "\n")
+cat("Mean CI width (naive):", mean(result_sim_naive$conf.high - result_sim_naive$conf.low), "\n")
+```
+
+### Bootstrap Inference (Slower)
+
+The bootstrap method resamples patients and refits the model for each iteration. **Unlike simulation, bootstrap requires the full longitudinal dataset** because the model must be refit on each bootstrap sample.
+
+```{r bootstrap_inference}
+# Time the bootstrap approach
+# IMPORTANT: Must use FULL data (all time points), not just baseline
+t_boot <- system.time({
+  result_boot <- avg_sops(
+      model = m_vglm_naive,
+      newdata = data,  # Full longitudinal data required for bootstrap
+      variables = list(tx = c(0, 1)),
+      times = 1:FU,
+      ylevels = 1:6,
+      absorb = 6,
+      id_var = "id"
+    ) |>
+    inferences(
+      method = "bootstrap",
+      n_sim = 100, 
+      parallel = TRUE,
+      workers = 4,
+      conf_level = 0.95,
+      return_draws = TRUE
+    )
+}) * 4
+
+cat("Bootstrap inference time:", round(t_boot["elapsed"], 2), "seconds\n")
+cat("Speed ratio (bootstrap/simulation):", 
+    round(t_boot["elapsed"] / t_sim["elapsed"], 1), "x slower\n")
+```
+
+## Step 5: Visualize Results
+
+### State Occupation Probabilities Over Time
+
+```{r plot_sops, fig.height=6}
+# Prepare data for plotting
+plot_data <- result_sim |>
+  mutate(
+    Treatment = factor(tx, levels = c(0, 1), labels = c("Control", "Treatment")),
+    State = factor(state)
+  )
+
+# Plot SOPs with confidence bands
+ggplot(plot_data, aes(x = time, y = estimate, color = Treatment, fill = Treatment)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.5, color = NA) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~State, scales = "free_y", ncol = 3,
+             labeller = labeller(State = function(x) paste("State", x))) +
+  scale_color_brewer(palette = "Set1") +
+  scale_fill_brewer(palette = "Set1") +
+  labs(
+    title = "Marginal State Occupation Probabilities",
+    subtitle = "With 95% simulation-based confidence bands (cluster-robust)",
+    x = "Time (days)",
+    y = "Probability"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+### Compare Robust vs Naive CIs
+
+```{r plot_comparison, fig.height=6}
+# Combine results for comparison
+plot_comparison <- bind_rows(
+  result_sim |> mutate(Model = "Cluster-robust"),
+  result_sim_naive |> mutate(Model = "Naive")
+) |>
+  mutate(
+    Treatment = factor(tx, levels = c(0, 1), labels = c("Control", "Treatment")),
+    State = factor(state)
+  ) |>
+  filter(tx == 1)  # Just show treatment arm for clarity
+
+# Plot comparison
+ggplot(plot_comparison |> filter(state %in% c(1, 6)),
+       aes(x = time, y = estimate, color = Model, fill = Model)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.3, color = NA) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~State, scales = "free_y", ncol = 2,
+             labeller = labeller(State = function(x) paste("State", x))) +
+  scale_color_brewer(palette = "Set2") +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = "Effect of Cluster-Robust Standard Errors",
+    subtitle = "Treatment arm: robust SEs give appropriately wider confidence bands",
+    x = "Time (days)",
+    y = "Probability"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+### Compare Simulation vs Bootstrap CIs
+
+```{r compare_methods, fig.height=5}
+# Merge results for comparison
+comparison <- result_sim |>
+  select(time, state, tx, 
+         est_sim = estimate, 
+         low_sim = conf.low, 
+         high_sim = conf.high) |>
+  left_join(
+    result_boot |>
+      select(time, state, tx,
+             low_boot = conf.low,
+             high_boot = conf.high),
+    by = c("time", "state", "tx")
+  ) |>
+  mutate(
+    width_sim = high_sim - low_sim,
+    width_boot = high_boot - low_boot
+  )
+
+# Compare CI widths
+ggplot(comparison, aes(x = width_sim, y = width_boot)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  geom_point(alpha = 0.3, size = 1) +
+  geom_smooth(method = "lm", se = FALSE, color = "steelblue") +
+  labs(
+    title = "Comparison of CI Widths: Simulation vs Bootstrap",
+    subtitle = paste0("Correlation: ", 
+                      round(cor(comparison$width_sim, comparison$width_boot, 
+                               use = "complete.obs"), 3)),
+    x = "Simulation CI Width",
+    y = "Bootstrap CI Width"
+  ) +
+  coord_equal() +
+  theme_minimal()
+```
+
+## Step 6: Extract and Analyze Draws
+
+The `get_draws()` function extracts individual simulation/bootstrap draws for custom analyses.
+
+```{r get_draws}
+# Extract simulation draws
+draws <- get_draws(result_sim)
+head(draws)
+
+draws_boot <- get_draws(result_boot)
+head(draws_boot)
+```
+
+### Treatment Effect on Time in State 1 (Home)
+
+```{r treatment_effect, fig.height=4, fig.width=6}
+# Compute total time in state 1 for each draw
+time_in_state <- draws |>
+  filter(state == 1) |>
+  group_by(draw_id, tx) |>
+  summarise(total_time = sum(estimate), .groups = "drop") |>
+  pivot_wider(names_from = tx, values_from = total_time, names_prefix = "tx") |>
+  mutate(effect = tx1 - tx0)
+
+time_in_state_boot <- draws_boot |>
+  filter(state == 1) |>
+  group_by(draw_id, tx) |>
+  summarise(total_time = sum(estimate), .groups = "drop") |>
+  pivot_wider(names_from = tx, values_from = total_time, names_prefix = "tx") |>
+  mutate(effect = tx1 - tx0)
+
+# Summarize treatment effect
+effect_summary <- quantile(time_in_state$effect, c(0.025, 0.5, 0.975))
+cat("Treatment effect on time at home (days) [MVN]:\n")
+cat("  Median:", round(effect_summary[2], 2), "\n")
+cat("  95% CI: [", round(effect_summary[1], 2), ",", 
+    round(effect_summary[3], 2), "]\n")
+
+effect_summary <- quantile(time_in_state_boot$effect, c(0.025, 0.5, 0.975))
+cat("Treatment effect on time at home (days) [Bootstrap]:\n")
+cat("  Median:", round(effect_summary[2], 2), "\n")
+cat("  95% CI: [", round(effect_summary[1], 2), ",", 
+    round(effect_summary[3], 2), "]\n")
+
+# Plot distribution
+ggplot(time_in_state, aes(x = effect)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white", alpha = 0.7) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = effect_summary[2], linetype = "solid", color = "black") +
+  labs(
+    title = "Treatment Effect: Additional Days at Home",
+    subtitle = paste0("Median = ", round(effect_summary[2], 2), 
+                      " days, 95% CI: [", round(effect_summary[1], 2), ", ",
+                      round(effect_summary[3], 2), "]"),
+    x = "Effect (Treatment - Control, days)",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+## Step 7: Individual-Level SOPs with sops()
+
+For individual-level predictions (not marginalized), use `sops()` directly.
+
+```{r individual_sops}
+# Get baseline data
+baseline_data <- data |> filter(time == 1)
+
+# Compute individual SOPs with robust model
+ind_result <- sops(
+  model = m_vglm_robust,
+  newdata = baseline_data,
+  times = 1:FU,
+  ylevels = 1:6,
+  absorb = 6,
+  tvarname = "time",
+  pvarname = "yprev"
+) |>
+  inferences(
+    method = "simulation",
+    n_sim = 100,
+    conf_level = 0.95
+  )
+
+cat("Individual SOPs:", nrow(ind_result), "rows\n")
+cat("Patients:", length(unique(ind_result$id)), "\n")
+```
+
+```{r plot_individual, fig.height=4}
+# Plot a few example patients
+example_patients <- sample(unique(ind_result$id), 4)
+
+ind_result |>
+  filter(id %in% example_patients, state == 1) |>
+  ggplot(aes(x = time, y = estimate)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.3, fill = "steelblue") +
+  geom_line(color = "steelblue") +
+  facet_wrap(~id, ncol = 2) +
+  labs(
+    title = "Individual SOPs: Probability of Being at Home (State 1)",
+    subtitle = "With 95% simulation-based confidence bands",
+    x = "Time (days)",
+    y = "Probability"
+  ) +
+  theme_minimal()
+```
+
+## Equivalence with Legacy bootstrap_standardized_sops()
+
+The new workflow produces equivalent results to the legacy `bootstrap_standardized_sops()` function when using the same random seed.
+
+```{r equivalence_check}
+# Set seed and run new workflow
+set.seed(123)
+new_result <- avg_sops(
+  model = m_vglm_naive,
+  newdata = data,
+  variables = list(tx = c(0, 1)),
+  times = 1:10,  # Short for speed
+  ylevels = 1:6,
+  absorb = 6,
+  id_var = "id"
+) |>
+  inferences(
+    method = "bootstrap",
+    n_sim = 20,
+    parallel = FALSE,
+    return_draws = TRUE
+  )
+
+# Set same seed and run legacy workflow
+set.seed(123)
+legacy_result <- bootstrap_standardized_sops(
+  model = m_vglm_naive,
+  data = data,
+  times = 1:10,
+  n_boot = 20,
+  ylevels = 1:6,
+  absorb = "6",
+  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
+  parallel = FALSE
+)
+
+# Compare point estimates
+new_estimates <- new_result |>
+  get_draws() |> 
+  pivot_wider(id_cols = c("draw_id", "tx", "time"), names_from = "state", names_prefix = "state_", values_from = "estimate") |> 
+  arrange(draw_id, desc(tx), time)
+
+legacy_estimates <- legacy_result$sops
+
+all(new_estimates[, 4:9] == legacy_estimates[, 4:9])
+```
+
+## Summary: Choosing Between Methods
+
+| Aspect | Simulation (MVN) | Bootstrap |
+|--------|------------------|-----------|
+| **Speed** | Fast (no refitting) | Slow (refits model) |
+| **Data requirement** | Baseline only | Full longitudinal data |
+| **Assumptions** | Normal approx. for coefficients | Nonparametric |
+| **Cluster-robust** | Via `robcov_vglm()` wrapper | Implicit (resamples patients) |
+| **Missing states** | Not handled | Handles gracefully |
+| **Use case** | Default choice | Small samples, rare states |
+
+### Recommendations
+
+1. **Choose your data based on inference method:**
+   - Simulation: `avg_sops(model, newdata = baseline_data, ...) |> inferences(method = "simulation")`
+   - Bootstrap: `avg_sops(model, newdata = full_data, ...) |> inferences(method = "bootstrap")`
+
+2. **Wrap your model first**: For longitudinal data, always use `robcov_vglm(fit, cluster = data$id)` before passing to `sops()` or `avg_sops()`.
+
+5. **Extract draws for custom analyses**: Use `get_draws()` to compute custom estimands like treatment effects on time in state.
+
+```{r session_info}
+sessionInfo()
+```
