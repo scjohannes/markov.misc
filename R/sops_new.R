@@ -76,6 +76,10 @@ sops <- function(
       # VGAM stores response levels
       ylevels <- model@extra$colnames.y
       if (is.null(ylevels)) ylevels <- 1:6
+    } else if (inherits(model, "robcov_vglm")) {
+      # robcov_vglm stores extra slot in list
+      ylevels <- model$extra$colnames.y
+      if (is.null(ylevels)) ylevels <- 1:6
     } else if (inherits(model, "orm")) {
       # rms orm stores levels
       ylevels <- model$yunique
@@ -343,13 +347,9 @@ avg_sops <- function(
 #'   iterations (for bootstrap). Default is 1000.
 #' @param n_boot Deprecated alias for `n_sim` when using bootstrap method.
 #'   For backward compatibility.
-#' @param cluster Formula (e.g., `~id`) or vector specifying cluster variable
-#'   for cluster-robust variance estimation. If NULL, uses standard (model-based)
-#'   variance. For longitudinal data with repeated measurements, always specify
-#'   the patient ID variable.
 #' @param vcov Optional custom variance-covariance matrix. If provided,
-#'   overrides `cluster` argument. Can be used to pass a pre-computed robust
-#'   vcov from `robcov_vglm()` or `rms::robcov()`.
+#'   overrides the vcov extracted from the model. This is useful for sensitivity
+#'   analyses with inflated variance.
 #' @param parallel Logical. Use parallel processing? Default is FALSE.
 #' @param workers Number of parallel workers. If NULL, uses detectCores() - 1.
 #' @param conf_level Confidence level for intervals (default 0.95).
@@ -413,19 +413,37 @@ avg_sops <- function(
 #'
 #' ## Cluster-Robust Variance
 #'
-#' For longitudinal data with repeated measurements per patient, specify the
-#' clustering variable:
-#' - `cluster = ~id` extracts the `id` column from the data
-#' - Uses `robcov_vglm()` for vglm models or `rms::robcov()` for orm models
+#' For longitudinal data with repeated measurements per patient, you should
+#' use cluster-robust standard errors. To do this, wrap your model with
+#' `robcov_vglm()` (for vglm) or `rms::robcov()` (for orm) **before** passing
+#' it to `sops()` or `avg_sops()`:
+#'
+#' ```r
+#' # Fit model
+#' fit <- vglm(y ~ time + tx + yprev, family = cumulative(...), data = data)
+#'
+#' # Wrap with cluster-robust vcov
+#' fit_robust <- robcov_vglm(fit, cluster = data$id)
+#'
+#' # Use in workflow - vcov is automatically extracted
+#' avg_sops(model = fit_robust, ...) |> inferences()
+#' ```
+#'
+#' This design ensures consistency: the same vcov is used for both point
+#' estimates and inference, regardless of how `inferences()` is called.
 #'
 #' @seealso [avg_sops()], [sops()], [get_draws()], [robcov_vglm()],
-#'   [get_vcov_robust()], [set_coef()]
+#'   [set_coef()]
 #'
 #' @examples
 #' \dontrun{
-#' # Simulation-based inference with cluster-robust SEs (default, fastest)
+#' # Step 1: Fit model and wrap with cluster-robust vcov
+#' fit <- vglm(y ~ time + tx + yprev, family = cumulative(...), data = data)
+#' fit_robust <- robcov_vglm(fit, cluster = data$id)
+#'
+#' # Step 2: Compute SOPs and add inference (vcov extracted automatically)
 #' result <- avg_sops(
-#'   model = fit,
+#'   model = fit_robust,
 #'   newdata = data,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
@@ -433,19 +451,19 @@ avg_sops <- function(
 #'   absorb = 6,
 #'   id_var = "id"
 #' ) |>
-#'   inferences(cluster = ~id, n_sim = 1000)
+#'   inferences(n_sim = 1000)
 #'
 #' # Bootstrap-based inference
-#' result_boot <- avg_sops(...) |>
+#' result_boot <- avg_sops(model = fit_robust, ...) |>
 #'   inferences(method = "bootstrap", n_sim = 500, parallel = TRUE)
 #'
 #' # Individual-level SOPs with simulation inference
-#' ind_result <- sops(model = fit, newdata = test_data, times = 1:30) |>
-#'   inferences(cluster = ~id, n_sim = 500)
+#' ind_result <- sops(model = fit_robust, newdata = test_data, times = 1:30) |>
+#'   inferences(n_sim = 500)
 #'
 #' # Extract draws for custom analyses
-#' result_draws <- avg_sops(...) |>
-#'   inferences(cluster = ~id, return_draws = TRUE)
+#' result_draws <- avg_sops(model = fit_robust, ...) |>
+#'   inferences(return_draws = TRUE)
 #' draws <- get_draws(result_draws)
 #'
 #' # Compute treatment effect on time in state
@@ -468,8 +486,6 @@ inferences <- function(
   method = "simulation",
   n_sim = 1000,
   n_boot = NULL,
-
-  cluster = NULL,
   vcov = NULL,
   parallel = FALSE,
   workers = NULL,
@@ -484,14 +500,14 @@ inferences <- function(
   if (!inherits(object, c("markov_avg_sops", "markov_sops"))) {
     stop(
       "inferences() requires a 'markov_avg_sops' or 'markov_sops' object. ",
-      "Got: ", paste(class(object), collapse = ", ")
+      "Got: ",
+      paste(class(object), collapse = ", ")
     )
   }
 
   method <- match.arg(method, choices = c("simulation", "bootstrap"))
 
   # Handle backward compatibility: n_boot overrides n_sim for bootstrap
-
   if (!is.null(n_boot) && method == "bootstrap") {
     n_sim <- n_boot
   }
@@ -501,7 +517,6 @@ inferences <- function(
     inferences_simulation(
       object = object,
       n_sim = n_sim,
-      cluster = cluster,
       vcov = vcov,
       conf_level = conf_level,
       conf_type = conf_type,
@@ -536,8 +551,7 @@ inferences <- function(
 #'
 #' @param object A `markov_avg_sops` or `markov_sops` object.
 #' @param n_sim Number of simulation draws.
-#' @param cluster Formula (~id) or vector for cluster-robust vcov.
-#' @param vcov Custom variance-covariance matrix (overrides cluster).
+#' @param vcov Custom variance-covariance matrix (optional, overrides model vcov).
 #' @param conf_level Confidence level.
 #' @param conf_type Type of confidence interval ("perc" or "wald").
 #' @param parallel Use parallel processing?
@@ -550,7 +564,6 @@ inferences <- function(
 inferences_simulation <- function(
   object,
   n_sim,
-  cluster,
   vcov,
   conf_level,
   conf_type,
@@ -597,22 +610,34 @@ inferences_simulation <- function(
     stop("Model not stored in object. Cannot perform simulation inference.")
   }
 
-  # --- 2. Get Coefficients and (Robust) VCov (COMPUTED ONCE!) ---
+  # --- 2. Get Coefficients and VCov from Model ---
+  # The vcov is extracted directly from the model object:
+  # - For robcov_vglm: uses the stored cluster-robust vcov
+  # - For orm with rms::robcov(): uses the stored robust vcov
+  # - For plain vglm/orm: uses model-based vcov
+  # Users who want cluster-robust SEs should wrap their model with
+  # robcov_vglm() or rms::robcov() BEFORE passing to sops()/avg_sops().
   beta_hat <- get_coef(model)
 
   if (!is.null(vcov) && is.matrix(vcov)) {
-    # User-provided custom vcov matrix
+    # User-provided custom vcov matrix (for sensitivity analyses)
     Sigma <- vcov
   } else {
-    # Compute (cluster-)robust vcov
-    Sigma <- get_vcov_robust(model, cluster = cluster, data = newdata_orig)
+    # Extract vcov from model (robust if model was wrapped with robcov_vglm)
+    Sigma <- get_vcov_robust(model, cluster = NULL)
   }
 
   # Validate dimensions
   if (length(beta_hat) != nrow(Sigma) || length(beta_hat) != ncol(Sigma)) {
     stop(
-      "Dimension mismatch: coefficients (", length(beta_hat), ") vs ",
-      "vcov matrix (", nrow(Sigma), " x ", ncol(Sigma), ")"
+      "Dimension mismatch: coefficients (",
+      length(beta_hat),
+      ") vs ",
+      "vcov matrix (",
+      nrow(Sigma),
+      " x ",
+      ncol(Sigma),
+      ")"
     )
   }
 
@@ -695,7 +720,7 @@ inferences_simulation <- function(
       workers <- max(1, parallel::detectCores() - 1)
     }
 
-    future::plan(future::multisession, workers = workers)
+    future::plan(future.callr::callr, workers = workers)
     on.exit(future::plan(future::sequential), add = TRUE)
 
     sim_results <- furrr::future_map(
@@ -704,9 +729,20 @@ inferences_simulation <- function(
       .options = furrr::furrr_options(
         seed = TRUE,
         globals = c(
-          "model", "beta_draws", "newdata_pred", "times", "ylevels",
-          "absorb", "tvarname", "pvarname", "t_covs", "is_avg",
-          "grid", "variables", "n_cf", "n_each"
+          "model",
+          "beta_draws",
+          "newdata_pred",
+          "times",
+          "ylevels",
+          "absorb",
+          "tvarname",
+          "pvarname",
+          "t_covs",
+          "is_avg",
+          "grid",
+          "variables",
+          "n_cf",
+          "n_each"
         ),
         packages = c("rms", "VGAM", "dplyr", "stats")
       ),
@@ -1022,7 +1058,7 @@ inferences_bootstrap <- function(
     draws_df = boot_df,
     group_cols = group_cols,
     conf_level = conf_level,
-    conf_type = "perc"  # Bootstrap always uses percentile
+    conf_type = "perc" # Bootstrap always uses percentile
   )
 
   # Merge with original object
@@ -1094,8 +1130,15 @@ create_counterfactual_data <- function(baseline_data, grid, variables) {
 #' @return Data frame with marginalized SOPs.
 #'
 #' @keywords internal
-marginalize_sops_array <- function(sops_array, grid, times, ylevels,
-                                   variables, n_cf, n_each) {
+marginalize_sops_array <- function(
+  sops_array,
+  grid,
+  times,
+  ylevels,
+  variables,
+  n_cf,
+  n_each
+) {
   n_times <- length(times)
   n_states <- length(ylevels)
 
@@ -1155,7 +1198,11 @@ array_to_df_individual <- function(sops_array, times, ylevels, newdata) {
 
   # Build result
   result <- data.frame(
-    rowid = if ("rowid" %in% names(newdata)) newdata$rowid[idx_pat] else idx_pat,
+    rowid = if ("rowid" %in% names(newdata)) {
+      newdata$rowid[idx_pat]
+    } else {
+      idx_pat
+    },
     time = idx_time,
     state = idx_state,
     estimate = probs_flat
@@ -1177,8 +1224,12 @@ array_to_df_individual <- function(sops_array, times, ylevels, newdata) {
 #' @return Data frame with summary statistics.
 #'
 #' @keywords internal
-compute_ci_from_draws <- function(draws_df, group_cols, conf_level = 0.95,
-                                  conf_type = "perc") {
+compute_ci_from_draws <- function(
+  draws_df,
+  group_cols,
+  conf_level = 0.95,
+  conf_type = "perc"
+) {
   alpha <- 1 - conf_level
 
   # Aggregate to get summary statistics
@@ -1321,7 +1372,8 @@ get_draws <- function(object) {
   if (!inherits(object, c("markov_avg_sops", "markov_sops"))) {
     stop(
       "get_draws() requires an object from inferences(). ",
-      "Got: ", paste(class(object), collapse = ", ")
+      "Got: ",
+      paste(class(object), collapse = ", ")
     )
   }
 
@@ -1345,7 +1397,9 @@ get_draws <- function(object) {
       )
     } else {
       stop(
-        "No draws found. Object was created with method = '", method, "'. ",
+        "No draws found. Object was created with method = '",
+        method,
+        "'. ",
         "Run inferences() with return_draws = TRUE to store draws."
       )
     }
