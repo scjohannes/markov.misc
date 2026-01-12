@@ -42,6 +42,7 @@ utils::globalVariables(c(
   "splits",
   "models",
   "boot_id",
+  "draw_id",
   "coefs",
   "value",
   "upper",
@@ -50,5 +51,6 @@ utils::globalVariables(c(
   "block_count",
   "state",
   "probability",
-  "median"
+  "median",
+  "std.error"
 ))
