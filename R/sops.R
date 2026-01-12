@@ -98,7 +98,8 @@ soprob_markov <- function(
     orm = "rms",
     blrm = "rmsb",
     vglm = "vgam",
-    vgam = "vgam"
+    vgam = "vgam",
+    robcov_vglm = "robcov"
   )
   ftype <- ftypes[cl]
 
@@ -113,6 +114,15 @@ soprob_markov <- function(
     vgam = function(obj, d) VGAM::predict(obj, d, type = "response"),
     rmsb = function(obj, d) {
       predict(obj, d, type = "fitted.ind", posterior.summary = "all")
+    },
+    robcov = function(obj, d) {
+      if (is.null(obj$vglm_fit)) {
+        stop(
+          "robcov_vglm object does not contain the original vglm fit. ",
+          "Please re-run robcov_vglm() with the latest version of the package."
+        )
+      }
+      VGAM::predict(obj$vglm_fit, d, type = "response")
     }
   )
 
@@ -311,9 +321,10 @@ standardize_sops <- function(
   if (
     !inherits(model, "orm") &&
       !inherits(model, "vglm") &&
-      !inherits(model, "rmsb")
+      !inherits(model, "rmsb") &&
+      !inherits(model, "robcov_vglm")
   ) {
-    stop("model must be an orm, rmsb, or vglm object.")
+    stop("model must be an orm, rmsb, vglm, or robcov_vglm object.")
   }
 
   if (is.null(data)) {
