@@ -61,14 +61,19 @@ set_coef.default <- function(model, new_coefs) {
   if (is.null(model$coefficients)) {
     stop(
       "Model does not have a 'coefficients' element. ",
-      "set_coef() may not support this model class: ", class(model)[1]
+      "set_coef() may not support this model class: ",
+      class(model)[1]
     )
   }
 
   if (length(new_coefs) != length(model$coefficients)) {
     stop(
-      "Length of new_coefs (", length(new_coefs), ") does not match ",
-      "number of model coefficients (", length(model$coefficients), ")"
+      "Length of new_coefs (",
+      length(new_coefs),
+      ") does not match ",
+      "number of model coefficients (",
+      length(model$coefficients),
+      ")"
     )
   }
 
@@ -106,7 +111,16 @@ set_coef.rms <- function(model, new_coefs) {
 #' @rdname set_coef
 #' @export
 set_coef.robcov_vglm <- function(model, new_coefs) {
-  set_coef.default(model, new_coefs)
+  # 1. Update the top-level coefficients (robcov structure)
+  model <- set_coef.default(model, new_coefs)
+
+  # 2. Update the internal vglm_fit coefficients if present
+  # This ensures that predict(model$vglm_fit, ...) uses the new coefficients
+  if (!is.null(model$vglm_fit)) {
+    model$vglm_fit <- set_coef(model$vglm_fit, new_coefs)
+  }
+
+  model
 }
 
 
@@ -116,8 +130,12 @@ set_coef.vglm <- function(model, new_coefs) {
   # S4 object - use @ for slot access
   if (length(new_coefs) != length(model@coefficients)) {
     stop(
-      "Length of new_coefs (", length(new_coefs), ") does not match ",
-      "number of model coefficients (", length(model@coefficients), ")"
+      "Length of new_coefs (",
+      length(new_coefs),
+      ") does not match ",
+      "number of model coefficients (",
+      length(model@coefficients),
+      ")"
     )
   }
 
@@ -150,11 +168,15 @@ set_coef.vgam <- function(model, new_coefs) {
 #'   errors:
 #'   \itemize{
 #'     \item `NULL`: Use standard (model-based) vcov
-#'     \item Formula (e.g., `~id`): Extract cluster variable from `data` and
-#'       compute cluster-robust vcov
-#'     \item Character vector: Cluster variable values directly
+#'     \item Formula (e.g., `~id`): Extract cluster variable from the model's
+#'       original fitting data and compute cluster-robust vcov
+#'     \item Character/numeric vector: Cluster variable values directly (must
+#'       match the number of observations used to fit the model)
 #'   }
-#' @param data Data frame. Required when `cluster` is a formula.
+#' @param data Data frame. Optional. If `cluster` is a formula and the cluster
+#'   variable cannot be found in the model's original data, it will be extracted
+#'   from this data frame. **Note:** For cluster-robust SEs, the cluster vector
+#'   must have the same length as the model's fitting data, not prediction data.
 #' @param adjust Logical. Apply small-sample correction for clustering?
 #'   Default is FALSE to match `rms::robcov()` behavior.
 #'
@@ -171,12 +193,15 @@ set_coef.vgam <- function(model, new_coefs) {
 #' If `cluster = NULL`, returns the standard model-based vcov from `vcov()`.
 #'
 #' **3. Cluster formula:**
-#' If `cluster` is a formula like `~id`, extracts the variable from `data`
-#' and computes cluster-robust vcov using:
-#' \itemize{
-#'   \item `robcov_vglm()` for `vglm` models
-#'   \item `rms::robcov()` for `orm`/`lrm` models
-#' }
+#' If `cluster` is a formula like `~id`, the function first tries to extract
+#' the cluster variable from the model's original fitting data (by evaluating
+#' the `data` argument from the model's call). This ensures the cluster vector
+#' has the correct length for computing robust standard errors.
+#'
+#' **Important:** Cluster-robust standard errors are computed from the model's
+#' score contributions, which have length equal to the number of observations
+#' used to fit the model. The cluster variable must therefore match this length,
+#' NOT the length of any new prediction data.
 #'
 #' @examples
 #' \dontrun{
@@ -190,8 +215,8 @@ set_coef.vgam <- function(model, new_coefs) {
 #' # Standard vcov
 #' V1 <- get_vcov_robust(fit)
 #'
-#' # Cluster-robust vcov using formula
-#' V2 <- get_vcov_robust(fit, cluster = ~id, data = mydata)
+#' # Cluster-robust vcov using formula (extracts 'id' from model's data)
+#' V2 <- get_vcov_robust(fit, cluster = ~id)
 #'
 #' # Pre-computed robust vcov
 #' fit_robust <- robcov_vglm(fit, cluster = mydata$id)
@@ -202,9 +227,12 @@ set_coef.vgam <- function(model, new_coefs) {
 #'
 #' @importFrom stats vcov
 #' @export
-get_vcov_robust <- function(model, cluster = NULL, data = NULL,
-                            adjust = FALSE) {
-
+get_vcov_robust <- function(
+  model,
+  cluster = NULL,
+  data = NULL,
+  adjust = FALSE
+) {
   # --- Case 1: Already a robcov_vglm object ---
   if (inherits(model, "robcov_vglm")) {
     return(model$var)
@@ -227,16 +255,47 @@ get_vcov_robust <- function(model, cluster = NULL, data = NULL,
     if (length(cluster_var) != 1) {
       stop(
         "cluster formula must specify exactly one variable (e.g., ~id). ",
-        "Got: ", deparse(cluster)
+        "Got: ",
+        deparse(cluster)
       )
     }
-    if (is.null(data)) {
-      stop("data is required when cluster is a formula")
+
+    # Try to extract cluster from model's original fitting data first
+    # This is critical because cluster must match model's n_obs, not newdata
+    model_data <- NULL
+
+    if (inherits(model, c("vglm", "vgam"))) {
+      # For S4 vglm/vgam objects, try to evaluate the data from the call
+      if (!is.null(model@call$data)) {
+        model_data <- tryCatch(
+          eval(model@call$data, envir = parent.frame(2)),
+          error = function(e) NULL
+        )
+      }
+    } else if (!is.null(model$call$data)) {
+      # For S3 objects (orm, lrm), try to evaluate data from call
+      model_data <- tryCatch(
+        eval(model$call$data, envir = parent.frame(2)),
+        error = function(e) NULL
+      )
     }
-    if (!cluster_var %in% names(data)) {
-      stop("Cluster variable '", cluster_var, "' not found in data")
+
+    # Check if we found the cluster variable in model's data
+    if (!is.null(model_data) && cluster_var %in% names(model_data)) {
+      cluster <- model_data[[cluster_var]]
+    } else if (!is.null(data) && cluster_var %in% names(data)) {
+      # Fall back to user-provided data
+      cluster <- data[[cluster_var]]
+    } else {
+      stop(
+        "Cluster variable '",
+        cluster_var,
+        "' not found.\n",
+        "Checked: model's original fitting data",
+        if (!is.null(data)) " and user-provided 'data' argument" else "",
+        ".\nEnsure the cluster variable exists in the data used to fit the model."
+      )
     }
-    cluster <- data[[cluster_var]]
   }
 
   # --- Case 5: Compute robust vcov based on model class ---
@@ -244,7 +303,6 @@ get_vcov_robust <- function(model, cluster = NULL, data = NULL,
     # Use our robcov_vglm function
     robcov_result <- robcov_vglm(model, cluster = cluster, adjust = adjust)
     return(robcov_result$var)
-
   } else if (inherits(model, c("orm", "lrm"))) {
     # Use rms::robcov
     if (!requireNamespace("rms", quietly = TRUE)) {
@@ -252,10 +310,11 @@ get_vcov_robust <- function(model, cluster = NULL, data = NULL,
     }
     robcov_result <- rms::robcov(model, cluster = cluster)
     return(robcov_result$var)
-
   } else {
     stop(
-      "Unsupported model class for robust vcov: ", class(model)[1], "\n",
+      "Unsupported model class for robust vcov: ",
+      class(model)[1],
+      "\n",
       "Supported classes: vglm, vgam, orm, lrm, robcov_vglm"
     )
   }
