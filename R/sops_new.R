@@ -138,6 +138,8 @@ sops <- function(
     gap = gap,
     t_covs = t_covs
   )
+  # Store original newdata for inferences() (needed for simulation-based inference)
+  attr(result, "newdata_orig") <- newdata
 
   class(result) <- c("markov_sops", class(result))
   return(result)
@@ -320,64 +322,108 @@ avg_sops <- function(
 }
 
 
-#' Bootstrap Inference for State Occupation Probabilities
+#' Inference for State Occupation Probabilities
 #'
-#' Adds bootstrap confidence intervals to `avg_sops` objects. Implements the
-#' same robust approach as `bootstrap_standardized_sops()` for handling rare
-#' states in bootstrap samples.
+#' Adds confidence intervals to SOP objects using simulation-based (MVN) or
+#' bootstrap methods. The default method is simulation, which draws coefficient
+#' vectors from a multivariate normal distribution centered at the point
+#' estimates. This is typically much faster than bootstrap as it does not
+#' require refitting the model.
 #'
-#' @param object A `markov_avg_sops` object from `avg_sops()`.
-#' @param method Character. Currently only "bootstrap" is supported.
-#' @param n_boot Number of bootstrap iterations.
-#' @param parallel Logical. Use parallel processing?
+#' @param object A `markov_avg_sops` object from `avg_sops()` or a
+#'   `markov_sops` object from `sops()`.
+#' @param method Character. Inference method:
+#'   \itemize{
+#'     \item `"simulation"` (default): Draws from MVN(beta_hat, Sigma). Fast,
+#'       does not refit models. Works for both individual and averaged SOPs.
+#'     \item `"bootstrap"`: Resamples patients with replacement, refits model.
+#'       More robust but slower. Only works for `markov_avg_sops` objects.
+#'   }
+#' @param n_sim Number of simulation draws (for simulation) or bootstrap
+#'   iterations (for bootstrap). Default is 1000.
+#' @param n_boot Deprecated alias for `n_sim` when using bootstrap method.
+#'   For backward compatibility.
+#' @param cluster Formula (e.g., `~id`) or vector specifying cluster variable
+#'   for cluster-robust variance estimation. If NULL, uses standard (model-based)
+#'   variance. For longitudinal data with repeated measurements, always specify
+#'   the patient ID variable.
+#' @param vcov Optional custom variance-covariance matrix. If provided,
+#'   overrides `cluster` argument. Can be used to pass a pre-computed robust
+#'   vcov from `robcov_vglm()` or `rms::robcov()`.
+#' @param parallel Logical. Use parallel processing? Default is FALSE.
 #' @param workers Number of parallel workers. If NULL, uses detectCores() - 1.
-#' @param update_datadist Logical. Whether to update datadist for rms models.
 #' @param conf_level Confidence level for intervals (default 0.95).
-#' @param return_draws Logical. If TRUE, stores all individual bootstrap
-#'   estimates as an attribute that can be extracted with `get_draws()`.
-#'   This allows users to plot distributions, compute custom statistics, or
-#'   aggregate across time. Default is FALSE to save memory.
+#' @param conf_type Type of confidence interval (simulation method only):
+#'   \itemize{
+#'     \item `"perc"` (default): Percentile-based intervals from the simulation
+#'       distribution.
+#'     \item `"wald"`: Uses simulation standard errors with normal quantiles.
+#'   }
+#' @param return_draws Logical. If TRUE, stores all individual simulation/bootstrap
+#'   draws as an attribute. Extract with `get_draws()`. Default is FALSE.
+#' @param update_datadist Logical. Whether to update datadist for rms models
+#'   during bootstrap. Default is TRUE.
+#' @param use_coefstart Logical. Use original coefficients as starting values
+#'   for bootstrap refitting. Default is FALSE.
 #' @param ... Additional arguments (currently unused).
 #'
 #' @return The input object with added columns:
 #'   \item{conf.low}{Lower confidence bound}
 #'   \item{conf.high}{Upper confidence bound}
-#'   \item{std.error}{Bootstrap standard error}
+#'   \item{std.error}{Standard error from simulation/bootstrap}
 #'
-#'   If `return_draws = TRUE`, the object also has a "bootstrap_draws"
-#'   attribute containing a data frame with all individual bootstrap estimates.
-#'   Extract with `get_draws()`.
+#'   If `return_draws = TRUE`, the object also has a `"simulation_draws"` or
+#'   `"bootstrap_draws"` attribute containing all individual draws. Extract
+#'   with `get_draws()`.
 #'
 #' @details
-#' This function implements group bootstrap resampling (by patient ID) with
-#' proper handling of rare states that may be missing from bootstrap samples:
+#' ## Simulation Method (Default)
 #'
-#' **Bootstrap Procedure:**
-#' 1. Sample patient IDs with replacement using `fast_group_bootstrap()`
-#' 2. For each bootstrap sample:
-#'    - Materialize bootstrap sample from the original data
-#'    - Relevel factors to consecutive integers if states are missing
-#'    - Refit the model on the bootstrap data
-#'    - Compute standardized SOPs on the bootstrap data using G-computation
-#'    - Map predictions back to original state space with zero-padding
-#' 3. Compute quantile-based confidence intervals across bootstrap iterations
+#' The simulation method (Krinsky & Robb, 1986) proceeds as follows:
+#' 1. Extract coefficient vector beta_hat and (robust) variance-covariance Sigma
+#' 2. Draw n_sim coefficient vectors from MVN(beta_hat, Sigma)
+#' 3. For each draw, replace model coefficients and compute SOPs
+#' 4. Compute confidence intervals from the empirical distribution
 #'
-#' **Missing State Handling:**
-#' When a state is absent from a bootstrap sample:
-#' - The model is refit without that state level
-#' - SOPs are computed for the releveled states
-#' - Results are expanded back to the original state space
-#' - Missing states receive probability 0 (not NA)
+#' **Advantages:**
+#' - Much faster than bootstrap (no model refitting)
+#' - Works for both individual-level (`sops()`) and averaged (`avg_sops()`) SOPs
+#' - Supports robust (cluster) variance estimation via `cluster` argument
 #'
-#' This approach maintains valid probability distributions (sum to 1) and
-#' avoids the need for imputation or jittering strategies.
+#' **When to use:**
+#' - Default choice for most applications
+#' - When speed is important
+#' - When the normal approximation for coefficients is reasonable
 #'
-#' @seealso [avg_sops()], [bootstrap_standardized_sops()],
-#'   [fast_group_bootstrap()], [relevel_factors_consecutive()]
+#' ## Bootstrap Method
+#'
+#' The bootstrap method resamples patients and refits the model:
+#' 1. Sample patient IDs with replacement
+#' 2. Refit model on bootstrap sample (handles missing states)
+#' 3. Compute SOPs using G-computation
+#' 4. Compute percentile-based confidence intervals
+#'
+#' **Advantages:**
+#' - Makes no distributional assumptions about coefficients
+#' - Properly handles rare states that may be missing from samples
+#'
+#' **When to use:**
+#' - When the normal approximation may be poor (small samples, near boundaries)
+#' - When you need to verify simulation-based results
+#'
+#' ## Cluster-Robust Variance
+#'
+#' For longitudinal data with repeated measurements per patient, specify the
+#' clustering variable:
+#' - `cluster = ~id` extracts the `id` column from the data
+#' - Uses `robcov_vglm()` for vglm models or `rms::robcov()` for orm models
+#'
+#' @seealso [avg_sops()], [sops()], [get_draws()], [robcov_vglm()],
+#'   [get_vcov_robust()], [set_coef()]
 #'
 #' @examples
 #' \dontrun{
-#' # Compute marginal SOPs with bootstrap CIs
+#' # Simulation-based inference with cluster-robust SEs (default, fastest)
 #' result <- avg_sops(
 #'   model = fit,
 #'   newdata = data,
@@ -387,44 +433,383 @@ avg_sops <- function(
 #'   absorb = 6,
 #'   id_var = "id"
 #' ) |>
-#'   inferences(n_boot = 500, parallel = TRUE, workers = 4)
+#'   inferences(cluster = ~id, n_sim = 1000)
 #'
-#' # Extract individual bootstrap draws for custom analyses
-#' result_with_draws <- avg_sops(...) |>
-#'   inferences(n_boot = 500, return_draws = TRUE)
+#' # Bootstrap-based inference
+#' result_boot <- avg_sops(...) |>
+#'   inferences(method = "bootstrap", n_sim = 500, parallel = TRUE)
 #'
-#' # Get all bootstrap estimates
-#' boot_draws <- get_draws(result_with_draws)
+#' # Individual-level SOPs with simulation inference
+#' ind_result <- sops(model = fit, newdata = test_data, times = 1:30) |>
+#'   inferences(cluster = ~id, n_sim = 500)
 #'
-#' # Example: Compute mean time in state 1 for each bootstrap iteration
+#' # Extract draws for custom analyses
+#' result_draws <- avg_sops(...) |>
+#'   inferences(cluster = ~id, return_draws = TRUE)
+#' draws <- get_draws(result_draws)
+#'
+#' # Compute treatment effect on time in state
 #' library(dplyr)
-#' time_in_state <- boot_draws |>
-#'   filter(state == 1, tx == 1) |>
-#'   group_by(boot_id) |>
-#'   summarise(mean_time = sum(estimate))
+#' library(tidyr)
+#' treatment_effect <- draws |>
+#'   filter(state == 1) |>
+#'   group_by(draw_id, tx) |>
+#'   summarise(total_time = sum(estimate), .groups = "drop") |>
+#'   pivot_wider(names_from = tx, values_from = total_time) |>
+#'   mutate(effect = `1` - `0`)
+#' quantile(treatment_effect$effect, c(0.025, 0.5, 0.975))
 #' }
 #'
-#' @seealso [get_draws()] to extract all individual draws from any sampling procedure
+#' @seealso [get_draws()] to extract individual draws from any inference method
 #'
 #' @export
 inferences <- function(
   object,
-  method = "bootstrap",
-  n_boot = 1000,
+  method = "simulation",
+  n_sim = 1000,
+  n_boot = NULL,
+
+  cluster = NULL,
+  vcov = NULL,
   parallel = FALSE,
   workers = NULL,
-  update_datadist = TRUE,
   conf_level = 0.95,
+  conf_type = "perc",
   return_draws = FALSE,
+  update_datadist = TRUE,
   use_coefstart = FALSE,
   ...
 ) {
-  if (!inherits(object, "markov_avg_sops")) {
-    stop("inferences() currently only supports 'markov_avg_sops' objects.")
+  # --- Input Validation ---
+  if (!inherits(object, c("markov_avg_sops", "markov_sops"))) {
+    stop(
+      "inferences() requires a 'markov_avg_sops' or 'markov_sops' object. ",
+      "Got: ", paste(class(object), collapse = ", ")
+    )
   }
 
-  if (method != "bootstrap") {
-    stop("Currently only method = 'bootstrap' is supported.")
+  method <- match.arg(method, choices = c("simulation", "bootstrap"))
+
+  # Handle backward compatibility: n_boot overrides n_sim for bootstrap
+
+  if (!is.null(n_boot) && method == "bootstrap") {
+    n_sim <- n_boot
+  }
+
+  # --- Dispatch to Method-Specific Implementation ---
+  if (method == "simulation") {
+    inferences_simulation(
+      object = object,
+      n_sim = n_sim,
+      cluster = cluster,
+      vcov = vcov,
+      conf_level = conf_level,
+      conf_type = conf_type,
+      parallel = parallel,
+      workers = workers,
+      return_draws = return_draws
+    )
+  } else if (method == "bootstrap") {
+    inferences_bootstrap(
+      object = object,
+      n_boot = n_sim,
+      parallel = parallel,
+      workers = workers,
+      conf_level = conf_level,
+      return_draws = return_draws,
+      update_datadist = update_datadist,
+      use_coefstart = use_coefstart
+    )
+  }
+}
+
+
+# =============================================================================
+# SIMULATION-BASED INFERENCE (MVN)
+# =============================================================================
+
+#' Simulation-Based Inference Using Multivariate Normal
+#'
+#' Internal function that implements MVN simulation-based inference for SOPs.
+#' Draws coefficient vectors from a multivariate normal distribution centered
+#' at the point estimates with the (robust) variance-covariance matrix.
+#'
+#' @param object A `markov_avg_sops` or `markov_sops` object.
+#' @param n_sim Number of simulation draws.
+#' @param cluster Formula (~id) or vector for cluster-robust vcov.
+#' @param vcov Custom variance-covariance matrix (overrides cluster).
+#' @param conf_level Confidence level.
+#' @param conf_type Type of confidence interval ("perc" or "wald").
+#' @param parallel Use parallel processing?
+#' @param workers Number of parallel workers.
+#' @param return_draws Store individual draws?
+#'
+#' @return The input object with added confidence intervals.
+#'
+#' @keywords internal
+inferences_simulation <- function(
+  object,
+  n_sim,
+  cluster,
+  vcov,
+  conf_level,
+  conf_type,
+  parallel,
+  workers,
+  return_draws
+) {
+  # Check for mvtnorm package
+  if (!requireNamespace("mvtnorm", quietly = TRUE)) {
+    stop(
+      "Package 'mvtnorm' is required for simulation-based inference.\n",
+      "Install with: install.packages('mvtnorm')"
+    )
+  }
+
+  # --- 1. Extract Stored Attributes ---
+  model <- attr(object, "model")
+  newdata_orig <- attr(object, "newdata_orig")
+  call_args <- attr(object, "call_args")
+  avg_args <- attr(object, "avg_args")
+
+  tvarname <- attr(object, "tvarname")
+  pvarname <- attr(object, "pvarname")
+  ylevels <- attr(object, "ylevels")
+  absorb <- attr(object, "absorb")
+  t_covs <- attr(object, "t_covs")
+
+  # For avg_sops objects
+  is_avg <- inherits(object, "markov_avg_sops")
+  if (is_avg) {
+    variables <- avg_args$variables
+    by <- avg_args$by
+    times <- avg_args$times
+    id_var <- avg_args$id_var
+  } else {
+    # For individual sops objects
+    times <- call_args$times
+    variables <- NULL
+    by <- NULL
+    id_var <- NULL
+  }
+
+  if (is.null(model)) {
+    stop("Model not stored in object. Cannot perform simulation inference.")
+  }
+
+  # --- 2. Get Coefficients and (Robust) VCov (COMPUTED ONCE!) ---
+  beta_hat <- get_coef(model)
+
+  if (!is.null(vcov) && is.matrix(vcov)) {
+    # User-provided custom vcov matrix
+    Sigma <- vcov
+  } else {
+    # Compute (cluster-)robust vcov
+    Sigma <- get_vcov_robust(model, cluster = cluster, data = newdata_orig)
+  }
+
+  # Validate dimensions
+  if (length(beta_hat) != nrow(Sigma) || length(beta_hat) != ncol(Sigma)) {
+    stop(
+      "Dimension mismatch: coefficients (", length(beta_hat), ") vs ",
+      "vcov matrix (", nrow(Sigma), " x ", ncol(Sigma), ")"
+    )
+  }
+
+  # --- 3. Draw n_sim Coefficient Vectors from MVN ---
+  beta_draws <- mvtnorm::rmvnorm(n_sim, mean = beta_hat, sigma = Sigma)
+
+  # --- 4. Prepare Prediction Data (COMPUTED ONCE!) ---
+  if (is_avg) {
+    # For avg_sops: create counterfactual datasets
+    baseline_data <- newdata_orig[!duplicated(newdata_orig[[id_var]]), ]
+    grid <- do.call(expand.grid, variables)
+    newdata_pred <- create_counterfactual_data(baseline_data, grid, variables)
+    n_cf <- nrow(grid)
+    n_each <- nrow(baseline_data)
+  } else {
+    # For individual sops: use data directly
+    newdata_pred <- newdata_orig
+    grid <- NULL
+    n_cf <- 1
+    n_each <- nrow(newdata_pred)
+  }
+
+  n_times <- length(times)
+  n_states <- length(ylevels)
+
+  # --- 5. Define Analysis Function for Each Draw ---
+  analysis_fn <- function(i) {
+    # Replace coefficients
+    model_i <- set_coef(model, beta_draws[i, ])
+
+    # Compute SOPs
+    sops_array <- tryCatch(
+      soprob_markov(
+        object = model_i,
+        data = newdata_pred,
+        times = times,
+        ylevels = ylevels,
+        absorb = absorb,
+        tvarname = tvarname,
+        pvarname = pvarname,
+        t_covs = t_covs
+      ),
+      error = function(e) {
+        warning("soprob_markov failed in draw ", i, ": ", e$message)
+        return(NULL)
+      }
+    )
+
+    if (is.null(sops_array)) {
+      return(NULL)
+    }
+
+    # Marginalize if needed (for avg_sops)
+    if (is_avg) {
+      result <- marginalize_sops_array(
+        sops_array = sops_array,
+        grid = grid,
+        times = times,
+        ylevels = ylevels,
+        variables = variables,
+        n_cf = n_cf,
+        n_each = n_each
+      )
+    } else {
+      # Individual-level: convert array to data frame
+      result <- array_to_df_individual(sops_array, times, ylevels, newdata_pred)
+    }
+
+    result
+  }
+
+  # --- 6. Apply Across All Draws ---
+  if (parallel) {
+    # Setup parallel
+    if (!requireNamespace("furrr", quietly = TRUE)) {
+      stop("Package 'furrr' is required for parallel processing")
+    }
+
+    if (is.null(workers)) {
+      workers <- max(1, parallel::detectCores() - 1)
+    }
+
+    future::plan(future::multisession, workers = workers)
+    on.exit(future::plan(future::sequential), add = TRUE)
+
+    sim_results <- furrr::future_map(
+      seq_len(n_sim),
+      analysis_fn,
+      .options = furrr::furrr_options(
+        seed = TRUE,
+        globals = c(
+          "model", "beta_draws", "newdata_pred", "times", "ylevels",
+          "absorb", "tvarname", "pvarname", "t_covs", "is_avg",
+          "grid", "variables", "n_cf", "n_each"
+        ),
+        packages = c("rms", "VGAM", "dplyr", "stats")
+      ),
+      .progress = FALSE
+    )
+  } else {
+    sim_results <- lapply(seq_len(n_sim), analysis_fn)
+  }
+
+  # --- 7. Combine Results ---
+  sim_results <- Filter(Negate(is.null), sim_results)
+
+  if (length(sim_results) == 0) {
+    stop("All simulation draws failed.")
+  }
+
+  # Add draw_id
+  for (i in seq_along(sim_results)) {
+    sim_results[[i]]$draw_id <- i
+  }
+  draws_df <- dplyr::bind_rows(sim_results)
+
+  # --- 8. Compute Confidence Intervals ---
+  if (is_avg) {
+    group_cols <- c("time", "state", names(variables))
+    if (!is.null(by)) {
+      group_cols <- unique(c(group_cols, by))
+    }
+  } else {
+    group_cols <- c("rowid", "time", "state")
+  }
+
+  summary_stats <- compute_ci_from_draws(
+    draws_df = draws_df,
+    group_cols = group_cols,
+    conf_level = conf_level,
+    conf_type = conf_type
+  )
+
+  # --- 9. Merge with Original Object ---
+  final_result <- merge(object, summary_stats, by = group_cols, all.x = TRUE)
+
+  # Restore attributes
+  for (a in names(attributes(object))) {
+    if (!a %in% c("names", "row.names", "class")) {
+      attr(final_result, a) <- attr(object, a)
+    }
+  }
+  class(final_result) <- class(object)
+
+  # Add metadata
+  attr(final_result, "n_sim") <- n_sim
+  attr(final_result, "n_successful") <- length(sim_results)
+  attr(final_result, "conf_level") <- conf_level
+  attr(final_result, "conf_type") <- conf_type
+  attr(final_result, "method") <- "simulation"
+
+  if (return_draws) {
+    attr(final_result, "simulation_draws") <- draws_df
+  }
+
+  final_result
+}
+
+
+# =============================================================================
+# BOOTSTRAP-BASED INFERENCE
+# =============================================================================
+
+#' Bootstrap-Based Inference for SOPs
+#'
+#' Internal function that implements bootstrap inference for SOPs. Resamples
+#' patients with replacement, refits the model, and computes SOPs for each
+#' bootstrap sample.
+#'
+#' @param object A `markov_avg_sops` object.
+#' @param n_boot Number of bootstrap iterations.
+#' @param parallel Use parallel processing?
+#' @param workers Number of parallel workers.
+#' @param conf_level Confidence level.
+#' @param return_draws Store individual bootstrap draws?
+#' @param update_datadist Update datadist for rms models?
+#' @param use_coefstart Use original coefficients as starting values?
+#'
+#' @return The input object with added confidence intervals.
+#'
+#' @keywords internal
+inferences_bootstrap <- function(
+  object,
+  n_boot,
+  parallel,
+  workers,
+  conf_level,
+  return_draws,
+  update_datadist,
+  use_coefstart
+) {
+  # Bootstrap only supports avg_sops for now
+  if (!inherits(object, "markov_avg_sops")) {
+    stop(
+      "Bootstrap inference currently only supports 'markov_avg_sops' objects. ",
+      "For individual-level SOPs, use method = 'simulation'."
+    )
   }
 
   # --- 1. Extract Stored Attributes ---
@@ -623,39 +1008,22 @@ inferences <- function(
 
   # Add boot_id and combine
   for (i in seq_along(boot_results)) {
-    boot_results[[i]]$boot_id <- i
+    boot_results[[i]]$draw_id <- i
   }
   boot_df <- dplyr::bind_rows(boot_results)
 
   # Compute confidence intervals
-  alpha <- 1 - conf_level
   group_cols <- c("time", "state", names(variables))
   if (!is.null(by)) {
     group_cols <- unique(c(group_cols, by))
   }
 
-  # Aggregate to get quantiles
-  agg_formula <- stats::as.formula(
-    paste("estimate ~", paste(group_cols, collapse = " + "))
+  summary_stats <- compute_ci_from_draws(
+    draws_df = boot_df,
+    group_cols = group_cols,
+    conf_level = conf_level,
+    conf_type = "perc"  # Bootstrap always uses percentile
   )
-  summary_stats <- stats::aggregate(
-    agg_formula,
-    data = boot_df,
-    FUN = function(x) {
-      c(
-        conf.low = stats::quantile(x, alpha / 2, na.rm = TRUE),
-        conf.high = stats::quantile(x, 1 - alpha / 2, na.rm = TRUE),
-        std.error = stats::sd(x, na.rm = TRUE)
-      )
-    }
-  )
-
-  # Fix aggregate's matrix column output
-  mat <- summary_stats$estimate
-  summary_stats$estimate <- NULL
-  summary_stats$conf.low <- mat[, 1]
-  summary_stats$conf.high <- mat[, 2]
-  summary_stats$std.error <- mat[, 3]
 
   # Merge with original object
   final_result <- merge(object, summary_stats, by = group_cols, all.x = TRUE)
@@ -672,14 +1040,193 @@ inferences <- function(
   attr(final_result, "n_boot") <- n_boot
   attr(final_result, "n_successful") <- length(boot_results)
   attr(final_result, "conf_level") <- conf_level
-  attr(final_result, "method") <- method
+  attr(final_result, "method") <- "bootstrap"
 
   # Store full bootstrap draws if requested
   if (return_draws) {
     attr(final_result, "bootstrap_draws") <- boot_df
   }
 
-  return(final_result)
+  final_result
+}
+
+
+# =============================================================================
+# HELPER FUNCTIONS FOR INFERENCE
+# =============================================================================
+
+#' Create Counterfactual Datasets for G-Computation
+#'
+#' Creates copies of baseline data with treatment variable set to each level.
+#'
+#' @param baseline_data Data frame with one row per patient.
+#' @param grid Data frame of variable combinations.
+#' @param variables Named list of variable values.
+#'
+#' @return Data frame with counterfactual data stacked.
+#'
+#' @keywords internal
+create_counterfactual_data <- function(baseline_data, grid, variables) {
+  cf_data_list <- vector("list", nrow(grid))
+  for (i in seq_len(nrow(grid))) {
+    dt_copy <- baseline_data
+    for (v in names(grid)) {
+      dt_copy[[v]] <- grid[i, v]
+    }
+    cf_data_list[[i]] <- dt_copy
+  }
+  do.call(rbind, cf_data_list)
+}
+
+
+#' Marginalize SOPs Array Over Patients
+#'
+#' Averages individual-level SOPs to get population-average (marginal) SOPs.
+#'
+#' @param sops_array Array of dimensions (n_pat x n_times x n_states).
+#' @param grid Data frame of variable combinations.
+#' @param times Vector of time points.
+#' @param ylevels Vector of state levels.
+#' @param variables Named list of variables.
+#' @param n_cf Number of counterfactual scenarios.
+#' @param n_each Number of patients per scenario.
+#'
+#' @return Data frame with marginalized SOPs.
+#'
+#' @keywords internal
+marginalize_sops_array <- function(sops_array, grid, times, ylevels,
+                                   variables, n_cf, n_each) {
+  n_times <- length(times)
+  n_states <- length(ylevels)
+
+  # Average within each counterfactual group
+  avg_sops_list <- vector("list", n_cf)
+  for (cf_i in seq_len(n_cf)) {
+    start_idx <- (cf_i - 1) * n_each + 1
+    end_idx <- cf_i * n_each
+
+    sops_cf <- sops_array[start_idx:end_idx, , , drop = FALSE]
+    avg_sops_mat <- apply(sops_cf, c(2, 3), mean)
+
+    avg_sops_list[[cf_i]] <- avg_sops_mat
+  }
+
+  # Format as data frame
+  result_list <- vector("list", n_cf)
+  for (cf_i in seq_len(n_cf)) {
+    avg_sops_mat <- avg_sops_list[[cf_i]]
+
+    df <- expand.grid(time = times, state = ylevels)
+    df$estimate <- as.vector(avg_sops_mat)
+
+    for (v in names(grid)) {
+      df[[v]] <- grid[cf_i, v]
+    }
+
+    result_list[[cf_i]] <- df
+  }
+
+  dplyr::bind_rows(result_list)
+}
+
+
+#' Convert SOPs Array to Individual-Level Data Frame
+#'
+#' @param sops_array Array of dimensions (n_pat x n_times x n_states).
+#' @param times Vector of time points.
+#' @param ylevels Vector of state levels.
+#' @param newdata Original data with rowid.
+#'
+#' @return Data frame with individual SOPs.
+#'
+#' @keywords internal
+array_to_df_individual <- function(sops_array, times, ylevels, newdata) {
+  n_pat <- dim(sops_array)[1]
+  n_times <- dim(sops_array)[2]
+  n_states <- dim(sops_array)[3]
+
+  # Flatten array
+  probs_flat <- as.vector(sops_array)
+
+  # Construct indices
+  idx_pat <- rep(seq_len(n_pat), times = n_times * n_states)
+  idx_time <- rep(rep(times, each = n_pat), times = n_states)
+  idx_state <- rep(ylevels, each = n_pat * n_times)
+
+  # Build result
+  result <- data.frame(
+    rowid = if ("rowid" %in% names(newdata)) newdata$rowid[idx_pat] else idx_pat,
+    time = idx_time,
+    state = idx_state,
+    estimate = probs_flat
+  )
+
+  result
+}
+
+
+#' Compute Confidence Intervals from Draws
+#'
+#' Computes confidence intervals from simulation or bootstrap draws.
+#'
+#' @param draws_df Data frame with draws (must have `estimate` and `draw_id` columns).
+#' @param group_cols Character vector of grouping columns.
+#' @param conf_level Confidence level (default 0.95).
+#' @param conf_type Type of CI: "perc" (percentile) or "wald".
+#'
+#' @return Data frame with summary statistics.
+#'
+#' @keywords internal
+compute_ci_from_draws <- function(draws_df, group_cols, conf_level = 0.95,
+                                  conf_type = "perc") {
+  alpha <- 1 - conf_level
+
+  # Aggregate to get summary statistics
+  agg_formula <- stats::as.formula(
+    paste("estimate ~", paste(group_cols, collapse = " + "))
+  )
+
+  if (conf_type == "perc") {
+    # Percentile confidence intervals
+    summary_stats <- stats::aggregate(
+      agg_formula,
+      data = draws_df,
+      FUN = function(x) {
+        c(
+          conf.low = stats::quantile(x, alpha / 2, na.rm = TRUE),
+          conf.high = stats::quantile(x, 1 - alpha / 2, na.rm = TRUE),
+          std.error = stats::sd(x, na.rm = TRUE)
+        )
+      }
+    )
+  } else if (conf_type == "wald") {
+    # Wald confidence intervals
+    summary_stats <- stats::aggregate(
+      agg_formula,
+      data = draws_df,
+      FUN = function(x) {
+        se <- stats::sd(x, na.rm = TRUE)
+        critical <- abs(stats::qnorm(alpha / 2))
+        mean_est <- mean(x, na.rm = TRUE)
+        c(
+          conf.low = mean_est - critical * se,
+          conf.high = mean_est + critical * se,
+          std.error = se
+        )
+      }
+    )
+  } else {
+    stop("conf_type must be 'perc' or 'wald'")
+  }
+
+  # Fix aggregate's matrix column output
+  mat <- summary_stats$estimate
+  summary_stats$estimate <- NULL
+  summary_stats$conf.low <- mat[, 1]
+  summary_stats$conf.high <- mat[, 2]
+  summary_stats$std.error <- mat[, 3]
+
+  summary_stats
 }
 
 
@@ -771,30 +1318,37 @@ inferences <- function(
 #'
 #' @export
 get_draws <- function(object) {
-  if (!inherits(object, "markov_avg_sops")) {
+  if (!inherits(object, c("markov_avg_sops", "markov_sops"))) {
     stop(
       "get_draws() requires an object from inferences(). ",
-      "Did you forget to call inferences() first?"
+      "Got: ", paste(class(object), collapse = ", ")
     )
   }
 
-  # Try to find draws attribute (could be bootstrap_draws, mvn_draws, etc.)
+  # Try to find draws attribute - check multiple possible names
   draws <- attr(object, "bootstrap_draws")
 
-  # Not yet implemented
-  # if (is.null(draws)) {
-  #   draws <- attr(object, "mvn_draws")
-  # }
-
-  # if (is.null(draws)) {
-  #   draws <- attr(object, "draws")
-  # }
+  if (is.null(draws)) {
+    draws <- attr(object, "simulation_draws")
+  }
 
   if (is.null(draws)) {
-    stop(
-      "No draws found. ",
-      "Run inferences() with return_draws = TRUE (or similar) to store draws."
-    )
+    draws <- attr(object, "draws")
+  }
+
+  if (is.null(draws)) {
+    method <- attr(object, "method")
+    if (is.null(method)) {
+      stop(
+        "No draws found. ",
+        "Run inferences() with return_draws = TRUE to store draws."
+      )
+    } else {
+      stop(
+        "No draws found. Object was created with method = '", method, "'. ",
+        "Run inferences() with return_draws = TRUE to store draws."
+      )
+    }
   }
 
   return(draws)
