@@ -380,7 +380,7 @@ tidy_po <- function(
 #' simulation iterations:
 #' ```r
 #' library(furrr)
-#' plan(multisession, workers = 8)
+#' plan(future.callr::callr, workers = 8)
 #' results <- future_map_dfr(
 #'   1:1000,
 #'   ~assess_operating_characteristics(iter_num = ., ...),
@@ -462,7 +462,7 @@ tidy_po <- function(
 #'
 #' # Parallelize across iterations - each gets different sample
 #' library(furrr)
-#' plan(multisession, workers = 8)
+#' plan(future.callr::callr, workers = 8)
 #' results <- future_map_dfr(
 #'   1:1000,
 #'   ~assess_operating_characteristics(
@@ -569,7 +569,7 @@ assess_operating_characteristics <- function(
     #if (!dir.exists(analysis_dir_summary)) {
     #  dir.create(analysis_dir_summary, recursive = TRUE, showWarnings = FALSE)
     #}
-    
+
     # save summary
     #saveRDS(
     #  results[[1]],
@@ -580,14 +580,14 @@ assess_operating_characteristics <- function(
     #)
 
     # Save additional details to disk if present
-    if(length(results[-1]) > 0) {
+    if (length(results[-1]) > 0) {
       # Create directory recursively (including parent directories)
       analysis_dir_details <- file.path(out_dir_details, analysis_name)
 
       if (!dir.exists(analysis_dir_details)) {
         dir.create(analysis_dir_details, recursive = TRUE, showWarnings = FALSE)
       }
-     
+
       # Save all additional results (everything except first element)
       saveRDS(
         results[-1],
@@ -596,7 +596,7 @@ assess_operating_characteristics <- function(
           paste0(analysis_name, "_iter_", iter_num, ".rds")
         )
       )
-      }
+    }
 
     # Store summary results (first element)
     results_list[[analysis_name]] <- results[[1]]
