@@ -158,7 +158,10 @@ sops <- function(
 #' distribution.
 #'
 #' @param model A fitted model object (e.g., `vglm`, `orm`).
-#' @param newdata Optional data frame. If NULL, extracts from model.
+#' @param newdata Data frame for prediction. For **simulation inference**, pass
+#'   baseline data only (one row per patient). For **bootstrap inference**, you
+#'   must pass the full longitudinal dataset (all time points) since the model
+#'   needs to be refit on bootstrap samples. If NULL, extracts from model.
 #' @param variables A named list specifying the variable(s) to standardize over.
 #'   E.g., `list(tx = c(0, 1))` creates counterfactual datasets for treatment
 #'   and control. **Required** - G-computation needs a treatment variable.
@@ -196,15 +199,26 @@ sops <- function(
 #'
 #' @examples
 #' \dontrun{
-#' # Compute marginal SOPs comparing tx=1 vs tx=0
-#' avg_sops(
+#' # For simulation inference: use baseline data (one row per patient)
+#' baseline_data <- data |> filter(time == 1)
+#' result <- avg_sops(
 #'   model = fit,
-#'   newdata = data,
+#'   newdata = baseline_data,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
 #'   ylevels = 1:6,
 #'   absorb = 6
-#' )
+#' ) |> inferences(method = "simulation", n_sim = 1000)
+#'
+#' # For bootstrap inference: must use full data (all time points)
+#' result_boot <- avg_sops(
+#'   model = fit,
+#'   newdata = data,  # Full longitudinal data
+#'   variables = list(tx = c(0, 1)),
+#'   times = 1:60,
+#'   ylevels = 1:6,
+#'   absorb = 6
+#' ) |> inferences(method = "bootstrap", n_sim = 500)
 #' }
 #'
 #' @export
@@ -411,6 +425,10 @@ avg_sops <- function(
 #' - When the normal approximation may be poor (small samples, near boundaries)
 #' - When you need to verify simulation-based results
 #'
+#' **Important:** Bootstrap requires the full longitudinal dataset (all time
+#' points) in the original `newdata` passed to `avg_sops()`, not just baseline
+#' data. This is because the model must be refit on each bootstrap sample.
+#'
 #' ## Cluster-Robust Variance
 #'
 #' For longitudinal data with repeated measurements per patient, you should
@@ -441,20 +459,29 @@ avg_sops <- function(
 #' fit <- vglm(y ~ time + tx + yprev, family = cumulative(...), data = data)
 #' fit_robust <- robcov_vglm(fit, cluster = data$id)
 #'
-#' # Step 2: Compute SOPs and add inference (vcov extracted automatically)
-#' result <- avg_sops(
+#' # Step 2a: Simulation inference (use baseline data only)
+#' baseline_data <- data |> filter(time == 1)
+#' result_sim <- avg_sops(
 #'   model = fit_robust,
-#'   newdata = data,
+#'   newdata = baseline_data,  # Baseline only for simulation
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
 #'   ylevels = 1:6,
 #'   absorb = 6,
 #'   id_var = "id"
 #' ) |>
-#'   inferences(n_sim = 1000)
+#'   inferences(method = "simulation", n_sim = 1000)
 #'
-#' # Bootstrap-based inference
-#' result_boot <- avg_sops(model = fit_robust, ...) |>
+#' # Step 2b: Bootstrap inference (must use full data)
+#' result_boot <- avg_sops(
+#'   model = fit_robust,
+#'   newdata = data,  # Full longitudinal data for bootstrap
+#'   variables = list(tx = c(0, 1)),
+#'   times = 1:60,
+#'   ylevels = 1:6,
+#'   absorb = 6,
+#'   id_var = "id"
+#' ) |>
 #'   inferences(method = "bootstrap", n_sim = 500, parallel = TRUE)
 #'
 #' # Individual-level SOPs with simulation inference
@@ -871,6 +898,25 @@ inferences_bootstrap <- function(
 
   if (!id_var %in% names(newdata_orig)) {
     stop("ID variable '", id_var, "' not found in data.")
+  }
+
+  # --- 2. Validate Data is Longitudinal (Not Just Baseline) ---
+  # Check if tvarname exists and has multiple time points per patient
+  if (tvarname %in% names(newdata_orig)) {
+    rows_per_patient <- newdata_orig |>
+      dplyr::group_by(!!rlang::sym(id_var)) |>
+      dplyr::summarise(n_rows = dplyr::n(), .groups = "drop") |>
+      dplyr::pull(n_rows)
+    
+    if (all(rows_per_patient == 1)) {
+      stop(
+        "Bootstrap inference requires full longitudinal data (all time points), ",
+        "but the data passed to avg_sops() appears to be baseline only ",
+        "(one row per patient).\\n\\n",
+        "For bootstrap: avg_sops(model, newdata = data, ...)\\n",
+        "For simulation: avg_sops(model, newdata = data |> filter(time == 1), ...)"
+      )
+    }
   }
 
   # Dimensions for result expansion
