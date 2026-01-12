@@ -1,4 +1,4 @@
-#' Calculate Individual State Occupation Probabilities (Tidy)
+#' Calculate Individual State Occupation Probabilities
 #'
 #' Computes individual-level state occupation probabilities (SOPs) for each row
 #' in a dataset. This function serves as the foundation for `avg_sops()` and
@@ -334,7 +334,7 @@ avg_sops <- function(
 #' @param update_datadist Logical. Whether to update datadist for rms models.
 #' @param conf_level Confidence level for intervals (default 0.95).
 #' @param return_draws Logical. If TRUE, stores all individual bootstrap
-#'   estimates as an attribute that can be extracted with `draw_bootstrap()`.
+#'   estimates as an attribute that can be extracted with `get_draws()`.
 #'   This allows users to plot distributions, compute custom statistics, or
 #'   aggregate across time. Default is FALSE to save memory.
 #' @param ... Additional arguments (currently unused).
@@ -355,17 +355,17 @@ avg_sops <- function(
 #' **Bootstrap Procedure:**
 #' 1. Sample patient IDs with replacement using `fast_group_bootstrap()`
 #' 2. For each bootstrap sample:
+#'    - Materialize bootstrap sample from the original data
 #'    - Relevel factors to consecutive integers if states are missing
 #'    - Refit the model on the bootstrap data
-#'    - Predict on the ORIGINAL counterfactual grid (not bootstrap sample)
-#'    - Map predictions back to original state space
-#'    - Zero-pad missing states (they have 0 probability in that bootstrap)
+#'    - Compute standardized SOPs on the bootstrap data using G-computation
+#'    - Map predictions back to original state space with zero-padding
 #' 3. Compute quantile-based confidence intervals across bootstrap iterations
 #'
 #' **Missing State Handling:**
 #' When a state is absent from a bootstrap sample:
 #' - The model is refit without that state level
-#' - The `pvarname` values in the prediction data are mapped to the new levels
+#' - SOPs are computed for the releveled states
 #' - Results are expanded back to the original state space
 #' - Missing states receive probability 0 (not NA)
 #'
@@ -394,7 +394,7 @@ avg_sops <- function(
 #'   inferences(n_boot = 500, return_draws = TRUE)
 #'
 #' # Get all bootstrap estimates
-#' boot_draws <- draw_bootstrap(result_with_draws)
+#' boot_draws <- get_draws(result_with_draws)
 #'
 #' # Example: Compute mean time in state 1 for each bootstrap iteration
 #' library(dplyr)
@@ -416,10 +416,15 @@ inferences <- function(
   update_datadist = TRUE,
   conf_level = 0.95,
   return_draws = FALSE,
+  use_coefstart = FALSE,
   ...
 ) {
   if (!inherits(object, "markov_avg_sops")) {
     stop("inferences() currently only supports 'markov_avg_sops' objects.")
+  }
+
+  if (method != "bootstrap") {
+    stop("Currently only method = 'bootstrap' is supported.")
   }
 
   # --- 1. Extract Stored Attributes ---
@@ -451,24 +456,11 @@ inferences <- function(
   n_times <- length(times)
   n_states <- length(ylevels)
 
-  # --- 2. Extract Baseline Data and Create Counterfactual Grid ---
-  # For SOP prediction, we need one row per patient (baseline)
-  baseline_data <- newdata_orig[!duplicated(newdata_orig[[id_var]]), ]
-
-  # Create counterfactual grid for prediction (FIXED across bootstraps)
-  grid <- do.call(expand.grid, variables)
-  cf_data_list <- vector("list", nrow(grid))
-  for (i in seq_len(nrow(grid))) {
-    dt_copy <- baseline_data
-    for (v in names(grid)) {
-      dt_copy[[v]] <- grid[i, v]
-    }
-    cf_data_list[[i]] <- dt_copy
-  }
-  newdata_cf <- do.call(rbind, cf_data_list)
+  # --- 2. Identify Factor Columns ---
+  factor_cols <- c("y", pvarname)
+  factor_cols <- intersect(factor_cols, names(newdata_orig))
 
   # --- 3. Generate Bootstrap ID Samples ---
-  # Bootstrap from the FULL longitudinal data (for model refitting)
   boot_ids <- fast_group_bootstrap(
     data = newdata_orig,
     id_var = id_var,
@@ -476,12 +468,8 @@ inferences <- function(
   )
 
   # --- 4. Define Analysis Function ---
-  # This runs on each bootstrap sample (refit model, predict on CF data)
   analysis_fn <- function(boot_data) {
-    # A. Relevel factors to handle missing states
-    factor_cols <- c("y", pvarname)
-    factor_cols <- intersect(factor_cols, names(boot_data))
-
+    # A. Relevel factors and refit model
     boot_result <- bootstrap_analysis_wrapper(
       boot_data = boot_data,
       model = model,
@@ -489,10 +477,12 @@ inferences <- function(
       original_data = newdata_orig,
       ylevels = ylevels,
       absorb = absorb,
-      update_datadist = update_datadist
+      update_datadist = update_datadist,
+      use_coefstart = use_coefstart
     )
 
     m_boot <- boot_result$model
+    boot_data <- boot_result$data
     boot_ylevels <- boot_result$ylevels
     boot_absorb <- boot_result$absorb
     missing_states <- boot_result$missing_states
@@ -501,48 +491,30 @@ inferences <- function(
       return(NULL)
     }
 
-    # B. Prepare prediction data with mapped pvarname levels
-    # Get states present in bootstrap (in original numbering)
+    # Get states present in original numbering (for mapping back later)
     states_present <- setdiff(ylevels, as.numeric(missing_states))
-    state_mapping <- stats::setNames(seq_along(states_present), states_present)
 
-    # Copy counterfactual data and map pvarname
-    newdata_pred <- newdata_cf
+    # B. Compute standardized SOPs using G-computation on bootstrap data
+    # Extract baseline data (one row per patient)
+    baseline_boot <- boot_data[!duplicated(boot_data[["new_id"]]), ]
 
-    # Get pvarname values
-    pvar_vals <- newdata_pred[[pvarname]]
-    if (is.factor(pvar_vals)) {
-      pvar_vals <- as.numeric(as.character(pvar_vals))
-    }
-
-    # Check which values are present in the model
-    is_present <- pvar_vals %in% states_present
-
-    if (!all(is_present)) {
-      # Some pvarname values are not in the model
-      # For G-computation prediction, we need valid levels
-      # Map to nearest present level (this is for PREDICTION, not training)
-      for (idx in which(!is_present)) {
-        old_val <- pvar_vals[idx]
-        # Find nearest present level
-        diffs <- abs(states_present - old_val)
-        new_val <- states_present[which.min(diffs)]
-        pvar_vals[idx] <- new_val
+    # Create counterfactual datasets for each variable value
+    grid <- do.call(expand.grid, variables)
+    cf_data_list <- vector("list", nrow(grid))
+    for (i in seq_len(nrow(grid))) {
+      dt_copy <- baseline_boot
+      for (v in names(grid)) {
+        dt_copy[[v]] <- grid[i, v]
       }
+      cf_data_list[[i]] <- dt_copy
     }
+    newdata_cf <- do.call(rbind, cf_data_list)
 
-    # Apply mapping to consecutive integers for the bootstrap model
-    mapped_vals <- state_mapping[as.character(pvar_vals)]
-    newdata_pred[[pvarname]] <- factor(
-      mapped_vals,
-      levels = seq_along(states_present)
-    )
-
-    # C. Compute SOPs on counterfactual data
-    sops_result <- tryCatch(
+    # Compute individual SOPs for counterfactual data
+    sops_array <- tryCatch(
       soprob_markov(
         object = m_boot,
-        data = newdata_pred,
+        data = newdata_cf,
         times = times,
         ylevels = factor(boot_ylevels),
         absorb = boot_absorb,
@@ -556,41 +528,52 @@ inferences <- function(
       }
     )
 
-    if (is.null(sops_result)) {
+    if (is.null(sops_array)) {
       return(NULL)
     }
 
-    # D. Expand results back to original state space
-    # sops_result is array [n_pat, n_times, n_boot_states]
-    n_pat <- dim(sops_result)[1]
-    n_boot_states <- dim(sops_result)[3]
-
-    # Initialize full array with zeros for all original states
-    sops_full <- array(0, dim = c(n_pat, n_times, n_states))
-
-    # Fill in present states
-    for (i in seq_along(states_present)) {
-      original_idx <- which(ylevels == states_present[i])
-      sops_full[,, original_idx] <- sops_result[,, i]
-    }
-
-    # E. Marginalize and format as avg_sops output
-    # For each treatment value, average across patients
+    # C. Marginalize (average) across patients for each counterfactual
+    # sops_array is [n_pat, n_times, n_boot_states]
+    n_pat <- dim(sops_array)[1]
+    n_boot_states <- dim(sops_array)[3]
     n_cf <- nrow(grid)
-    # newdata_cf has n_baseline_patients * n_cf rows total
-    n_each <- n_pat %/% n_cf # Number of patients per counterfactual group
+    n_each <- n_pat %/% n_cf
 
-    result_list <- vector("list", n_cf)
+    # Average within each counterfactual group
+    avg_sops_list <- vector("list", n_cf)
     for (cf_i in seq_len(n_cf)) {
-      # Indices for this counterfactual group
       start_idx <- (cf_i - 1) * n_each + 1
       end_idx <- cf_i * n_each
 
-      # Subset array and average across patients
-      sops_cf <- sops_full[start_idx:end_idx, , , drop = FALSE]
-      avg_sops_mat <- apply(sops_cf, c(2, 3), mean) # [n_times x n_states]
+      # Subset and average [n_each x n_times x n_boot_states]
+      sops_cf <- sops_array[start_idx:end_idx, , , drop = FALSE]
+      avg_sops_mat <- apply(sops_cf, c(2, 3), mean) # [n_times x n_boot_states]
 
-      # Convert to data frame
+      avg_sops_list[[cf_i]] <- avg_sops_mat
+    }
+
+    # D. Expand back to original state space with zero-padding
+    if (length(missing_states) > 0) {
+      for (cf_i in seq_len(n_cf)) {
+        avg_sops_mat <- avg_sops_list[[cf_i]]
+        full_mat <- matrix(0, nrow = n_times, ncol = n_states)
+
+        # Fill in states that were present
+        for (i in seq_along(states_present)) {
+          original_state <- states_present[i]
+          original_idx <- which(ylevels == original_state)
+          full_mat[, original_idx] <- avg_sops_mat[, i]
+        }
+
+        avg_sops_list[[cf_i]] <- full_mat
+      }
+    }
+
+    # E. Format as data frame
+    result_list <- vector("list", n_cf)
+    for (cf_i in seq_len(n_cf)) {
+      avg_sops_mat <- avg_sops_list[[cf_i]]
+
       df <- expand.grid(time = times, state = ylevels)
       df$estimate <- as.vector(avg_sops_mat)
 
@@ -616,9 +599,7 @@ inferences <- function(
     packages = c("rms", "VGAM", "Hmisc", "dplyr", "stats"),
     globals = c(
       "model",
-      "newdata_cf",
       "variables",
-      "grid",
       "times",
       "ylevels",
       "absorb",
@@ -627,12 +608,13 @@ inferences <- function(
       "t_covs",
       "n_times",
       "n_states",
-      "update_datadist"
+      "update_datadist",
+      "factor_cols",
+      "use_coefstart"
     )
   )
 
   # --- 6. Combine and Compute Summary Statistics ---
-  # Filter out NULL results
   boot_results <- Filter(Negate(is.null), boot_results)
 
   if (length(boot_results) == 0) {
