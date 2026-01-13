@@ -7,43 +7,32 @@
 get_draws(object)
 }
 \arguments{
-\item{object}{An object returned by \code{inferences()} with \code{return_draws = TRUE}
-(or similar inference functions that support storing draws).}
+\item{object}{An object returned by \code{inferences()} with \code{return_draws = TRUE}.}
 }
 \value{
 A data frame with columns:
 \itemize{
-\item boot_id: Bootstrap iteration number
+\item draw_id: Simulation or bootstrap iteration number
 \item time: Time point
 \item state: State number
-\item estimate: Bootstrap estimate of state occupation probability
-\item Additional columns for standardization variables (e.g., tx)
+\item estimate: Draw-specific estimate of state occupation probability
+\item point_estimate: The original point estimate from the model
+\item conf.low, conf.high, std.error: Summary statistics from the point estimate object
+\item Additional columns from the original object (covariates, etc.)
 }
-Each row represents one bootstrap estimate for a specific time-state-treatment
-combination.
+Each row represents one draw for a specific time-state combination.
 }
 \description{
 Extracts the individual draws (bootstrap samples, simulated values from MVN, etc.)
 from an object returned by \code{inferences()} with \code{return_draws = TRUE}.
-This allows users to analyze the full distribution, compute custom statistics,
-or create visualizations, regardless of the sampling method used.
+This function joins the draws back to the original point estimate object,
+preserving all covariates, grouping variables, and summary statistics.
 }
 \details{
-This function retrieves the draws from objects created by \code{inferences()}
-(or similar inference functions). The exact name of the draws attribute
-depends on the sampling method used (e.g., "bootstrap_draws" for bootstrap,
-potentially "mvn_draws" for MVN simulation). If the attribute is not present
-(i.e., the object was created without \code{return_draws = TRUE}), an error is raised.
-
-\strong{Common Use Cases:}
-\itemize{
-\item Plot distributions with histograms or density plots
-\item Compute custom summary statistics (e.g., median, quantiles)
-\item Aggregate across time to calculate total time in state
-\item Compute treatment effects with CIs
-\item Perform sensitivity analyses on the sampled values
-\item Combine draws across multiple inference results
-}
+This function retrieves the draws from objects created by \code{inferences()}.
+It performs a join between the draws and the point estimate object to ensure
+that all metadata is preserved. To avoid conflict, the \code{estimate} column from
+the point estimate object is renamed to \code{point_estimate}.
 }
 \examples{
 \dontrun{
@@ -74,7 +63,7 @@ draws |>
 library(dplyr)
 time_in_state_boot <- draws |>
   filter(state == 1, tx == 1) |>
-  group_by(boot_id) |>
+  group_by(draw_id) |>
   summarise(total_time = sum(estimate))
 
 quantile(time_in_state_boot$total_time, c(0.025, 0.5, 0.975))
@@ -82,7 +71,7 @@ quantile(time_in_state_boot$total_time, c(0.025, 0.5, 0.975))
 # Compare treatment effect on time in state
 treatment_effect <- draws |>
   filter(state == 1) |>
-  group_by(boot_id, tx) |>
+  group_by(draw_id, tx) |>
   summarise(total_time = sum(estimate), .groups = "drop") |>
   pivot_wider(names_from = tx, values_from = total_time,
               names_prefix = "tx") |>

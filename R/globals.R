@@ -28,6 +28,7 @@ utils::globalVariables(c(
   "conf.low",
   "rowid",
   "estimate",
+  "draw",
   "mean_estimate",
   "p_value",
   "statistic",
