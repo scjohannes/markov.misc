@@ -1088,7 +1088,7 @@ inferences_bootstrap <- function(
     stop("All bootstrap iterations failed.")
   }
 
-  # Add boot_id and combine
+  # Add draw_id and combine
   for (i in seq_along(boot_results)) {
     boot_results[[i]]$draw_id <- i
   }
@@ -1331,39 +1331,28 @@ compute_ci_from_draws <- function(
 #'
 #' Extracts the individual draws (bootstrap samples, simulated values from MVN, etc.)
 #' from an object returned by `inferences()` with `return_draws = TRUE`.
-#' This allows users to analyze the full distribution, compute custom statistics,
-#' or create visualizations, regardless of the sampling method used.
+#' This function joins the draws back to the original point estimate object,
+#' preserving all covariates, grouping variables, and summary statistics.
 #'
-#' @param object An object returned by `inferences()` with `return_draws = TRUE`
-#'   (or similar inference functions that support storing draws).
+#' @param object An object returned by `inferences()` with `return_draws = TRUE`.
 #'
 #' @return A data frame with columns:
 #'   \itemize{
-#'     \item boot_id: Bootstrap iteration number
+#'     \item draw_id: Simulation or bootstrap iteration number
 #'     \item time: Time point
 #'     \item state: State number
-#'     \item estimate: Bootstrap estimate of state occupation probability
-#'     \item Additional columns for standardization variables (e.g., tx)
+#'     \item draw: Draw-specific estimate of state occupation probability
+#'     \item estimate: The original point estimate from the model
+#'     \item conf.low, conf.high, std.error: Summary statistics from the point estimate object
+#'     \item Additional columns from the original object (covariates, etc.)
 #'   }
-#'   Each row represents one bootstrap estimate for a specific time-state-treatment
-#'   combination.
+#'   Each row represents one draw for a specific time-state combination.
 #'
 #' @details
-#' This function retrieves the draws from objects created by `inferences()`
-#' (or similar inference functions). The exact name of the draws attribute
-#' depends on the sampling method used (e.g., "bootstrap_draws" for bootstrap,
-#' potentially "mvn_draws" for MVN simulation). If the attribute is not present
-#' (i.e., the object was created without `return_draws = TRUE`), an error is raised.
-#'
-#' **Common Use Cases:**
-#' \itemize{
-#'   \item Plot distributions with histograms or density plots
-#'   \item Compute custom summary statistics (e.g., median, quantiles)
-#'   \item Aggregate across time to calculate total time in state
-#'   \item Compute treatment effects with CIs
-#'   \item Perform sensitivity analyses on the sampled values
-#'   \item Combine draws across multiple inference results
-#' }
+#' This function retrieves the draws from objects created by `inferences()`.
+#' It performs a join between the draws and the point estimate object to ensure
+#' that all metadata is preserved. To avoid conflict, the `estimate` column from
+#' the draws is renamed to `draw`.
 #'
 #' @examples
 #' \dontrun{
@@ -1386,7 +1375,7 @@ compute_ci_from_draws <- function(
 #' library(ggplot2)
 #' draws |>
 #'   filter(time == 10, state == 1, tx == 1) |>
-#'   ggplot(aes(x = estimate)) +
+#'   ggplot(aes(x = draw)) +
 #'   geom_histogram(bins = 30) +
 #'   labs(title = "Distribution: P(State 1 | Time 10, Treatment)")
 #'
@@ -1394,16 +1383,16 @@ compute_ci_from_draws <- function(
 #' library(dplyr)
 #' time_in_state_boot <- draws |>
 #'   filter(state == 1, tx == 1) |>
-#'   group_by(boot_id) |>
-#'   summarise(total_time = sum(estimate))
+#'   group_by(draw_id) |>
+#'   summarise(total_time = sum(draw))
 #'
 #' quantile(time_in_state_boot$total_time, c(0.025, 0.5, 0.975))
 #'
 #' # Compare treatment effect on time in state
 #' treatment_effect <- draws |>
 #'   filter(state == 1) |>
-#'   group_by(boot_id, tx) |>
-#'   summarise(total_time = sum(estimate), .groups = "drop") |>
+#'   group_by(draw_id, tx) |>
+#'   summarise(total_time = sum(draw), .groups = "drop") |>
 #'   pivot_wider(names_from = tx, values_from = total_time,
 #'               names_prefix = "tx") |>
 #'   mutate(effect = tx1 - tx0)
@@ -1423,32 +1412,40 @@ get_draws <- function(object) {
     )
   }
 
-  # Try to find draws attribute - check multiple possible names
+  # 1. Extract draws attribute
   draws <- attr(object, "bootstrap_draws")
-
-  if (is.null(draws)) {
-    draws <- attr(object, "simulation_draws")
-  }
-
-  if (is.null(draws)) {
-    draws <- attr(object, "draws")
-  }
+  if (is.null(draws)) draws <- attr(object, "simulation_draws")
+  if (is.null(draws)) draws <- attr(object, "draws")
 
   if (is.null(draws)) {
     method <- attr(object, "method")
-    if (is.null(method)) {
-      stop(
-        "No draws found. ",
-        "Run inferences() with return_draws = TRUE to store draws."
-      )
-    } else {
-      stop(
-        "No draws found. Object was created with method = '",
-        method,
-        "'. ",
-        "Run inferences() with return_draws = TRUE to store draws."
-      )
-    }
+    msg <- "No draws found. Run inferences() with return_draws = TRUE."
+    if (!is.null(method)) msg <- paste0(msg, " (Method used: '", method, "')")
+    stop(msg)
+  }
+
+  # 2. Prepare metadata from the original object
+  meta <- as.data.frame(object)
+
+  # Rename 'estimate' in draws to 'draw' to avoid conflict with point estimates
+  if ("estimate" %in% names(draws)) {
+    names(draws)[names(draws) == "estimate"] <- "draw"
+  }
+
+  # 3. Identify join keys
+  # Keys are columns present in both draws and meta (excluding estimate/draw)
+  common_cols <- intersect(names(draws), names(meta))
+  keys <- setdiff(common_cols, c("draw", "estimate"))
+
+  if (length(keys) == 0) {
+    return(draws)
+  }
+
+  # 4. Join metadata back to draws
+  if (requireNamespace("dplyr", quietly = TRUE)) {
+    draws <- dplyr::left_join(draws, meta, by = keys)
+  } else {
+    draws <- merge(draws, meta, by = keys, all.x = TRUE, sort = FALSE)
   }
 
   return(draws)
