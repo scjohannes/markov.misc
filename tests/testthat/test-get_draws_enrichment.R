@@ -1,3 +1,4 @@
+
 test_that("get_draws() preserves covariates for sops objects", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
@@ -5,17 +6,7 @@ test_that("get_draws() preserves covariates for sops objects", {
   skip_if_not_installed("dplyr")
 
   # Simulate test data
-  set.seed(123)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 20,
-    follow_up_time = 30,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 123,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 20, seed = 123, follow_up_time = 30)
 
   # Add dummy age covariate manually since brownian sim doesn't provide it
   data$age <- rnorm(nrow(data), 60, 10)
@@ -77,3 +68,4 @@ test_that("get_draws() preserves covariates for sops objects", {
   expect_equal(sample_row$tx, orig_row$tx)
   expect_equal(sample_row$age, orig_row$age)
 })
+

@@ -19,8 +19,7 @@ test_that("violet_baseline dataset exists and has correct structure", {
 
   # Check columns exist
   expected_cols <- c("id", "yprev", "age", "sofa", "tx")
-  expect_true(all(expected_cols %in% names(violet_baseline)))
-  expect_setequal(names(violet_baseline), expected_cols)
+  expect_named(violet_baseline, expected_cols, ignore.order = TRUE)
 
   # Check data types
   expect_type(violet_baseline$id, "integer")
@@ -43,10 +42,12 @@ test_that("violet_baseline dataset exists and has correct structure", {
   expect_true(all(violet_baseline$tx %in% c(0, 1)))
 
   # Check age is reasonable (e.g., 18-120)
-  expect_true(all(violet_baseline$age >= 18 & violet_baseline$age <= 120))
+  expect_gte(min(violet_baseline$age), 18)
+  expect_lte(max(violet_baseline$age), 120)
 
   # Check sofa is reasonable (0-24)
-  expect_true(all(violet_baseline$sofa >= 0 & violet_baseline$sofa <= 24))
+  expect_gte(min(violet_baseline$sofa), 0)
+  expect_lte(max(violet_baseline$sofa), 24)
 })
 
 test_that("lp_violet function works correctly", {
@@ -290,3 +291,4 @@ test_that("sim_trajectories_markov handles different treatment effects", {
   )
   expect_equal(nrow(traj_pos), 50 * 20)
 })
+

@@ -136,7 +136,11 @@ test_that("robcov_vglm matches rms::robcov for binary outcome", {
   # Fit orm
   dd <- rms::datadist(test_data)
   old_dd <- options(datadist = "dd")
-  on.exit(options(old_dd), add = TRUE)
+  assign("dd", dd, envir = globalenv())
+  on.exit({
+    options(old_dd)
+    rm("dd", envir = globalenv())
+  }, add = TRUE)
 
   m_orm <- rms::orm(y ~ x, data = test_data, x = TRUE, y = TRUE)
 
@@ -177,7 +181,11 @@ test_that("robcov_vglm matches rms::robcov for binary outcome with clustering", 
   # Fit orm
   dd <- rms::datadist(test_data)
   old_dd <- options(datadist = "dd")
-  on.exit(options(old_dd), add = TRUE)
+  assign("dd", dd, envir = globalenv())
+  on.exit({
+    options(old_dd)
+    rm("dd", envir = globalenv())
+  }, add = TRUE)
 
   m_orm <- rms::orm(y ~ x, data = test_data, x = TRUE, y = TRUE)
 
@@ -232,7 +240,11 @@ test_that("robcov_vglm gives similar results to rms::robcov for ordinal outcome"
   # Fit orm
   dd <- rms::datadist(test_data)
   old_dd <- options(datadist = "dd")
-  on.exit(options(old_dd), add = TRUE)
+  assign("dd", dd, envir = globalenv())
+  on.exit({
+    options(old_dd)
+    rm("dd", envir = globalenv())
+  }, add = TRUE)
 
   m_orm <- rms::orm(y ~ x1 + x2, data = test_data, x = TRUE, y = TRUE)
 
@@ -256,6 +268,7 @@ test_that("robcov_vglm gives similar results to rms::robcov for ordinal outcome"
   ratios <- se_vglm_reg / se_orm_reg
   expect_true(all(ratios > 0.97 & ratios < 1.03))
 })
+
 
 
 test_that("score contributions sum to approximately zero", {
@@ -377,7 +390,11 @@ test_that("compare_se_orm_vglm produces correct comparison", {
   # Fit orm
   dd <- rms::datadist(test_data)
   old_dd <- options(datadist = "dd")
-  on.exit(options(old_dd), add = TRUE)
+  assign("dd", dd, envir = globalenv())
+  on.exit({
+    options(old_dd)
+    rm("dd", envir = globalenv())
+  }, add = TRUE)
 
   m_orm <- rms::orm(y ~ x, data = test_data, x = TRUE, y = TRUE)
 
@@ -418,6 +435,7 @@ test_that("compare_se_orm_vglm produces correct comparison", {
 })
 
 
+
 test_that("print and summary methods work", {
   skip_if_not_installed("VGAM")
 
@@ -433,32 +451,19 @@ test_that("print and summary methods work", {
   result <- robcov_vglm(m)
 
   # Test print method
-  output_print <- capture.output(print(result))
-  expect_true(any(grepl("Robust", output_print)))
-  expect_true(any(grepl("Number of observations", output_print)))
-  expect_true(any(grepl("Coefficients", output_print)))
-  expect_true(any(grepl("Robust SE", output_print)))
+  expect_snapshot(print(result))
 
   # Test summary method
-  output_summary <- capture.output(summary(result))
-  expect_true(any(grepl("Robust", output_summary)))
-  expect_true(any(grepl("Number of observations", output_summary)))
-  expect_true(any(grepl("Estimate", output_summary)))
-  expect_true(any(grepl("Std. Error", output_summary)))
-  expect_true(any(grepl("z value", output_summary)))
-  expect_true(any(grepl("Pr\\(>\\|z\\|\\)", output_summary)))
-  expect_true(any(grepl("Signif. codes", output_summary)))
+  expect_snapshot(summary(result))
 
   # Test with clustering
   cluster <- rep(1:10, each = 10)
   result_cl <- robcov_vglm(m, cluster = cluster)
-  output_cl <- capture.output(summary(result_cl))
-  expect_true(any(grepl("Number of clusters", output_cl)))
+  expect_snapshot(summary(result_cl))
 
   # Test with clustering and adjustment
   result_adj <- robcov_vglm(m, cluster = cluster, adjust = TRUE)
-  output_adj <- capture.output(summary(result_adj))
-  expect_true(any(grepl("Small-sample adjustment", output_adj)))
+  expect_snapshot(summary(result_adj))
 
   # Test print method returns invisibly
   expect_invisible(print(result))
@@ -472,6 +477,7 @@ test_that("print and summary methods work", {
       names(summary_result$coefficients)
   ))
 })
+
 
 
 test_that("coef and vcov methods work correctly", {

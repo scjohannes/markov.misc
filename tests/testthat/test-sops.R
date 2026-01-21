@@ -10,19 +10,7 @@ test_that("soprob_markov matches Hmisc::soprobMarkovOrdm for simple PO model", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(1234)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 100,
-    follow_up_time = 30,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 42,
-    mu_treatment_effect = 0
-  )
-
-  # Prepare data
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 100, seed = 1234, follow_up_time = 30)
 
   # Fit simple proportional odds model
   m1 <- VGAM::vglm(
@@ -60,19 +48,7 @@ test_that("soprob_markov works with rcs() and precomputed spline basis", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(234)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 100,
-    follow_up_time = 30,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 123,
-    mu_treatment_effect = 0
-  )
-
-  # Prepare data
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 100, seed = 234, follow_up_time = 30)
 
   # Create spline basis with rcs()
   time_spl_m <- rms::rcs(data$time, 4)
@@ -162,19 +138,7 @@ test_that("soprob_markov handles partial proportional odds models", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(456)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 100,
-    follow_up_time = 30,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 456,
-    mu_treatment_effect = 0
-  )
-
-  # Prepare data
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 100, seed = 456, follow_up_time = 30)
 
   # Create spline basis
   time_spl_m <- rms::rcs(data$time, 4)
@@ -244,19 +208,7 @@ test_that("soprob_markov handles interaction terms", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(789)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 100,
-    follow_up_time = 30,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 789,
-    mu_treatment_effect = 0
-  )
-
-  # Prepare data
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 100, seed = 789, follow_up_time = 30)
 
   # Create spline basis
   time_spl_m <- rms::rcs(data$time, 4)
@@ -344,19 +296,7 @@ test_that("soprob_markov respects absorbing state constraint", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(999)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 50,
-    follow_up_time = 20,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 999,
-    mu_treatment_effect = 0
-  )
-
-  # Prepare data
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 50, seed = 999, follow_up_time = 20)
 
   # Fit simple model
   m1 <- VGAM::vglm(
@@ -395,3 +335,4 @@ test_that("soprob_markov respects absorbing state constraint", {
     }
   }
 })
+

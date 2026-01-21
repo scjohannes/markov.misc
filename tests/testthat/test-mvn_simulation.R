@@ -11,25 +11,8 @@ test_that("set_coef() works for vglm models", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(111)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 50,
-    follow_up_time = 20,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 111,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
+  data <- make_test_data(n_patients = 50, seed = 111)
+  m_vglm <- make_test_model(data)
 
   # Get original coefficients
   orig_coefs <- coef(m_vglm)
@@ -56,18 +39,7 @@ test_that("set_coef() works for vglm models", {
 test_that("set_coef() works for orm models", {
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(222)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 50,
-    follow_up_time = 20,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 222,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 50, seed = 222)
 
   # Fit orm model - datadist must be defined in global env
   dd <- rms::datadist(data)
@@ -103,25 +75,8 @@ test_that("get_vcov_robust() returns standard vcov when cluster is NULL", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(333)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 30,
-    follow_up_time = 15,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 333,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
+  data <- make_test_data(n_patients = 30, seed = 333, follow_up_time = 15)
+  m_vglm <- make_test_model(data)
 
   # Get vcov without clustering
   V <- get_vcov_robust(m_vglm, cluster = NULL)
@@ -134,25 +89,8 @@ test_that("get_vcov_robust() returns standard vcov when cluster is NULL", {
 test_that("get_vcov_robust() computes cluster-robust vcov with formula", {
   skip_if_not_installed("VGAM")
 
-  # Simulate test data
-  set.seed(444)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 30,
-    follow_up_time = 15,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 444,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
+  data <- make_test_data(n_patients = 30, seed = 444, follow_up_time = 15)
+  m_vglm <- make_test_model(data)
 
   # Get cluster-robust vcov using formula
   V_robust <- get_vcov_robust(m_vglm, cluster = ~id, data = data)
@@ -171,25 +109,8 @@ test_that("get_vcov_robust() computes cluster-robust vcov with formula", {
 test_that("get_vcov_robust() extracts vcov from robcov_vglm object", {
   skip_if_not_installed("VGAM")
 
-  # Simulate test data
-  set.seed(555)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 30,
-    follow_up_time = 15,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 555,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
+  data <- make_test_data(n_patients = 30, seed = 555, follow_up_time = 15)
+  m_vglm <- make_test_model(data)
 
   # Create robcov_vglm object
   m_robust <- robcov_vglm(m_vglm, cluster = data$id)
@@ -207,26 +128,8 @@ test_that("inferences(method='simulation') produces valid CIs for avg_sops", {
   skip_if_not_installed("rms")
   skip_if_not_installed("mvtnorm")
 
-  # Simulate test data
-  set.seed(666)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 50,
-    follow_up_time = 15,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 666,
-    mu_treatment_effect = 0.3
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model and wrap with cluster-robust vcov
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
-  m_robust <- robcov_vglm(m_vglm, cluster = data$id)
+  data <- make_test_data(n_patients = 50, seed = 666, treatment_effect = 0.3, follow_up_time = 15)
+  m_robust <- make_test_model(data, robust = TRUE)
 
   # Compute avg_sops with robust model
   result <- avg_sops(
@@ -268,26 +171,8 @@ test_that("inferences() with return_draws=TRUE stores simulation draws", {
   skip_if_not_installed("rms")
   skip_if_not_installed("mvtnorm")
 
-  # Simulate test data
-  set.seed(777)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 40,
-    follow_up_time = 10,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 777,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model and wrap with cluster-robust vcov
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
-  m_robust <- robcov_vglm(m_vglm, cluster = data$id)
+  data <- make_test_data(n_patients = 40, seed = 777, follow_up_time = 10)
+  m_robust <- make_test_model(data, robust = TRUE)
 
   # Compute avg_sops with simulation CIs and draws
   result <- avg_sops(
@@ -309,12 +194,8 @@ test_that("inferences() with return_draws=TRUE stores simulation draws", {
   draws <- get_draws(result)
 
   # Check draws structure
-  expect_true(is.data.frame(draws))
-  expect_true("draw_id" %in% names(draws))
-  expect_true("estimate" %in% names(draws))
-  expect_true("time" %in% names(draws))
-  expect_true("state" %in% names(draws))
-  expect_true("tx" %in% names(draws))
+  expect_s3_class(draws, "data.frame")
+  expect_true(all(c("draw_id", "estimate", "time", "state", "tx") %in% names(draws)))
 
   # Check number of draws
   n_draws <- length(unique(draws$draw_id))
@@ -336,26 +217,8 @@ test_that("simulation vs bootstrap produce similar results", {
   skip_if_not_installed("mvtnorm")
   skip("Long-running test - run manually")
 
-  # Simulate test data
-  set.seed(888)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 80,
-    follow_up_time = 15,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 888,
-    mu_treatment_effect = 0.2
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
-  m_robust <- robcov_vglm(m_vglm, cluster = data$id)
+  data <- make_test_data(n_patients = 80, seed = 888, treatment_effect = 0.2, follow_up_time = 15)
+  m_robust <- make_test_model(data, robust = TRUE)
 
   # Compute avg_sops with robust model
   avg_result <- avg_sops(
@@ -405,25 +268,8 @@ test_that("inferences() works with custom vcov matrix", {
   skip_if_not_installed("rms")
   skip_if_not_installed("mvtnorm")
 
-  # Simulate test data
-  set.seed(999)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 40,
-    follow_up_time = 10,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 999,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
+  data <- make_test_data(n_patients = 40, seed = 999, follow_up_time = 10)
+  m_vglm <- make_test_model(data)
 
   # Compute custom vcov (e.g., inflated for conservative CIs)
   V_standard <- vcov(m_vglm)
@@ -477,26 +323,8 @@ test_that("conf_type='wald' produces different CIs than 'perc'", {
   skip_if_not_installed("rms")
   skip_if_not_installed("mvtnorm")
 
-  # Simulate test data
-  set.seed(1010)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 40,
-    follow_up_time = 10,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 1010,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model and wrap with cluster-robust vcov
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
-  m_robust <- robcov_vglm(m_vglm, cluster = data$id)
+  data <- make_test_data(n_patients = 40, seed = 1010, follow_up_time = 10)
+  m_robust <- make_test_model(data, robust = TRUE)
 
   # Compute avg_sops with robust model
   avg_result <- avg_sops(
@@ -539,25 +367,8 @@ test_that("inferences errors appropriately for invalid inputs", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(1111)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 30,
-    follow_up_time = 10,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 1111,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
+  data <- make_test_data(n_patients = 30, seed = 1111, follow_up_time = 10)
+  m_vglm <- make_test_model(data)
 
   # Error: passing model directly instead of sops object
   expect_error(
@@ -588,26 +399,8 @@ test_that("get_draws() errors when no draws stored", {
   skip_if_not_installed("rms")
   skip_if_not_installed("mvtnorm")
 
-  # Simulate test data
-  set.seed(1212)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 30,
-    follow_up_time = 10,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 1212,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model and wrap with cluster-robust vcov
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
-  m_robust <- robcov_vglm(m_vglm, cluster = data$id)
+  data <- make_test_data(n_patients = 30, seed = 1212, follow_up_time = 10)
+  m_robust <- make_test_model(data, robust = TRUE)
 
   # Compute avg_sops without return_draws
   result <- avg_sops(
@@ -638,26 +431,8 @@ test_that("inferences(method='simulation') works for individual sops()", {
   skip_if_not_installed("rms")
   skip_if_not_installed("mvtnorm")
 
-  # Simulate test data
-  set.seed(1313)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 40,
-    follow_up_time = 10,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 1313,
-    mu_treatment_effect = 0
-  )
-
-  data <- prepare_markov_data(test_data)
-
-  # Fit vglm model and wrap with cluster-robust vcov
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
-  m_robust <- robcov_vglm(m_vglm, cluster = data$id)
+  data <- make_test_data(n_patients = 40, seed = 1313, follow_up_time = 10)
+  m_robust <- make_test_model(data, robust = TRUE)
 
   # Compute individual sops with robust model
   sops_result <- sops(
@@ -684,9 +459,7 @@ test_that("inferences(method='simulation') works for individual sops()", {
   )
 
   # Check that CI columns exist
-  expect_true("conf.low" %in% names(result_ci))
-  expect_true("conf.high" %in% names(result_ci))
-  expect_true("std.error" %in% names(result_ci))
+  expect_true(all(c("conf.low", "conf.high", "std.error") %in% names(result_ci)))
 
   # Check CIs are valid (low <= estimate <= high)
   expect_true(all(result_ci$conf.low <= result_ci$estimate, na.rm = TRUE))
@@ -699,10 +472,6 @@ test_that("inferences(method='simulation') works for individual sops()", {
 
   # Check draws can be extracted
   draws <- get_draws(result_ci)
-  expect_true(is.data.frame(draws))
-  expect_true("draw_id" %in% names(draws))
-  expect_true("estimate" %in% names(draws))
-  expect_true("rowid" %in% names(draws))
-  expect_true("time" %in% names(draws))
-  expect_true("state" %in% names(draws))
+  expect_s3_class(draws, "data.frame")
+  expect_true(all(c("draw_id", "estimate", "rowid", "time", "state") %in% names(draws)))
 })
