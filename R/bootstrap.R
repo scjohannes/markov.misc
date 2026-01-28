@@ -17,6 +17,10 @@
 #'   parallel::detectCores() - 1
 #' @param parallel Whether parallelization should be used (default FALSE)
 #' @param id_var Name of the ID variable for group bootstrap (default "id")
+#' @param use_coefstart Logical. If TRUE, uses the original model coefficients as
+#'   starting values when refitting. This can speed up convergence but may affect
+#'   results if bootstrap samples differ substantially from the original data.
+#'   Default is FALSE.
 #'
 #' @return A tibble with bootstrap results. Each row represents one bootstrap
 #'   iteration and contains:
@@ -208,9 +212,13 @@ bootstrap_model_coefs <- function(
 #'   to avoid nested parallelization and resource contention.
 #' @param ylevels States in the data (e.g., 1:6)
 #' @param absorb Absorbing state (e.g., 6 for death)
-#' @param coefs Should the coefficients of treatment for each bootstrap iteration
-#'    also be returned?
+#' @param include_coefs Logical. If TRUE (default), returns the treatment coefficient
+#'   from each bootstrap iteration in addition to the SOPs.
 #' @param times Time points in the data. Default is \code{1:max(data[["time"]])}
+#' @param update_datadist Logical. If TRUE (default), updates the datadist object
+#'   in the global environment for each bootstrap sample. Required for rms models.
+#' @param use_coefstart Logical. If TRUE, uses the original model coefficients as
+#'   starting values when refitting. Default is FALSE.
 #' @param varnames List of variable names in the data with components:
 #'   \itemize{
 #'     \item tvarname: time variable name (default "time")
@@ -218,6 +226,9 @@ bootstrap_model_coefs <- function(
 #'     \item id: patient identifier (default "id")
 #'     \item tx: treatment indicator (default "tx")
 #'   }
+#' @param t_covs Optional data frame for non-linear time handling (e.g., splines).
+#'   Rows must match the length of \code{times}, with columns matching the
+#'   time-varying covariate names used in the model formula.
 #'
 #' @return A tibble with columns:
 #'   \itemize{
