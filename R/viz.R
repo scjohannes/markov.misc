@@ -242,7 +242,7 @@ plot_results <- function(
   default_options <- c(plot_fun, default_design)
 
   # Update options by user input
-  opt <- modifyList(default_options, ggplot_options)
+  opt <- utils::modifyList(default_options, ggplot_options)
 
   # Loop over the operating characteristics and plot
   plots <- list()
