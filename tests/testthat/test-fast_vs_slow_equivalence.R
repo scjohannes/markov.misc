@@ -23,8 +23,12 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
 
   baseline_data <- data[data$time == 1, ]
 
+  absorb <- 6
+  ylevels <- factor(sort(unique(data$y)), ordered = FALSE)
+  times <- 1:follow_up
+
   fit.b <- VGAM::vglm(
-    y ~ rcs(time, 3) +
+    y ~ rcs(time, 3) *
       tx +
       yprev +
       age,
@@ -34,8 +38,8 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
 
   fit.a <- VGAM::vglm(
     y ~
-      time_lin +
-      time_nlin_1 +
+      (time_lin +
+        time_nlin_1) *
       tx +
       yprev +
       age,
@@ -90,6 +94,10 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
     as.data.frame()
 
   baseline_data <- data[data$time == 1, ]
+
+  absorb <- 6
+  ylevels <- factor(sort(unique(data$y)), ordered = FALSE)
+  times <- 1:follow_up
 
   fit.b <- VGAM::vglm(
     y ~ rcs(time, 3) +
@@ -242,6 +250,10 @@ test_that("Fast path (pre-calculated design matrix) yields same results as slow 
   # - Main effects: time, t_sq, tx, yprev
   # - Interactions: time:tx, t_sq:tx, yprev:tx, yprev:time
 
+  absorb <- 6
+  ylevels <- factor(sort(unique(data$y)), ordered = FALSE)
+  times <- 1:follow_up
+
   fit <- VGAM::vglm(
     y ~ time_lin +
       time_nlin_1 +
@@ -345,7 +357,7 @@ test_that("Fast path (pre-calculated design matrix) yields same results as slow 
   # soprob_markov adds dimnames for patients and times, markov_msm_run only for states
   dimnames(res_slow)[1:2] <- list(NULL)
 
-  expect_equal(res_slow, res_fast, tolerance = 1e-10)
+  expect_equal(res_slow, res_fast, tolerance = 1e-15)
 })
 
 
