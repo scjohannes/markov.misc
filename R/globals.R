@@ -53,5 +53,20 @@ utils::globalVariables(c(
   "state",
   "probability",
   "median",
-  "std.error"
+  "std.error",
+  # Added for format_competing_risks
+  "start",
+  "status",
+  "cum_events",
+  "prev_events",
+  "next_y",
+  # Added for states_to_tte
+  "state_change",
+  "run_id",
+  "raw_start",
+  "raw_stop",
+  # Added for inferences_bootstrap
+  "n_rows",
+  # Added for tidy_bootstrap_coefs
+  "n_iter"
 ))
