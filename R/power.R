@@ -308,6 +308,13 @@ tidy_po <- function(
 #' @param allocation_ratio Numeric. Proportion assigned to treatment (default: 0.5).
 #' @param seed Integer. Base random seed (default: 123). Actual seed will be
 #'   `seed + iter_num`.
+#' @param rerandomize Logical. If TRUE, rerandomizes treatment assignment within
+#'   the sampled data. This is useful for Type I error simulations where the null
+#'   hypothesis of no treatment effect should hold. Default is FALSE.
+#' @param id_var Character. Name of the patient identifier variable in the data.
+#'   Used for rerandomization. Default is "id".
+#' @param tx_var Character. Name of the treatment indicator variable in the data.
+#'   Used for rerandomization. Default is "tx".
 #' @param output_path Character. Path to directory where results will be saved
 #'   (required). Two subdirectories will be created:
 #'   - `summary/analysis_name/`: (Deprecated) Summary statistics (first element of fit function return)
