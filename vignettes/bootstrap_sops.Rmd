@@ -34,10 +34,10 @@ library(ggplot2)
 library(ggdist)
 library(patchwork)
 
-N_PATIENTS <- 250
-R <- 32 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
-SEED <- 2375678
-FU <- 60
+N_PATIENTS <- 800
+R <- 1000 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
+SEED <- 237567
+FU <- 30
 M <- 5 # Number of tresholds
 
 DATA_PATH <- file.path(tempdir(), "sim_data")
@@ -114,23 +114,54 @@ We will fit three models with increasing degrees of flexibility to showcase how 
 For Model C, we need a constraint matrix that allows the linear effect of time (time_lin) to vary across the M transition cutpoints (non-proportional), while keeping other variables proportional (parallel).
 
 ```{r}
+# cons_flexible <- list(
+#   # Intercept need identity matrix
+#   "(Intercept)"     = diag(M),
+#   # linear time can have non-PO effect
+#   "time_lin" = cbind(
+#     time_lin_1 = 1,
+#     time_lin_5 = 0:(M-1)
+#   ),
+#   # PO effect for the rest
+#   "yprev"           = cbind(PO_effect = 1),
+#   "tx"              = cbind(PO_effect = 1),
+#   "time_nlin_1"     = cbind(PO_effect = 1),
+#   "time_nlin_2"     = cbind(PO_effect = 1),
+#   "time_lin:tx"     = cbind(PO_effect = 1),
+#   "time_nlin_1:tx"  = cbind(PO_effect = 1),
+#   "time_nlin_2:tx"  = cbind(PO_effect = 1),
+#   "time_lin:yprev"  = cbind(PO_effect = 1)
+# )
+
+# 1. Create the specific constraint matrix for tx
+# Column 1: Base PO effect (shared across all thresholds)
+# Column 2: Deviation specific to the 5th threshold
+# Note: This assumes M >= 5
+cm_tx <- matrix(0, nrow = M, ncol = 2)
+cm_tx[, 1] <- 1       
+cm_tx[5, 2] <- 1
+dimnames(cm_tx) <- list(NULL, c("PO_effect", "Dev_thresh5"))
+
+# 2. Define the constraint list
 cons_flexible <- list(
-  # Intercept need identity matrix
   "(Intercept)"     = diag(M),
-  # linear time can have non-PO effect
+  
+  # linear time: Intercept + linear trend across thresholds
   "time_lin" = cbind(
     time_lin_1 = 1,
     time_lin_5 = 0:(M-1)
   ),
-  # PO effect for the rest
+  
+  # Strict PO effect for the rest
   "yprev"           = cbind(PO_effect = 1),
-  "tx"              = cbind(PO_effect = 1),
   "time_nlin_1"     = cbind(PO_effect = 1),
   "time_nlin_2"     = cbind(PO_effect = 1),
   "time_lin:tx"     = cbind(PO_effect = 1),
-  "time_nlin_1:tx"  = cbind(PO_effect = 1),
-  "time_nlin_2:tx"  = cbind(PO_effect = 1),
-  "time_lin:yprev"  = cbind(PO_effect = 1)
+  # "time_nlin_1:tx"  = cbind(PO_effect = 1),
+  # "time_nlin_2:tx"  = cbind(PO_effect = 1),
+  "time_lin:yprev"  = cbind(PO_effect = 1),
+    # tx: PO effect + Deviation at 5th threshold
+  "tx"              = cm_tx
 )
 ```
 
@@ -140,7 +171,7 @@ cons_flexible <- list(
 # Model A: Simple Proportional Odds
 # parallel = TRUE enforces PO for all terms
 m_simple <- vglm(
-  ordered(y) ~ rcs(time, 4) + tx + yprev, 
+  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) + tx + yprev, 
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
@@ -148,7 +179,7 @@ m_simple <- vglm(
 # Model B: Treatment-Time Interaction
 # parallel = TRUE, but formula allows tx effect to change over time
 m_inter <- vglm(
-  ordered(y) ~ rcs(time, 4) * tx + yprev, 
+  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + yprev, 
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
@@ -157,12 +188,13 @@ m_inter <- vglm(
 # Uses constraints to relax PO for time_lin
 # For the formula, we need to use manually created spline terms
 m_flex <- vglm(
-  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + yprev + yprev:time_lin, 
-  family = cumulative(reverse = TRUE, parallel = FALSE ~ time_lin), 
+  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) + tx + yprev + yprev:time_lin + tx:time_lin, 
+  family = cumulative(reverse = TRUE, parallel = FALSE ~ time_lin + tx), 
   data = data, 
   constraints = cons_flexible
 )
-# Ensure call includes constraints for downstream methods
+# Ensure call includes constraints for downstream methods executed in parallel
+# I think not needed if you don't parallelize
 m_flex@call$constraints <- cons_flexible
 ```
 
@@ -175,18 +207,24 @@ We compute the standardized (marginalized) State Occupation Probabilities using 
 ```{r}
 run_boot <- function(model, name) {
   cat(paste0("Bootstrapping ", name, "...\n"))
-  bootstrap_standardized_sops(
-    model = model,
-    data = data,
+  avg_sops(
+    model, 
+    newdata = data, 
+    variables = list(tx = c(0, 1)),  # Compare treatment vs control
     times = 1:FU,
-    n_boot = R,
     ylevels = 1:6,
     absorb = "6",
-    varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
-    parallel = TRUE,
-    workers = 8,
+    id_var = "id",
     t_covs = t_covs
-  )
+  ) |> 
+     inferences(
+      method = "bootstrap",
+      n_sim = R/20, 
+      parallel = TRUE,
+      workers = 6,
+      conf_level = 0.95,
+      return_draws = TRUE
+    )
 }
 
 set.seed(SEED)
@@ -195,55 +233,135 @@ bs_inter  <- run_boot(m_inter,  "Model B")
 bs_flex   <- run_boot(m_flex,   "Model C")
 ```
 
-## Step 5: Visualization
 
-### 0. Compare Coef with Time in State
+### Simulation from MVN
 
 ```{r}
-time_diff <- bs_simple$sops |> 
-  group_by(tx, boot_id) |> 
-  summarise(
-    time_in_state_1 = sum(state_1)
+run_mvn <- function(model, name) {
+  cat(paste0("MVN Simulation - Model ", name, "...\n"))
+  avg_sops(
+    robcov_vglm(model, cluster = data$id), #model needs to have cluster robust SEs
+    newdata = data |> filter(time == 1), 
+    variables = "tx",  # Compare treatment vs control
+    times = 1:FU,
+    ylevels = 1:6,
+    absorb = "6",
+    id_var = "id",
+    t_covs = t_covs
   ) |> 
-  group_by(tx) |> 
-  pivot_wider(names_from = tx, values_from = time_in_state_1) |> 
-  mutate(diff = `1` - `0`) |> 
-  ungroup()
+     inferences(
+      method = "simulation",
+      n_sim = R, 
+      parallel = TRUE,
+      workers = 6,
+      conf_level = 0.95,
+      return_draws = TRUE
+    )
+}
 
-tx_coef <- bs_simple$coefs |> 
-  select(boot_id, tx)
+set.seed(SEED)
+t1 <- Sys.time()
+bs_simple_mvn <- run_mvn(m_simple, "Model A")
+t2 <- Sys.time()
 
+t2 - t1
 
-# 1:1 relationship, but not perfectly straight because we marginalize?
-time_diff |> 
-  left_join(tx_coef, by = "boot_id") |> 
-  ggplot(aes(x = diff, y = tx)) +
-  geom_point(alpha = 0.5)
+bs_inter_mvn  <- run_mvn(m_inter,  "Model B")
+bs_flex_mvn   <- run_mvn(m_flex,   "Model C")
 ```
+
+## Step 5: Visualization
 
 ### 1. State Occupation Probabilities
 
 We plot the SOPs with 95% confidence bands for all three models.
 
 ```{r}
-p1 <- plot_bootstrap_sops(bs_simple$sops, title = "Model A: Simple PO") + 
+p1 <- ggplot(bs_simple, aes(x = time)) +
+  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
+  geom_ribbon(aes(ymin = conf.low, 
+                  ymax = conf.high, 
+                  fill = factor(state),            
+                  group = interaction(state, tx)), 
+              alpha = 0.2,                         
+              color = NA) +
   scale_fill_brewer(palette = "Dark2") +
-  scale_color_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1))
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Model A: PO")
 
-p2 <- plot_bootstrap_sops(bs_inter$sops, title = "Model B: PO + Interaction") + 
+p2 <- ggplot(bs_inter, aes(x = time)) +
+  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
+  geom_ribbon(aes(ymin = conf.low, 
+                  ymax = conf.high, 
+                  fill = factor(state),            
+                  group = interaction(state, tx)), 
+              alpha = 0.2,                         
+              color = NA) +
   scale_fill_brewer(palette = "Dark2") +
-  scale_color_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1))
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Model B: PO + Interaction")
 
-p3 <- plot_bootstrap_sops(bs_flex$sops, title = "Model C: Partial PO + Interactions") + 
+p3 <- ggplot(bs_flex, aes(x = time)) +
+  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
+  geom_ribbon(aes(ymin = conf.low, 
+                  ymax = conf.high, 
+                  fill = factor(state),            
+                  group = interaction(state, tx)), 
+              alpha = 0.2,                         
+              color = NA) +
   scale_fill_brewer(palette = "Dark2") +
-  scale_color_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1))
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Model C: Partial PO + Interactions")
 
 # Combine using patchwork
 (p1 | p2 | p3) +
-  plot_layout(guides = "collect")
+  plot_layout(guides = "collect") +
+  patchwork::plot_annotation(title = "Nonparametric Bootstrap")
+```
+
+Compare to Sim from MVN
+
+```{r}
+p1_mvn <- ggplot(bs_simple_mvn, aes(x = time)) +
+  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
+  geom_ribbon(aes(ymin = conf.low, 
+                  ymax = conf.high, 
+                  fill = factor(state),            
+                  group = interaction(state, tx)), 
+              alpha = 0.2,                         
+              color = NA) +
+  scale_fill_brewer(palette = "Dark2") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Model A: PO")
+
+p2_mvn <- ggplot(bs_inter_mvn, aes(x = time)) +
+  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
+  geom_ribbon(aes(ymin = conf.low, 
+                  ymax = conf.high, 
+                  fill = factor(state),            
+                  group = interaction(state, tx)), 
+              alpha = 0.2,                         
+              color = NA) +
+  scale_fill_brewer(palette = "Dark2") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Model B: PO + Interaction")
+
+p3_mvn <- ggplot(bs_flex_mvn, aes(x = time)) +
+  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
+  geom_ribbon(aes(ymin = conf.low, 
+                  ymax = conf.high, 
+                  fill = factor(state),            
+                  group = interaction(state, tx)), 
+              alpha = 0.2,                         
+              color = NA) +
+  scale_fill_brewer(palette = "Dark2") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Model C: Partial PO + Interactions")
+
+# Combine using patchwork
+(p1_mvn | p2_mvn | p3_mvn) +
+  plot_layout(guides = "collect") +
+  patchwork::plot_annotation(title = "MVN")
 ```
 
 ### 2. Difference in Time Spent in State 1 (Home)
@@ -254,39 +372,76 @@ We calculate the restricted mean time spent in State 1 (Home) up to 60 days and 
 # Helper to extract difference
 get_diff_dist <- function(bs_obj, label) {
   bs_obj |> 
-    time_in_state(target_state = 1) |> 
+    get_draws() |> 
+    group_by(tx, state, draw_id) |> 
+    summarise(time_in_state = sum(draw), .groups = "drop") |>
+    pivot_wider(id_cols = c("draw_id", "state"), names_from = tx, values_from = "time_in_state", names_prefix = "tx_") |> 
+    mutate(delta = tx_1 - tx_0) |> 
     mutate(model = label)
 }
 
 # Combine results
 diff_res <- bind_rows(
-  get_diff_dist(bs_simple$sops, "Model A (Simple)"),
-  get_diff_dist(bs_inter$sops,  "Model B (Interact)"),
-  get_diff_dist(bs_flex$sops,   "Model C (Flexible)")
+  get_diff_dist(bs_simple, "Model A (Simple)"),
+  get_diff_dist(bs_inter,  "Model B (Interact)"),
+  get_diff_dist(bs_flex,   "Model C (Flexible)")
 )
 
 # Plot
-ggplot(diff_res, aes(x = delta, y = model, fill = model)) +
+plot_diff_boot <- ggplot(diff_res |> filter(state == 1), aes(x = delta, y = model, fill = model)) +
   stat_dots(side = "bottom", scale = 0.4, color = NA) +
   stat_halfeye(alpha = 0.6, scale = 0.4) +
   geom_vline(xintercept = 0, linetype = "dashed") +
   scale_fill_brewer(palette = "Dark2") +
   labs(
     title = "Difference in Time Spent in State 1 (Home)",
-    subtitle = "Treatment - Control (60 day follow-up)",
+    subtitle = "Bootstrap",
     x = "Difference (Days)",
     y = NULL
   ) +
   theme_minimal() +
-  theme(legend.position = "none")
+  theme(legend.position = "none") +
+  coord_cartesian(xlim = c(-2.5, 2.5))
+
+plot_diff_boot
+```
+
+```{r}
+# Combine results
+diff_res_mvn <- bind_rows(
+  get_diff_dist(bs_simple_mvn, "Model A (Simple)"),
+  get_diff_dist(bs_inter_mvn,  "Model B (Interact)"),
+  get_diff_dist(bs_flex_mvn,   "Model C (Flexible)")
+)
+
+# Plot
+plot_diff_mvn <- ggplot(diff_res_mvn |> filter(state == 1), aes(x = delta, y = model, fill = model)) +
+  stat_dots(side = "bottom", scale = 0.4, color = NA) +
+  stat_halfeye(alpha = 0.6, scale = 0.4) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(
+    title = "Difference in Time Spent in State 1 (Home)",
+    subtitle = "MVN",
+    x = "Difference (Days)",
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  coord_cartesian(xlim = c(-2.5, 2.5))
+
+# plot_diff_boot + 
+  plot_diff_mvn
 ```
 
 ### Summary of Estimates
 
 ```{r}
-diff_res |>
-  group_by(model) |>
+diff_res_mvn |>
+  group_by(model, state) |>
   summarise(
+    mean_tx_1 = mean(tx_1),
+    mean_tx_0 = mean(tx_0),
     Mean_Diff = mean(delta),
     Lower_2.5 = quantile(delta, 0.025),
     Upper_97.5 = quantile(delta, 0.975),
