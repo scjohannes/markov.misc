@@ -157,10 +157,12 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = FALSE) {
 
     # Convert to factor and aggregate scores by cluster
     cluster <- as.factor(cluster)
-    n_clusters <- nlevels(cluster)
 
     # Sum scores within clusters using efficient rowsum
     scores_clustered <- rowsum(scores, cluster, reorder = FALSE)
+
+    # Count actual clusters present in data (not just factor levels)
+    n_clusters <- nrow(scores_clustered)
 
     # Compute meat matrix from clustered scores
     meat <- crossprod(scores_clustered) / n
@@ -194,7 +196,7 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = FALSE) {
   # --- 6. Extract model information from vglm object ---
   # Use slot() for S4 objects, with tryCatch for optional slots
   safe_slot <- function(obj, name) {
-    tryCatch(slot(obj, name), error = function(e) NULL)
+    tryCatch(methods::slot(obj, name), error = function(e) NULL)
   }
 
   # --- 7. Build result object with all model information ---
@@ -290,7 +292,7 @@ compute_scores_vglm <- function(fit) {
   deriv_eta <- wt_info$deriv
 
   # Get the VLM model matrix (n*M x p)
-  X_vlm <- model.matrix(fit, type = "vlm")
+  X_vlm <- stats::model.matrix(fit, type = "vlm")
 
   # Initialize score matrix
   scores <- matrix(0, nrow = n, ncol = p)
