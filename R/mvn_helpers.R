@@ -167,7 +167,7 @@ set_coef.vgam <- function(model, new_coefs) {
 #' @param cluster Optional. Specifies how to compute cluster-robust standard
 #'   errors:
 #'   \itemize{
-#'     \item `NULL`: Use standard (model-based) vcov
+#'     \item `NULL`: Use robust (sandwich) vcov, but without clustering
 #'     \item Formula (e.g., `~id`): Extract cluster variable from the model's
 #'       original fitting data and compute cluster-robust vcov
 #'     \item Character/numeric vector: Cluster variable values directly (must
@@ -190,7 +190,9 @@ set_coef.vgam <- function(model, new_coefs) {
 #' `robcov_vglm()`), the stored robust vcov is returned directly.
 #'
 #' **2. No clustering requested:**
-#' If `cluster = NULL`, returns the standard model-based vcov from `vcov()`.
+#' If `cluster = NULL`, returns the robust (sandwich) vcov. For `vglm` models,
+#' this is computed via [robcov_vglm()]; for `orm` models, it uses
+#' `rms::robcov()`.
 #'
 #' **3. Cluster formula:**
 #' If `cluster` is a formula like `~id`, the function first tries to extract
@@ -212,7 +214,7 @@ set_coef.vgam <- function(model, new_coefs) {
 #'             family = cumulative(parallel = TRUE, reverse = TRUE),
 #'             data = mydata)
 #'
-#' # Standard vcov
+#' # Robust (unclustered) vcov
 #' V1 <- get_vcov_robust(fit)
 #'
 #' # Cluster-robust vcov using formula (extracts 'id' from model's data)
@@ -246,6 +248,15 @@ get_vcov_robust <- function(
 
   # --- Case 3: No clustering requested ---
   if (is.null(cluster)) {
+    if (inherits(model, c("vglm", "vgam"))) {
+      return(robcov_vglm(model, cluster = NULL, adjust = adjust)$var)
+    } else if (inherits(model, c("orm", "lrm"))) {
+      if (!requireNamespace("rms", quietly = TRUE)) {
+        stop("Package 'rms' is required for robust vcov with orm/lrm models")
+      }
+      return(rms::robcov(model)$var)
+    }
+    # Fallback for other models
     return(vcov(model))
   }
 
