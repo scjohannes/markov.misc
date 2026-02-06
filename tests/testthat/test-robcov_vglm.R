@@ -13,7 +13,7 @@ describe("robcov_vglm()", {
     skip_if_not_installed("VGAM")
 
     # Generate simple test data
-    set.seed(123)
+    withr::local_seed(123)
     n <- 200
     x <- rnorm(n)
     lp <- 0.5 * x
@@ -84,7 +84,7 @@ describe("robcov_vglm()", {
     skip_if_not_installed("VGAM")
 
     # Generate simple test data with known effect
-    set.seed(456)
+    withr::local_seed(456)
     n <- 500
     x <- rnorm(n)
     lp <- -0.5 + 1.5 * x # Strong effect
@@ -118,7 +118,7 @@ describe("robcov_vglm()", {
     skip_if_not_installed("rms")
 
     # Generate binary outcome data
-    set.seed(456)
+    withr::local_seed(456)
     n <- 500
     x <- rnorm(n)
     lp <- -0.5 + 0.8 * x
@@ -155,7 +155,7 @@ describe("robcov_vglm()", {
     skip_if_not_installed("rms")
 
     # Generate clustered binary outcome data
-    set.seed(789)
+    withr::local_seed(789)
     n_clusters <- 50
     n_per_cluster <- 10
     n <- n_clusters * n_per_cluster
@@ -204,7 +204,7 @@ describe("robcov_vglm()", {
     skip_if_not_installed("rms")
 
     # Generate ordinal outcome data
-    set.seed(101)
+    withr::local_seed(101)
     n <- 500
     x1 <- rnorm(n)
     x2 <- rnorm(n)
@@ -255,7 +255,7 @@ describe("robcov_vglm()", {
     skip_if_not_installed("VGAM")
 
     # Generate test data
-    set.seed(404)
+    withr::local_seed(404)
     n <- 100
     test_data <- data.frame(y = sample(1:3, n, replace = TRUE), x = rnorm(n))
 
@@ -285,7 +285,7 @@ describe("robcov_vglm()", {
     skip_if_not_installed("VGAM")
 
     # Generate test data with multiple predictors
-    set.seed(707)
+    withr::local_seed(707)
     n <- 400
     x1 <- rnorm(n)
     x2 <- rnorm(n)
@@ -333,7 +333,7 @@ describe("robcov_vglm()", {
     skip_if_not_installed("VGAM")
 
     # Generate test data
-    set.seed(808)
+    withr::local_seed(808)
     n <- 200
     test_data <- data.frame(
       y = ordered(sample(1:3, n, replace = TRUE)),
@@ -377,7 +377,7 @@ describe("Score properties", {
     skip_if_not_installed("VGAM")
 
     # Generate test data
-    set.seed(202)
+    withr::local_seed(202)
     n <- 300
     x <- rnorm(n)
     lp <- 0.5 * x
@@ -411,7 +411,7 @@ describe("Small-sample adjustment", {
     skip_if_not_installed("VGAM")
 
     # Generate clustered data
-    set.seed(303)
+    withr::local_seed(303)
     n_clusters <- 20
     n_per_cluster <- 15
     n <- n_clusters * n_per_cluster
@@ -447,7 +447,7 @@ describe("Utility methods", {
     skip_if_not_installed("VGAM")
 
     # Generate test data
-    set.seed(606)
+    withr::local_seed(606)
     n <- 100
     test_data <- data.frame(y = sample(0:1, n, replace = TRUE), x = rnorm(n))
 
@@ -489,7 +489,7 @@ describe("Utility methods", {
     skip_if_not_installed("VGAM")
 
     # Generate test data
-    set.seed(707)
+    withr::local_seed(707)
     n <- 100
     test_data <- data.frame(y = sample(0:1, n, replace = TRUE), x = rnorm(n))
 
@@ -508,5 +508,205 @@ describe("Utility methods", {
     expect_equal(vcov(result), result$var)
     expect_equal(dim(vcov(result)), c(2, 2))
     expect_equal(vcov(result), t(vcov(result))) # symmetric
+  })
+})
+
+# Stress Tests & Edge Cases for robcov_vglm
+#
+# These tests focus on "breaking" the function with:
+# 1. Missing data (NAs) handling
+# 2. Models with weights and offsets
+# 3. Non-parallel (Partial Proportional Odds) models
+# 4. Rank-deficient clusters (clusters < parameters)
+# 5. Factor levels issues (empty levels)
+
+describe("robcov_vglm() stress tests", {
+  it("handles missing data correctly (alignment with clusters)", {
+    skip_if_not_installed("VGAM")
+
+    # Generate data with NAs
+    withr::local_seed(9001)
+    n <- 200
+    x <- rnorm(n)
+    y <- rbinom(n, 1, 0.5)
+
+    # Introduce NAs in predictors and outcome
+    x[1:10] <- NA
+    y[11:20] <- NA
+
+    test_data <- data.frame(y = y, x = x, id = 1:n)
+
+    # Fit vglm (will drop 20 rows)
+    # Note: vglm does not have a 'na.action' argument by default like lm,
+    # but handles NAs by dropping them if na.action is set globally or in model.frame
+    # We explicitly remove NAs to simulate the user passing "clean" data vs "dirty" clusters
+
+    clean_data <- na.omit(test_data)
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = clean_data)
+
+    # Case 1: Cluster vector is too long (user forgot to drop NAs from cluster var)
+    # This simulates a very common user error
+    expect_error(
+      robcov_vglm(m, cluster = test_data$id),
+      "Length of 'cluster' must equal"
+    )
+
+    # Case 2: Correct usage
+    res <- robcov_vglm(m, cluster = clean_data$id)
+    expect_s3_class(res, "robcov_vglm")
+    expect_equal(res$n, 180) # 200 - 20 dropped
+  })
+
+  it("works with model weights", {
+    skip_if_not_installed("VGAM")
+
+    withr::local_seed(9002)
+    n <- 100
+    x <- rnorm(n)
+    y <- rbinom(n, 1, 0.5)
+    weights <- runif(n, 0.5, 2)
+
+    test_data <- data.frame(y = y, x = x, w = weights)
+
+    # Fit weighted model
+    m <- VGAM::vglm(
+      y ~ x,
+      family = VGAM::binomialff,
+      data = test_data,
+      weights = w
+    )
+
+    # Robust covariance should account for weights implicitly via the score function
+    # (VGAM::weights(deriv=TRUE) returns weighted derivatives)
+    res <- robcov_vglm(m)
+
+    expect_all_true(res$se > 0)
+    expect_equal(length(res$se), 2)
+  })
+
+  it("works with model offsets", {
+    skip_if_not_installed("VGAM")
+
+    withr::local_seed(9003)
+    n <- 100
+    x <- rnorm(n)
+    off <- rep(0.5, n) # fixed offset
+    y <- rbinom(n, 1, plogis(0.5 * x + off))
+
+    test_data <- data.frame(y = y, x = x, off = off)
+
+    # Fit model with offset
+    m <- VGAM::vglm(
+      y ~ x,
+      family = VGAM::binomialff,
+      data = test_data,
+      offset = off
+    )
+
+    res <- robcov_vglm(m)
+
+    # Check that it didn't crash and produced valid SEs
+    expect_s3_class(res, "robcov_vglm")
+    expect_all_true(res$se > 0)
+
+    # Offset should act like a fixed intercept shift, not a parameter
+    expect_contains(names(coef(res)), c("(Intercept)", "x"))
+    expect_false("off" %in% names(coef(res)))
+  })
+
+  it("handles non-parallel (general) ordinal models", {
+    skip_if_not_installed("VGAM")
+
+    # Generate ordinal data
+    withr::local_seed(9004)
+    n <- 300
+    x <- rnorm(n)
+    y <- sample(1:3, n, replace = TRUE)
+    test_data <- data.frame(y = ordered(y), x = x)
+
+    # Fit model WITHOUT parallel assumption
+    # This means 'x' will have a different effect for 1->2 vs 2->3
+    m_nopar <- VGAM::vglm(
+      y ~ x,
+      family = VGAM::cumulative(parallel = FALSE),
+      data = test_data
+    )
+
+    res <- robcov_vglm(m_nopar)
+
+    # Parameters should be: (Intercept):1, (Intercept):2, x:1, x:2
+    # Total = 4 parameters
+    expect_length(coef(res), 4)
+
+    # Check dimensions of variance matrix
+    expect_equal(dim(res$var), c(4, 4))
+
+    # Ensure all SEs are positive
+    expect_all_true(res$se > 0)
+  })
+
+  it("handles rank-deficient clusters (More parameters than clusters)", {
+    skip_if_not_installed("VGAM")
+
+    # Scenario: 5 clusters, but model has 2 parameters
+    # This is "risky" but mathematically possible.
+    # Real danger is if Clusters < Parameters (e.g., 2 clusters, 5 params)
+
+    withr::local_seed(9005)
+    n_clusters <- 3
+    n_per <- 20
+    n <- n_clusters * n_per
+    cluster <- rep(1:n_clusters, each = n_per)
+    x1 <- rnorm(n)
+    x2 <- rnorm(n)
+    x3 <- rnorm(n)
+    y <- rbinom(n, 1, 0.5)
+
+    test_data <- data.frame(y = y, x1 = x1, x2 = x2, x3 = x3, cluster = cluster)
+
+    # Model has 4 params (Int + x1 + x2 + x3), but only 3 clusters
+    # The meat matrix will be rank deficient (rank at most 3)
+    m <- VGAM::vglm(
+      y ~ x1 + x2 + x3,
+      family = VGAM::binomialff,
+      data = test_data
+    )
+
+    # This should NOT crash, but might produce warnings or singular matrices
+    # We want to ensure the code is robust enough to return *something*
+    res <- robcov_vglm(m, cluster = cluster)
+
+    expect_s3_class(res, "robcov_vglm")
+
+    # Check if the variance matrix is singular (determinant approx 0)
+    # We expect it to be singular here because Rank(Meat) <= 3 < 4
+    # But robcov_vglm shouldn't crash
+    expect_equal(res$n_clusters, 3)
+  })
+
+  it("handles clusters with empty factor levels", {
+    skip_if_not_installed("VGAM")
+
+    withr::local_seed(9006)
+    n <- 50
+    x <- rnorm(n)
+    y <- rbinom(n, 1, 0.5)
+
+    # Create factor with levels "A", "B", "C", but only use "A" and "B"
+    cluster_char <- sample(c("A", "B"), n, replace = TRUE)
+    cluster_fac <- factor(cluster_char, levels = c("A", "B", "C"))
+
+    test_data <- data.frame(y = y, x = x, cluster = cluster_fac)
+
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
+
+    # This ensures rowsum() or internal logic doesn't create NA rows for empty level "C"
+    res <- robcov_vglm(m, cluster = cluster_fac)
+
+    expect_s3_class(res, "robcov_vglm")
+
+    # Should only detect 2 actual clusters (A and B), not 3 factor levels
+    expect_equal(res$n_clusters, 2)
+    expect_all_true(!is.na(res$se))
   })
 })
