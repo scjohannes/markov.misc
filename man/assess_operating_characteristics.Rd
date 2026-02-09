@@ -64,6 +64,16 @@ bootstrap distributions, SOPs, detailed model output). Saved to
 
 \item{seed}{Integer. Base random seed (default: 123). Actual seed will be
 \code{seed + iter_num}.}
+
+\item{rerandomize}{Logical. If TRUE, rerandomizes treatment assignment within
+the sampled data. This is useful for Type I error simulations where the null
+hypothesis of no treatment effect should hold. Default is FALSE.}
+
+\item{id_var}{Character. Name of the patient identifier variable in the data.
+Used for rerandomization. Default is "id".}
+
+\item{tx_var}{Character. Name of the treatment indicator variable in the data.
+Used for rerandomization. Default is "tx".}
 }
 \value{
 A tibble combining results from all analysis functions with columns:

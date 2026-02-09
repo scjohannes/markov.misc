@@ -35,7 +35,7 @@ Calculates the expected total time spent in specified target state(s).
 This function integrates state occupancy probabilities over time assuming unit steps.
 It automatically adapts to the input format:
 \itemize{
-\item \strong{Patient-Level:} If input is an array from \code{\link{soprob_markov_vectorized}}, it returns time-in-state for each patient.
+\item \strong{Patient-Level:} If input is an array from \code{soprob_markov}, it returns time-in-state for each patient.
 \item \strong{Bootstrap-Level:} If input is a data frame from \code{\link{bootstrap_standardized_sops}}, it returns mean time-in-state per treatment group and the difference for each bootstrap sample.
 }
 }

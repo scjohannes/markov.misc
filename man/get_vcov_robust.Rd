@@ -13,7 +13,7 @@ get_vcov_robust(model, cluster = NULL, data = NULL, adjust = FALSE)
 \item{cluster}{Optional. Specifies how to compute cluster-robust standard
 errors:
 \itemize{
-\item \code{NULL}: Use standard (model-based) vcov
+\item \code{NULL}: Use robust (sandwich) vcov, but without clustering
 \item Formula (e.g., \code{~id}): Extract cluster variable from the model's
 original fitting data and compute cluster-robust vcov
 \item Character/numeric vector: Cluster variable values directly (must
@@ -44,7 +44,9 @@ If the model is already a \code{robcov_vglm} object (from calling
 \code{robcov_vglm()}), the stored robust vcov is returned directly.
 
 \strong{2. No clustering requested:}
-If \code{cluster = NULL}, returns the standard model-based vcov from \code{vcov()}.
+If \code{cluster = NULL}, returns the robust (sandwich) vcov. For \code{vglm} models,
+this is computed via \code{\link[=robcov_vglm]{robcov_vglm()}}; for \code{orm} models, it uses
+\code{rms::robcov()}.
 
 \strong{3. Cluster formula:}
 If \code{cluster} is a formula like \code{~id}, the function first tries to extract
@@ -66,7 +68,7 @@ fit <- vglm(y ~ yprev + time + tx,
             family = cumulative(parallel = TRUE, reverse = TRUE),
             data = mydata)
 
-# Standard vcov
+# Robust (unclustered) vcov
 V1 <- get_vcov_robust(fit)
 
 # Cluster-robust vcov using formula (extracts 'id' from model's data)
