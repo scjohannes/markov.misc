@@ -34,8 +34,8 @@ library(ggplot2)
 library(ggdist)
 library(patchwork)
 
-N_PATIENTS <- 800
-R <- 1000 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
+N_PATIENTS <- 300
+R <- 100 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
 SEED <- 237567
 FU <- 30
 M <- 5 # Number of tresholds
@@ -220,7 +220,6 @@ run_boot <- function(model, name) {
      inferences(
       method = "bootstrap",
       n_sim = R/20, 
-      parallel = TRUE,
       workers = 6,
       conf_level = 0.95,
       return_draws = TRUE
@@ -252,8 +251,6 @@ run_mvn <- function(model, name) {
      inferences(
       method = "simulation",
       n_sim = R, 
-      parallel = TRUE,
-      workers = 6,
       conf_level = 0.95,
       return_draws = TRUE
     )
