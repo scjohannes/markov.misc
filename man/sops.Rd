@@ -14,6 +14,7 @@ sops(
   pvarname = "yprev",
   gap = NULL,
   t_covs = NULL,
+  by = NULL,
   ...
 )
 }
@@ -38,26 +39,64 @@ uses the data used to fit the model.}
 \item{t_covs}{Optional time-varying covariate lookup table, e.g., spline
 basis functions.}
 
+\item{by}{Optional character vector of variable names to stratify by. When
+provided, the function aggregates (averages) SOPs within each stratum
+defined by combinations of these variables. E.g., \code{by = "ecog"} aggregates
+within ECOG levels; \code{by = c("ecog", "age_group")} aggregates within each
+combination of ECOG and age group. NOTE: This is simple aggregation within
+observed strata, NOT G-computation standardization (use \code{avg_sops()} for that).}
+
 \item{...}{Additional arguments (currently unused).}
 }
 \value{
 A data frame of class \code{markov_sops} containing:
-\item{rowid}{Row identifier from newdata}
+\item{rowid}{Row identifier from newdata (omitted if \code{by} is specified)}
 \item{time}{Time point}
 \item{state}{State name}
-\item{estimate}{Probability of being in the state}
-Plus all columns from \code{newdata}.
+\item{estimate}{Probability of being in the state (individual-level or stratum average)}
+\item{(by variables)}{Stratification variables if \code{by} is specified}
+Plus all columns from \code{newdata} (for individual-level results).
 }
 \description{
 Computes individual-level state occupation probabilities (SOPs) for each row
-in a dataset.
+in a dataset. Optionally aggregates results within strata defined by grouping
+variables.
 }
 \details{
 This function wraps \code{soprob_markov()} and converts its array output to a tidy
-data frame. The output contains one row per patient-time-state combination.
+data frame. The output contains one row per patient-time-state combination
+(or stratum-time-state if \code{by} is used).
+
+When \code{by} is specified, the function:
+\enumerate{
+\item Computes individual-level SOPs for all patients
+\item Groups results by time, state, and the specified variables
+\item Averages the SOPs within each group
+}
+
+This aggregation preserves heterogeneity across observed strata without
+creating counterfactual scenarios (unlike G-computation in \code{avg_sops()}).
 
 For computing marginal/standardized SOPs (G-computation), use \code{avg_sops()}
 instead, which creates counterfactual datasets and averages over individuals.
+}
+\examples{
+\dontrun{
+# Individual-level SOPs
+sops_ind <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6)
+
+# Stratified by ECOG performance status
+sops_ecog <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6,
+                  by = "ecog")
+
+# Stratified by multiple variables
+sops_strat <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6,
+                   by = c("ecog", "age_group"))
+
+# Compatible with inferences()
+sops_strat |> inferences(method = "simulation", n_sim = 1000)
+}
+
 }
 \seealso{
 \code{\link[=avg_sops]{avg_sops()}} for marginal SOPs, \code{\link[=soprob_markov]{soprob_markov()}} for the underlying

@@ -624,7 +624,8 @@ time_in_state <- function(sops, target_states = 1) {
 #' Calculate Individual State Occupation Probabilities
 #'
 #' Computes individual-level state occupation probabilities (SOPs) for each row
-#' in a dataset.
+#' in a dataset. Optionally aggregates results within strata defined by grouping
+#' variables.
 #'
 #' @param model A fitted model object (e.g., `vglm`, `orm`).
 #' @param newdata Optional. A data frame of new data for prediction. If NULL,
@@ -637,24 +638,57 @@ time_in_state <- function(sops, target_states = 1) {
 #' @param gap Name of the time gap variable (if used).
 #' @param t_covs Optional time-varying covariate lookup table, e.g., spline
 #' basis functions.
+#' @param by Optional character vector of variable names to stratify by. When
+#'   provided, the function aggregates (averages) SOPs within each stratum
+#'   defined by combinations of these variables. E.g., `by = "ecog"` aggregates
+#'   within ECOG levels; `by = c("ecog", "age_group")` aggregates within each
+#'   combination of ECOG and age group. NOTE: This is simple aggregation within
+#'   observed strata, NOT G-computation standardization (use `avg_sops()` for that).
 #' @param ... Additional arguments (currently unused).
 #'
 #' @return A data frame of class `markov_sops` containing:
-#'   \item{rowid}{Row identifier from newdata}
+#'   \item{rowid}{Row identifier from newdata (omitted if `by` is specified)}
 #'   \item{time}{Time point}
 #'   \item{state}{State name}
-#'   \item{estimate}{Probability of being in the state}
-#'   Plus all columns from `newdata`.
+#'   \item{estimate}{Probability of being in the state (individual-level or stratum average)}
+#'   \item{(by variables)}{Stratification variables if `by` is specified}
+#'   Plus all columns from `newdata` (for individual-level results).
 #'
 #' @details
 #' This function wraps `soprob_markov()` and converts its array output to a tidy
-#' data frame. The output contains one row per patient-time-state combination.
+#' data frame. The output contains one row per patient-time-state combination
+#' (or stratum-time-state if `by` is used).
+#'
+#' When `by` is specified, the function:
+#' 1. Computes individual-level SOPs for all patients
+#' 2. Groups results by time, state, and the specified variables
+#' 3. Averages the SOPs within each group
+#'
+#' This aggregation preserves heterogeneity across observed strata without
+#' creating counterfactual scenarios (unlike G-computation in `avg_sops()`).
 #'
 #' For computing marginal/standardized SOPs (G-computation), use `avg_sops()`
 #' instead, which creates counterfactual datasets and averages over individuals.
 #'
 #' @seealso [avg_sops()] for marginal SOPs, [soprob_markov()] for the underlying
 #'   computation.
+#'
+#' @examples
+#' \dontrun{
+#' # Individual-level SOPs
+#' sops_ind <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6)
+#'
+#' # Stratified by ECOG performance status
+#' sops_ecog <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6,
+#'                   by = "ecog")
+#'
+#' # Stratified by multiple variables
+#' sops_strat <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6,
+#'                    by = c("ecog", "age_group"))
+#'
+#' # Compatible with inferences()
+#' sops_strat |> inferences(method = "simulation", n_sim = 1000)
+#' }
 #'
 #' @importFrom stats model.frame
 #' @export
@@ -668,6 +702,7 @@ sops <- function(
   pvarname = "yprev",
   gap = NULL,
   t_covs = NULL,
+  by = NULL,
   ...
 ) {
   # --- 1. Setup & Defaults ---
@@ -725,7 +760,21 @@ sops <- function(
     t_covs = t_covs
   )
 
-  # --- 3. Tidy the Output ---
+  # --- 3. Validate 'by' Parameter ---
+  if (!is.null(by)) {
+    if (!is.character(by)) {
+      stop("'by' must be a character vector of variable names.")
+    }
+    missing_vars <- setdiff(by, names(newdata))
+    if (length(missing_vars) > 0) {
+      stop(
+        "Variables specified in 'by' not found in newdata: ",
+        paste(missing_vars, collapse = ", ")
+      )
+    }
+  }
+
+  # --- 4. Tidy the Output ---
   # Array dims: [n_pat, n_times, n_states]
   n_pat <- dim(sops_array)[1]
   n_times <- dim(sops_array)[2]
@@ -741,14 +790,42 @@ sops <- function(
   idx_state <- rep(ylevels, each = n_pat * n_times)
 
   # Build result by repeating newdata rows
-
   result <- newdata[idx_pat, , drop = FALSE]
   result$time <- idx_time
   result$state <- idx_state
   result$estimate <- probs_flat
   rownames(result) <- NULL
 
-  # Store attributes for downstream use
+  # --- 5. Apply Stratified Aggregation if 'by' is Specified ---
+  if (!is.null(by)) {
+    # Group by time, state, and stratification variables, then average
+    group_cols <- unique(c("time", "state", by))
+
+    # Validate all grouping columns exist
+    missing_groups <- setdiff(group_cols, names(result))
+    if (length(missing_groups) > 0) {
+      stop(
+        "Grouping variables missing from result: ",
+        paste(missing_groups, collapse = ", ")
+      )
+    }
+
+    # Aggregate using base R for minimal dependencies
+    agg_formula <- stats::as.formula(
+      paste("estimate ~", paste(group_cols, collapse = " + "))
+    )
+    result <- stats::aggregate(
+      agg_formula,
+      data = result,
+      FUN = mean,
+      na.rm = TRUE
+    )
+
+    # Note: After aggregation, we lose individual patient information (rowid)
+    # This is expected for stratified results
+  }
+
+  # --- 6. Store Attributes for Downstream Use ---
   attr(result, "model") <- model
   attr(result, "tvarname") <- tvarname
   attr(result, "pvarname") <- pvarname
@@ -756,6 +833,7 @@ sops <- function(
   attr(result, "absorb") <- absorb
   attr(result, "gap") <- gap
   attr(result, "t_covs") <- t_covs
+  attr(result, "by") <- by
   attr(result, "call_args") <- list(
     times = times,
     ylevels = ylevels,
@@ -763,7 +841,8 @@ sops <- function(
     tvarname = tvarname,
     pvarname = pvarname,
     gap = gap,
-    t_covs = t_covs
+    t_covs = t_covs,
+    by = by
   )
   # Store original newdata for inferences() (needed for simulation-based inference)
   attr(result, "newdata_orig") <- newdata
@@ -1233,7 +1312,7 @@ inferences_simulation <- function(
     # For individual sops objects
     times <- call_args$times
     variables <- NULL
-    by <- NULL
+    by <- call_args$by %||% attr(object, "by")
     id_var <- NULL
   }
 
@@ -1357,7 +1436,8 @@ inferences_simulation <- function(
             sops_array,
             times,
             ylevels,
-            newdata_pred
+            newdata_pred,
+            by = by
           )
         }
 
@@ -1414,7 +1494,8 @@ inferences_simulation <- function(
           sops_array,
           times,
           ylevels,
-          newdata_pred
+          newdata_pred,
+          by = by
         )
       }
 
@@ -1450,7 +1531,8 @@ inferences_simulation <- function(
       "variables",
       "n_cf",
       "n_each",
-      "use_fast_path"
+      "use_fast_path",
+      "by"
     )
     if (use_fast_path) {
       globals_list <- c(globals_list, "components", "C_list")
@@ -1490,7 +1572,12 @@ inferences_simulation <- function(
       group_cols <- unique(c(group_cols, by))
     }
   } else {
-    group_cols <- c("rowid", "time", "state")
+    # For individual SOPs: include rowid unless 'by' is specified
+    if (is.null(by)) {
+      group_cols <- c("rowid", "time", "state")
+    } else {
+      group_cols <- unique(c("time", "state", by))
+    }
   }
 
   summary_stats <- compute_ci_from_draws(
@@ -1914,11 +2001,18 @@ marginalize_sops_array <- function(
 #' @param times Vector of time points.
 #' @param ylevels Vector of state levels.
 #' @param newdata Original data with rowid.
+#' @param by Optional character vector of variables to aggregate by.
 #'
-#' @return Data frame with individual SOPs.
+#' @return Data frame with individual SOPs (or aggregated if by is specified).
 #'
 #' @keywords internal
-array_to_df_individual <- function(sops_array, times, ylevels, newdata) {
+array_to_df_individual <- function(
+  sops_array,
+  times,
+  ylevels,
+  newdata,
+  by = NULL
+) {
   n_pat <- dim(sops_array)[1]
   n_times <- dim(sops_array)[2]
   n_states <- dim(sops_array)[3]
@@ -1931,17 +2025,47 @@ array_to_df_individual <- function(sops_array, times, ylevels, newdata) {
   idx_time <- rep(rep(times, each = n_pat), times = n_states)
   idx_state <- rep(ylevels, each = n_pat * n_times)
 
-  # Build result
-  result <- data.frame(
-    rowid = if ("rowid" %in% names(newdata)) {
-      newdata$rowid[idx_pat]
-    } else {
-      idx_pat
-    },
-    time = idx_time,
-    state = idx_state,
-    estimate = probs_flat
-  )
+  # Build result by repeating newdata rows
+  result <- newdata[idx_pat, , drop = FALSE]
+
+  # Add rowid if it exists
+  if ("rowid" %in% names(newdata)) {
+    result$rowid <- newdata$rowid[idx_pat]
+  } else {
+    result$rowid <- idx_pat
+  }
+
+  result$time <- idx_time
+  result$state <- idx_state
+  result$estimate <- probs_flat
+  rownames(result) <- NULL
+
+  # Apply stratified aggregation if 'by' is specified
+  if (!is.null(by)) {
+    # Validate that by variables exist
+    missing_vars <- setdiff(by, names(result))
+    if (length(missing_vars) > 0) {
+      warning(
+        "Variables in 'by' not found in result: ",
+        paste(missing_vars, collapse = ", "),
+        ". Skipping aggregation."
+      )
+      return(result)
+    }
+
+    # Group by time, state, and stratification variables, then average
+    group_cols <- unique(c("time", "state", by))
+
+    agg_formula <- stats::as.formula(
+      paste("estimate ~", paste(group_cols, collapse = " + "))
+    )
+    result <- stats::aggregate(
+      agg_formula,
+      data = result,
+      FUN = mean,
+      na.rm = TRUE
+    )
+  }
 
   result
 }

@@ -4,7 +4,7 @@
 \alias{array_to_df_individual}
 \title{Convert SOPs Array to Individual-Level Data Frame}
 \usage{
-array_to_df_individual(sops_array, times, ylevels, newdata)
+array_to_df_individual(sops_array, times, ylevels, newdata, by = NULL)
 }
 \arguments{
 \item{sops_array}{Array of dimensions (n_pat x n_times x n_states).}
@@ -14,9 +14,11 @@ array_to_df_individual(sops_array, times, ylevels, newdata)
 \item{ylevels}{Vector of state levels.}
 
 \item{newdata}{Original data with rowid.}
+
+\item{by}{Optional character vector of variables to aggregate by.}
 }
 \value{
-Data frame with individual SOPs.
+Data frame with individual SOPs (or aggregated if by is specified).
 }
 \description{
 Convert SOPs Array to Individual-Level Data Frame
