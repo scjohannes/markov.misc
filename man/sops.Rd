@@ -19,7 +19,9 @@ sops(
 )
 }
 \arguments{
-\item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}).}
+\item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}). For \code{vglm} models,
+the family \strong{must} be \code{cumulative(reverse = TRUE, ...)}. Other families or
+\code{reverse = FALSE} will be rejected with an error.}
 
 \item{newdata}{Optional. A data frame of new data for prediction. If NULL,
 uses the data used to fit the model.}
@@ -66,6 +68,26 @@ variables.
 This function wraps \code{soprob_markov()} and converts its array output to a tidy
 data frame. The output contains one row per patient-time-state combination
 (or stratum-time-state if \code{by} is used).
+
+\strong{Model Requirements:}
+
+For \code{vglm}/\code{vgam} models, only the \code{cumulative} family with \code{reverse = TRUE} is
+supported. This is because the package's Markov simulation logic expects
+higher-numbered states to represent worse outcomes, and uses reverse cumulative
+probabilities to model the probability of being in state k or worse.
+
+Example of a valid model specification:
+
+\if{html}{\out{<div class="sourceCode">}}\preformatted{vglm(y ~ time + tx + yprev, family = cumulative(reverse = TRUE, parallel = TRUE), data = data)
+}\if{html}{\out{</div>}}
+
+Models using \code{reverse = FALSE}, other families (e.g., \code{multinomial}, \code{acat}),
+or those missing the \code{reverse} parameter will be rejected.
+
+\code{orm} models from the \code{rms} package are always compatible (they use reverse
+coding by default).
+
+\strong{Stratification:}
 
 When \code{by} is specified, the function:
 \enumerate{

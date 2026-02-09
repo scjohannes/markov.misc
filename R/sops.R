@@ -1,3 +1,80 @@
+#' Validate Model for Markov Simulation
+#'
+#' Internal helper that checks whether a model is compatible with Markov
+#' simulation. For vglm models, verifies that the family is cumulative with
+#' reverse = TRUE.
+#'
+#' @param object A fitted model object
+#' @return NULL (invisibly) if valid, otherwise throws an error
+#' @keywords internal
+validate_markov_model <- function(object) {
+  # Unwrap robcov_vglm if needed
+  model_chk <- if (inherits(object, "robcov_vglm")) {
+    object$vglm_fit
+  } else {
+    object
+  }
+
+  # Check if it's a vglm/vgam model
+  if (inherits(model_chk, c("vglm", "vgam"))) {
+    # Extract family object
+    fam <- model_chk@family
+
+    # Check if it's cumulative family
+    if (!grepl("cumulative", fam@vfamily[1], ignore.case = TRUE)) {
+      stop(
+        "For vglm/vgam models, only the cumulative family is supported.\n",
+        "Current family: ",
+        fam@vfamily[1],
+        "\n",
+        "Please refit your model with: family = cumulative(reverse = TRUE, ...)"
+      )
+    }
+
+    # Check reverse coding
+    # The reverse parameter is stored in the model's call, not in the family object
+    model_call <- model_chk@call
+    reverse_param <- NULL
+
+    # Try to extract reverse from the family call
+    if ("family" %in% names(model_call) && is.call(model_call$family)) {
+      fam_args <- as.list(model_call$family)[-1] # Remove function name
+      if ("reverse" %in% names(fam_args)) {
+        reverse_param <- tryCatch(
+          eval(fam_args$reverse),
+          error = function(e) NULL
+        )
+      }
+    }
+
+    # If reverse was not explicitly set in the call, we cannot verify it
+    # In this case, we should warn and reject (safer to be conservative)
+    if (is.null(reverse_param)) {
+      stop(
+        "Cannot determine 'reverse' parameter from vglm model call.\n",
+        "For safety, please explicitly specify: family = cumulative(reverse = TRUE, ...)\n",
+      )
+    }
+
+    # Check that reverse = TRUE
+    if (!isTRUE(reverse_param)) {
+      stop(
+        "For vglm/vgam models, the cumulative family must use reverse = TRUE.\n",
+        "Current setting: reverse = ",
+        reverse_param,
+        "\n",
+        "Please refit your model with: family = cumulative(reverse = TRUE, ...)"
+      )
+    }
+  }
+
+  # orm models are always compatible (they use reverse coding by default)
+  # blrm models inherit from orm, so also OK
+  # Other model types will be caught by the existing class check in soprob_markov
+
+  invisible(NULL)
+}
+
 #' Calculate State Occupation Probabilities for First-Order Markov Models
 #'
 #' Estimates state occupation probabilities over time by iterating a transition
@@ -94,7 +171,6 @@ soprob_markov <- function(
   # --- 1. Initial Checks & Setup ---
   cl <- class(object)[1]
   ftypes <- c(
-    lrm = "rms",
     orm = "rms",
     blrm = "rmsb",
     vglm = "vgam",
@@ -106,6 +182,9 @@ soprob_markov <- function(
   if (is.na(ftype)) {
     stop("Object class not supported")
   }
+
+  # Validate model is compatible with Markov simulation
+  validate_markov_model(object)
 
   # Define prediction function
   prd <- switch(
@@ -289,7 +368,8 @@ soprob_markov <- function(
 #' Updates the standardize_sops wrapper to use the optimized
 #' soprob_markov_vectorized function.
 #'
-#' @param model A fitted model object (orm, vglm, rmsb).
+#' @param model A fitted model object (orm, vglm, rmsb). For `vglm` models,
+#'   the family must be `cumulative(reverse = TRUE, ...)`.
 #' @param data A data frame containing patient trajectory data.
 #' @param times Time points to predict.
 #' @param ylevels States in the data.
@@ -318,6 +398,9 @@ standardize_sops <- function(
   t_covs = NULL
 ) {
   # --- 1. Setup & Data Extraction ---
+  # Validate model compatibility
+  validate_markov_model(model)
+
   if (
     !inherits(model, "orm") &&
       !inherits(model, "vglm") &&
@@ -627,7 +710,8 @@ time_in_state <- function(sops, target_states = 1) {
 #' in a dataset. Optionally aggregates results within strata defined by grouping
 #' variables.
 #'
-#' @param model A fitted model object (e.g., `vglm`, `orm`).
+#' @param model A fitted model object (e.g., `vglm`, `orm`). For `vglm` models,
+#'   the family must be `cumulative(reverse = TRUE, ...)`.
 #' @param newdata Optional. A data frame of new data for prediction. If NULL,
 #'   uses the data used to fit the model.
 #' @param times A numeric vector of time points to estimate.
@@ -658,6 +742,15 @@ time_in_state <- function(sops, target_states = 1) {
 #' This function wraps `soprob_markov()` and converts its array output to a tidy
 #' data frame. The output contains one row per patient-time-state combination
 #' (or stratum-time-state if `by` is used).
+#'
+#' **Model Requirements:**
+#'
+#' For `vglm`/`vgam` models, only the `cumulative` family with `reverse = TRUE` is
+#' supported. This is because the package's Markov simulation logic expects
+#' higher-numbered states to represent worse outcomes, and uses reverse cumulative
+#' probabilities to model the probability of being in state k or worse.
+#'
+#' **Stratification:**
 #'
 #' When `by` is specified, the function:
 #' 1. Computes individual-level SOPs for all patients
@@ -706,6 +799,9 @@ sops <- function(
   ...
 ) {
   # --- 1. Setup & Defaults ---
+  # Validate model compatibility
+  validate_markov_model(model)
+
   if (is.null(newdata)) {
     # newdata <- model$x
     # if (is.null(newdata)) {
@@ -859,7 +955,8 @@ sops <- function(
 #' to each level of the treatment variable and averaging over the covariate
 #' distribution.
 #'
-#' @param model A fitted model object (e.g., `vglm`, `orm`).
+#' @param model A fitted model object (e.g., `vglm`, `orm`). For `vglm` models,
+#'   the family **must** be `cumulative(reverse = TRUE, ...)`.
 #' @param newdata Data frame for prediction. For **simulation inference**, pass
 #'   baseline data only (one row per patient). For **bootstrap inference**, you
 #'   must pass the full longitudinal dataset (all time points) since the model
@@ -935,6 +1032,9 @@ avg_sops <- function(
   ...
 ) {
   # --- 1. Input Validation ---
+  # Validate model compatibility
+  validate_markov_model(model)
+
   if (is.null(variables)) {
     stop(
       "`variables` is required for G-computation. ",
