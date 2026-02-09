@@ -1002,8 +1002,9 @@ avg_sops <- function(
 #'   iterations (for bootstrap). Default is 1000.
 #' @param vcov Optional custom variance-covariance matrix. If provided,
 #'   overrides the vcov extracted from the model.
-#' @param parallel Logical. Use parallel processing? Default is FALSE.
-#' @param workers Number of parallel workers. If NULL, uses detectCores() - 1.
+#' @param workers Number of parallel workers. If NULL (default) or 1, uses
+#'   sequential processing. If > 1, uses parallel processing with that many
+#'   workers.
 #' @param conf_level Confidence level for intervals (default 0.95).
 #' @param conf_type Type of confidence interval (simulation method only):
 #'   \itemize{
@@ -1121,7 +1122,6 @@ inferences <- function(
   method = "simulation",
   n_sim = 1000,
   vcov = NULL,
-  parallel = FALSE,
   workers = NULL,
   conf_level = 0.95,
   conf_type = "perc",
@@ -1154,7 +1154,6 @@ inferences <- function(
       vcov = vcov,
       conf_level = conf_level,
       conf_type = conf_type,
-      parallel = parallel,
       workers = workers,
       return_draws = return_draws
     )
@@ -1162,7 +1161,6 @@ inferences <- function(
     inferences_bootstrap(
       object = object,
       n_boot = n_sim,
-      parallel = parallel,
       workers = workers,
       conf_level = conf_level,
       return_draws = return_draws,
@@ -1188,8 +1186,8 @@ inferences <- function(
 #' @param vcov Custom variance-covariance matrix (optional, overrides model vcov).
 #' @param conf_level Confidence level.
 #' @param conf_type Type of confidence interval ("perc" or "wald").
-#' @param parallel Use parallel processing?
-#' @param workers Number of parallel workers.
+#' @param workers Number of parallel workers. If NULL or 1, uses sequential
+#'   processing. If > 1, uses parallel processing.
 #' @param return_draws Store individual draws?
 #'
 #' @return The input object with added confidence intervals.
@@ -1201,7 +1199,6 @@ inferences_simulation <- function(
   vcov,
   conf_level,
   conf_type,
-  parallel,
   workers,
   return_draws
 ) {
@@ -1426,14 +1423,12 @@ inferences_simulation <- function(
   }
 
   # --- 6. Apply Across All Draws ---
-  if (parallel) {
+  use_parallel <- !is.null(workers) && workers > 1
+
+  if (use_parallel) {
     # Setup parallel
     if (!requireNamespace("furrr", quietly = TRUE)) {
       stop("Package 'furrr' is required for parallel processing")
-    }
-
-    if (is.null(workers)) {
-      workers <- max(1, parallel::detectCores() - 1)
     }
 
     future::plan(future.callr::callr, workers = workers)
@@ -1543,8 +1538,8 @@ inferences_simulation <- function(
 #'
 #' @param object A `markov_avg_sops` object.
 #' @param n_boot Number of bootstrap iterations.
-#' @param parallel Use parallel processing?
-#' @param workers Number of parallel workers.
+#' @param workers Number of parallel workers. If NULL or 1, uses sequential
+#'   processing. If > 1, uses parallel processing.
 #' @param conf_level Confidence level.
 #' @param return_draws Store individual bootstrap draws?
 #' @param update_datadist Update datadist for rms models?
@@ -1556,7 +1551,6 @@ inferences_simulation <- function(
 inferences_bootstrap <- function(
   object,
   n_boot,
-  parallel,
   workers,
   conf_level,
   return_draws,
@@ -1757,7 +1751,6 @@ inferences_bootstrap <- function(
     analysis_fn = analysis_fn,
     data = newdata_orig,
     id_var = id_var,
-    parallel = parallel,
     workers = workers,
     packages = c("rms", "VGAM", "Hmisc", "dplyr", "stats"),
     globals = c(
