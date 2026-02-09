@@ -267,6 +267,35 @@ bs_inter_mvn  <- run_mvn(m_inter,  "Model B")
 bs_flex_mvn   <- run_mvn(m_flex,   "Model C")
 ```
 
+```{r}
+sops(
+     robcov_vglm(m_simple, cluster = data$id), #model needs to have cluster robust SEs
+     newdata = data |> filter(time == 1), 
+     times = 1:FU,
+     ylevels = 1:6,
+     absorb = "6",
+     id_var = "id",
+     t_covs = t_covs,
+     by = c("tx", "yprev")
+   )  |> inferences(
+       method = "simulation",
+       n_sim = R, 
+       conf_level = 0.95,
+       return_draws = TRUE
+     ) |> 
+  ggplot(aes(
+    x = time, 
+    y = estimate, 
+    linetype = factor(tx), 
+    # Combine tx and state into a single interaction for grouping
+    group = interaction(factor(tx), factor(state)),
+    color = factor(state) 
+  )) +
+  geom_line() + 
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high, fill = factor(state), group = interaction(factor(tx), factor(state))), alpha = 0.2, color = NA) +
+  facet_wrap(~yprev)
+```
+
 ## Step 5: Visualization
 
 ### 1. State Occupation Probabilities
