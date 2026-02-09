@@ -9,7 +9,7 @@ bootstrap_model_coefs(
   data = NULL,
   n_boot,
   workers = NULL,
-  parallel = FALSE,
+  parallel = NULL,
   id_var = "id",
   use_coefstart = FALSE
 )
@@ -25,12 +25,18 @@ in the model formula.}
 
 \item{n_boot}{Number of bootstrap samples}
 
-\item{workers}{Number of workers used for parallelization. Default is
-parallel::detectCores() - 1}
+\item{workers}{Number of workers for parallel processing. If NULL (default)
+or 1, sequential processing is used. If > 1, uses parallel processing.}
 
-\item{parallel}{Whether parallelization should be used (default FALSE)}
+\item{parallel}{(Deprecated) Logical indicating whether to use parallel
+processing. Use the \code{workers} parameter instead.}
 
 \item{id_var}{Name of the ID variable for group bootstrap (default "id")}
+
+\item{use_coefstart}{Logical. If TRUE, uses the original model coefficients as
+starting values when refitting. This can speed up convergence but may affect
+results if bootstrap samples differ substantially from the original data.
+Default is FALSE.}
 }
 \value{
 A tibble with bootstrap results. Each row represents one bootstrap

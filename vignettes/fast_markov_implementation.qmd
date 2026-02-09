@@ -1,0 +1,313 @@
+---
+title: "Technical Deep Dive: Fast Markov Simulation"
+format: html
+---
+
+## Overview
+
+The `markov.misc` package implements a "Fast Path" for simulating Markov traces from Vector Generalized Linear Models (`VGAM::vglm`). This implementation significantly outperforms the standard "Slow Path" (iterative calls to `predict()`) by eliminating repetitive overhead.
+
+This document details the mathematical decomposition and algorithmic implementation that enables this speedup.
+
+## The Bottleneck
+
+In a first-order Markov simulation, the state at time $t$ depends on the state at time $t-1$. This requires a sequential simulation loop:
+
+``` r
+for (t in 2:n_times) {
+    # 1. Update dataset with current time and previous state
+    current_data$time <- times[t]
+    current_data$yprev <- predicted_states[t-1]
+    
+    # 2. Construct Model Matrix and Predict (The Bottleneck)
+    probs <- predict(model, newdata = current_data, type = "response")
+    
+    # 3. Draw new states
+    predicted_states[t] <- draw_states(probs)
+}
+```
+
+Step 2 is computationally expensive in R because `predict()` triggers:
+
+1\. **Formula Parsing**: Interpreting the model formula (e.g., `y ~ time * yprev`).
+
+2\. **Model Frame Construction**: Creating a data frame, validating factor levels, and handling missing data.
+
+3\. **Design Matrix Construction**: calling `model.matrix()`, which performs string operations and logic checks.
+
+4\. **Matrix Multiplication**: Finally computing $X \beta$.
+
+Since the structure of the model and the patients' baseline characteristics do not change over time, rebuilding the entire design matrix at every step is redundant.
+
+### Under the Hood: The Cost of Dynamic Constraints
+
+Specifically for `VGAM::vglm` objects, `predict()` creates additional overhead by dynamically applying constraint matrices ($H$) to enforce the model structure (e.g., proportional odds).
+
+Simplified, the prediction logic for a single term looks like this:
+
+``` r
+# 1. PREPARATION
+# We have a raw data matrix X with P columns (Age, Treatment, etc.)
+# We have a vector of coefficients 'coefs' of length P_vlm
+
+# 2. EXPANSION (The Heavy Lifting)
+# Inside lm2vlm.model.matrix:
+# For every patient i:
+#    Create M rows.
+#    For every variable k:
+#       Look up H_k (Is it PO? Is it NPO?)
+#       Place the value x_{ik} into the correct columns based on H_k.
+# Result: X_vlm (Matrix of size (N*M) rows by P_vlm columns)
+
+# 3. CALCULATION
+# Multiply the Big Matrix by the Coefficient Vector
+# (N*M x P_vlm) * (P_vlm x 1) -> (N*M x 1)
+linear_predictors_long <- X_vlm %*% coefs
+
+# 4. RESHAPE
+# Chop the long vector back into a matrix for readable results
+# (N*M x 1) -> (N rows x M columns)
+final_matrix <- matrix(linear_predictors_long, ncol = M, byrow = TRUE)
+```
+
+In the "Slow Path", this is performed:
+
+-   For **every term** in the model.
+
+-   For **every patient**.
+
+-   At **every time step**.
+
+The Fast Path eliminates this by pre-calculating the effective coefficients $\Gamma = H \times \beta$ once.
+
+## The Solution: Linear Predictor Decomposition
+
+The Fast Path pre-calculates the components of the linear predictor ($\eta$) so that the simulation loop involves only **vector addition**.
+
+### Mathematical Derivation
+
+Let $\eta_{i,t,k}$ be the linear predictor vector for **patient** $i$ at time $t$, given they were in state $k$ at time $t-1$.
+
+We assume the model is additive in the design space (which is true for all GLMs/VGLMs). The linear predictor can be decomposed into:
+
+$$ 
+\eta(i, t, k) = \eta_{base}(i) + \Delta_{time}(i, t) + \Delta_{state}(i, k) + \Delta_{int}(i, t, k) 
+$$
+
+Where:
+
+-   $\eta_{base}(i)$: The "intercept" LP for patient $i$ at baseline ($t=0$, reference state).
+
+-   $\Delta_{time}(i, t)$: The contribution of time-varying covariates for patient $i$.
+
+-   $\Delta_{state}(i, k)$: The contribution of the previous state (transition probabilities) for patient $i$.
+
+-   $\Delta_{int}(i, t, k)$: The interaction effect between time and previous state.
+
+### Handling Interactions (e.g., Time × Treatment)
+
+How does this handle interactions between Time and Baseline Covariates (e.g., `time * tx`), since `tx` is not explicitly updated in the loop?
+
+$\Delta_{time}(i, t)$ is **patient-specific**.
+
+When we calculate the "slope" for Time, we compute the change in the design matrix for patient $i$ when moving from $t=0$ to $t=1$. $$ X_{slope}(i) = X(i, t=1) - X(i, t=0) $$
+
+If the model is `y ~ time + tx + time:tx`, the design matrix columns behave as follows for a treated patient ($tx=1$):
+
+| Column    | $t=0$ | $t=1$ | Slope ($t=1 - t=0$) |
+|:----------|:------|:------|:--------------------|
+| `time`    | 0     | 1     | **1**               |
+| `tx`      | 1     | 1     | 0                   |
+| `time:tx` | 0     | 1     | **1**               |
+
+The "Slope" vector for this patient implicitly contains the interaction coefficient. When we multiply this slope by $t$ in the loop, we correctly reconstruct the interaction term:
+
+$$ 
+t \times (1 \cdot \beta_{time} + 1 \cdot \beta_{time:tx}) 
+$$
+
+For a control patient ($tx=0$), the `time:tx` column would be 0 at both time points, so their slope vector would be 0 for that term.
+
+### Concrete Walkthrough
+
+**Scenario:**
+
+-   **Model**: `y ~ time + tx + yprev + time:yprev` (Reference state `yprev=1`) (only two non-absorbing states), full PO model
+
+-   **Coefficients** ($\beta$):
+
+    -   Intercept: $0.5$
+
+    -   `time`: $0.1$
+
+    -   `tx`: $-0.5$
+
+    -   `yprev=2`: $1.0$
+
+    -   `time:yprev=2`: $0.2$
+
+-   **Patient**: Treated ($tx=1$)
+
+-   **Current Step**: Time $t=2$, Previous State $k=2$
+
+#### 1. The Standard "Slow Path" Calculation
+
+The model matrix row would be: `[1, 2, 1, 1, 2]` (Int, Time, Tx, Prev2, Int). $$ \eta = 0.5(1) + 0.1(2) - 0.5(1) + 1.0(1) + 0.2(2) = \mathbf{1.6} $$
+
+#### 2. The Fast Path Decomposition (Build Phase)
+
+We calculate component vectors once for this patient.
+
+**A. Baseline (**$LP_0$) Conditions: $t=0$, $yprev=1$ (Ref). Row: `[1, 0, 1, 0, 0]` $$ LP_0 = 0.5(1) + 0.1(0) - 0.5(1) + 1.0(0) + 0.2(0) = \mathbf{0.0} $$
+
+**B. Time Slope (**$LP_{slope}$) Conditions: Change when $t$ increases by 1 (at Ref state). Row Change ($t=1$ vs $t=0$): `[0, 1, 0, 0, 0]` $$ LP_{slope} = 0.1(1) = \mathbf{0.1} $$
+
+**C. Previous State Effect (**$LP_{prev}$) Conditions: Change when $yprev=2$ (at $t=0$). Row Change ($k=2$ vs $k=1$): `[0, 0, 0, 1, 0]` $$ LP_{prev} = 1.0(1) = \mathbf{1.0} $$
+
+**D. Interaction Effect (**$LP_{int}$) Conditions: Additional change when $t=1$ AND $yprev=2$. Row Change (vs Additive Expectation): `[0, 0, 0, 0, 1]` $$ LP_{int} = 0.2(1) = \mathbf{0.2} $$
+
+#### 3. The Run Phase Reconstruction
+
+Inside the loop at $t=2$, coming from state $k=2$:
+
+$$ 
+\eta = LP_0 + (t \times LP_{slope}) + LP_{prev} + (t \times LP_{int}) 
+$$ $$ 
+\eta = 0.0 + (2 \times 0.1) + 1.0 + (2 \times 0.2) 
+$$ $$ 
+\eta = 0.0 + 0.2 + 1.0 + 0.4 = \mathbf{1.6} 
+$$
+
+### Implementation: `markov_msm_build`
+
+The function `markov_msm_build` computes the static components ($X \beta$) once, before the loop starts.
+
+#### 1. Baseline Linear Predictor ($LP_0$)
+
+We calculate the design matrix $X_0$ for all patients setting:
+
+-   `time` = 0 (and all time basis functions = 0)
+
+-   `yprev` = Reference Level (State 1)
+
+$$ 
+LP_0 = X_0 \times \Gamma^T 
+$$
+
+$\Gamma$ represents the effective coefficient matrix for the VGLM, handling the constraints.
+
+#### 2. Time Slopes ($LP_{slopes}$)
+
+For each time variable $v$ (e.g., `time`, `time_sq`, spline basis `t1`...): We create a design matrix $X_v$ where variable $v=1$ (others 0). $$ X_{slope, v} = X_{v} - X_0 $$ $$ LP_{slope, v} = X_{slope, v} \times \Gamma^T $$
+
+This isolates the coefficients associated with that specific time variable.
+
+#### 3. Previous State Effects ($LP_{prev}$)
+
+For each possible state $k$: We create a design matrix $X_k$ where `yprev` = $k$ (time = 0). $$ X_{prev, k} = X_{k} - X_0 $$ $$ LP_{prev, k} = X_{prev, k} \times \Gamma^T $$
+
+This captures the baseline transition log-odds from state $k$.
+
+#### 4. Interactions ($LP_{int}$)
+
+For each state $k$ and time variable $v$: We create $X_{t,k}$ where `yprev` = $k$ and variable $v=1$. $$ X_{int, k, v} = (X_{t,k} - X_0) - X_{slope, v} - X_{prev, k} $$ $$ LP_{int, k, v} = X_{int, k, v} \times \Gamma^T $$
+
+This isolates purely the interaction coefficients (e.g., `time:yprev`).
+
+### Implementation: `markov_msm_run`
+
+For a specific time step $t$ with covariate values (e.g., spline basis functions) $val_v$ (from a lookup table `t_covs`):
+
+1.  **Calculate Time Effect**:
+
+$$ 
+E_{time} = \sum_v (val_v \times LP_{slope, v}) 
+$$
+
+2.  **Calculate Base at** $t$: $$ LP_{base, t} = LP_0 + E_{time} $$
+
+3.  **Update per State**: For transitions *from* state $k$: $$ LP_{total} = LP_{base, t} + LP_{prev, k} + \sum_v (val_v \times LP_{int, k, v}) $$
+
+4.  **Convert to Probability**: $$ P = \text{logit}^{-1}(LP_{total}) $$
+
+## Handling Non-linear Time (The Role of `t_covs`)
+
+A key feature of the Fast Path is how it handles non-linear time effects (like splines or polynomials) without re-evaluating R functions inside the loop.
+
+#### 1. Fixed Unit Effects
+
+During the "Build" phase, we calculate the **Unit Effect** of every column in the design matrix. For a non-linear term like $t^2$, we calculate: *"What is the change in the Linear Predictor if the* $t^2$ column increases by exactly 1.0?"
+
+This vector, $LP_{slope, t^2}$, is pre-calculated once and stays fixed.
+
+#### 2. Changing Basis Values
+
+The `t_covs` argument acts as a **Lookup Table**. It contains the pre-calculated values of all basis functions for every time point.
+
+Example for a model with $t + t^2$:
+
+| Time ($t$) | Column: `time` | Column: `time_sq` |
+|:-----------|:---------------|:------------------|
+| 1          | 1              | 1                 |
+| 2          | 2              | 4                 |
+| 3          | 3              | 9                 |
+
+#### 3. The Loop Calculation
+
+Inside `markov_msm_run`, the loop does not know it is calculating a quadratic effect. It simply fetches the numbers from the table. At step $t=3$:
+
+1.  Lookup values: $v_1 = 3$, $v_2 = 9$.
+2.  Multiply by Fixed Unit Effects: $$ \text{Total Time Effect} = (3 \times LP_{slope, time}) + (9 \times LP_{slope, time\_sq}) $$
+
+This mechanism allows the fast path to support **any** non-linear function (splines, logs, triggers) as long as the basis values are provided in the `t_covs` table.
+
+## Code Map
+
+| Concept | Code Variable (in `sops.R`) | Description |
+|:-----------------------|:-----------------------|:-----------------------|
+| $\Gamma$ | `Gamma` | Effective coefficient matrix ($M$ predictors $\times$ $P$ terms) |
+| $LP_0$ | `LP_0` | Pre-calculated baseline LPs ($N \times M$) |
+| $LP_{slope, v}$ | `LP_slopes[[v]]` | Pre-calculated time effects |
+| $LP_{prev, k}$ | `LP_prev[[k]]` | Pre-calculated state effects |
+| $LP_{int, k, v}$ | `LP_int[[k]][[v]]` | Pre-calculated interaction effects |
+| Loop | `markov_msm_run` | The optimized C-like loop in R |
+
+## The Build-Once, Run-Many Advantage
+
+The speedup is apparent when using Simulation-Based Inference, where we might draw 1,000 different coefficient vectors from a multivariate normal distribution to estimate confidence intervals.
+
+### The Slow Path
+
+To simulate 1,000 draws over 60 time steps, with 5 `yprev` values, `predict()` is called **300,000 times**.
+
+-   Each call parses the formula.
+
+-   Each call allocates a new design matrix.
+
+### The Fast Path
+
+1.  **Build Phase (`markov_msm_build`)**: Called **1 time**.
+    -   We construct the "skeleton" matrices ($X_0$, $X_{slopes}$, etc.) once.
+2.  **Run Phase (`markov_msm_run`)**: Called **1,000 times**.
+    -   This function performs **zero** design matrix construction.
+    -   It only performs matrix multiplication: `PreCalc_Matrix %*% New_Coefficients`.
+
+## Validation
+
+The fast path is validated against the slow path in `tests/testthat/test-fast_vs_slow_equivalence.R`.
+
+This test:
+
+1.  Generates complex data with splines and interactions.
+
+2.  Fits a `vglm` model.
+
+3.  Runs both `soprob_markov` (Slow) and `markov_msm_run` (Fast).
+
+4.  Asserts equality within machine tolerance ($10^{-15}$).
+
+## Constraints & Limitations
+
+1.  **VGLM Only**: Currently optimized for `VGAM::vglm` objects.
+2.  **Explicit Time Variables**: Complex time functions (like `rcs(t, 2)`) inside the formula must be handled by passing the explicit basis columns via `t_covs` (e.g. `t1`, `t2`), as the loop does not re-evaluate R functions.
+3.  **Memory**: Pre-calculating all interaction LPs can consume memory if $N \times States \times TimeVars$ is very large, though usually much less than repeated `model.matrix` calls.

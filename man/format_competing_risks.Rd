@@ -20,6 +20,9 @@ in the \code{y} column (default: 1).}
 
 \item{death_status}{Integer code identifying the competing event (e.g., death)
 in the \code{y} column (default: 6).}
+
+\item{version_old}{Logical. If TRUE (default), uses the original implementation.
+If FALSE, uses an updated implementation with different logic for status assignment.}
 }
 \value{
 A data frame where each row represents an interval at risk. The output

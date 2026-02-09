@@ -10,19 +10,7 @@ test_that("soprob_markov matches Hmisc::soprobMarkovOrdm for simple PO model", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(1234)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 100,
-    follow_up_time = 30,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 42,
-    mu_treatment_effect = 0
-  )
-
-  # Prepare data
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 100, seed = 1234, follow_up_time = 30)
 
   # Fit simple proportional odds model
   m1 <- VGAM::vglm(
@@ -60,19 +48,7 @@ test_that("soprob_markov works with rcs() and precomputed spline basis", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(234)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 100,
-    follow_up_time = 30,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 123,
-    mu_treatment_effect = 0
-  )
-
-  # Prepare data
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 100, seed = 234, follow_up_time = 30)
 
   # Create spline basis with rcs()
   time_spl_m <- rms::rcs(data$time, 4)
@@ -162,19 +138,7 @@ test_that("soprob_markov handles partial proportional odds models", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(456)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 100,
-    follow_up_time = 30,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 456,
-    mu_treatment_effect = 0
-  )
-
-  # Prepare data
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 100, seed = 456, follow_up_time = 30)
 
   # Create spline basis
   time_spl_m <- rms::rcs(data$time, 4)
@@ -244,19 +208,7 @@ test_that("soprob_markov handles interaction terms", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(789)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 100,
-    follow_up_time = 30,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 789,
-    mu_treatment_effect = 0
-  )
-
-  # Prepare data
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 100, seed = 789, follow_up_time = 30)
 
   # Create spline basis
   time_spl_m <- rms::rcs(data$time, 4)
@@ -344,19 +296,7 @@ test_that("soprob_markov respects absorbing state constraint", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  # Simulate test data
-  set.seed(999)
-  test_data <- sim_trajectories_brownian(
-    n_patients = 50,
-    follow_up_time = 20,
-    treatment_prob = 0.5,
-    absorbing_state = 6,
-    seed = 999,
-    mu_treatment_effect = 0
-  )
-
-  # Prepare data
-  data <- prepare_markov_data(test_data)
+  data <- make_test_data(n_patients = 50, seed = 999, follow_up_time = 20)
 
   # Fit simple model
   m1 <- VGAM::vglm(
@@ -394,4 +334,93 @@ test_that("soprob_markov respects absorbing state constraint", {
       )
     }
   }
+})
+
+# Unit Tests: Equivalence of sops() and avg_sops()
+#
+# This test verifies that manual marginalization using sops() matches
+# G-computation performed by avg_sops().
+
+test_that("marginalization via sops() and avg_sops() result in exactly the same results", {
+  skip_if_not_installed("VGAM")
+  skip_if_not_installed("rms")
+  skip_if_not_installed("dplyr")
+
+  withr::local_seed(123)
+
+  # 1. Setup Data and Model
+  FU <- 10
+  data <- make_test_data(n_patients = 50, follow_up_time = FU, seed = 123)
+
+  # Extract t_covs from the data (already contains spline terms)
+  t_covs <- data |>
+    dplyr::select(time, time_lin, time_nlin_1) |>
+    dplyr::distinct() |>
+    dplyr::arrange(time) |>
+    as.data.frame()
+
+  # Fit an interaction model
+  m_inter <- VGAM::vglm(
+    ordered(y) ~ (time_lin + time_nlin_1) * tx + yprev,
+    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+    data = data
+  )
+
+  # Use robust model as in the example
+  m_robust <- robcov_vglm(m_inter, cluster = data$id)
+
+  # 2. Manual marginalization via sops()
+
+  # Filter to baseline data for G-computation
+  baseline_data <- data |> dplyr::filter(time == 1)
+
+  sops_1 <- sops(
+    m_robust,
+    newdata = baseline_data |> dplyr::mutate(tx = 1),
+    times = 1:FU,
+    ylevels = 1:6,
+    absorb = "6",
+    id_var = "id",
+    t_covs = t_covs
+  ) |>
+    dplyr::group_by(time, state) |>
+    dplyr::summarise(estimate = mean(estimate), .groups = "drop") |>
+    dplyr::mutate(tx = 1)
+
+  sops_0 <- sops(
+    m_robust,
+    newdata = baseline_data |> dplyr::mutate(tx = 0),
+    times = 1:FU,
+    ylevels = 1:6,
+    absorb = "6",
+    id_var = "id",
+    t_covs = t_covs
+  ) |>
+    dplyr::group_by(time, state) |>
+    dplyr::summarise(estimate = mean(estimate), .groups = "drop") |>
+    dplyr::mutate(tx = 0)
+
+  sops_manual <- dplyr::bind_rows(sops_0, sops_1) |>
+    dplyr::arrange(tx, state, time) |>
+    as.data.frame()
+
+  # 3. Automated marginalization via avg_sops()
+  sops_avg <- avg_sops(
+    m_robust,
+    newdata = baseline_data,
+    variables = "tx",
+    times = 1:FU,
+    ylevels = 1:6,
+    absorb = "6",
+    id_var = "id",
+    t_covs = t_covs
+  ) |>
+    dplyr::arrange(tx, state, time) |>
+    as.data.frame()
+
+  # 4. Compare results
+  expect_equal(sops_manual$estimate, sops_avg$estimate, tolerance = 1e-15)
+  expect_equal(sops_manual$tx, sops_avg$tx)
+  expect_equal(as.character(sops_manual$state), as.character(sops_avg$state))
+  expect_equal(sops_manual$time, sops_avg$time)
 })

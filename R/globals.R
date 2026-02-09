@@ -24,7 +24,11 @@ utils::globalVariables(c(
   "analysis",
   "conf_high",
   "conf_low",
+  "conf.high",
+  "conf.low",
+  "rowid",
   "estimate",
+  "draw",
   "mean_estimate",
   "p_value",
   "statistic",
@@ -39,6 +43,7 @@ utils::globalVariables(c(
   "splits",
   "models",
   "boot_id",
+  "draw_id",
   "coefs",
   "value",
   "upper",
@@ -47,5 +52,21 @@ utils::globalVariables(c(
   "block_count",
   "state",
   "probability",
-  "median"
+  "median",
+  "std.error",
+  # Added for format_competing_risks
+  "start",
+  "status",
+  "cum_events",
+  "prev_events",
+  "next_y",
+  # Added for states_to_tte
+  "state_change",
+  "run_id",
+  "raw_start",
+  "raw_stop",
+  # Added for inferences_bootstrap
+  "n_rows",
+  # Added for tidy_bootstrap_coefs
+  "n_iter"
 ))

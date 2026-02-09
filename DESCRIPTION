@@ -1,8 +1,9 @@
 Package: markov.misc
 Title: Markov Miscellaneous
-Version: 0.0.0.9000
-Authors@R: 
-    person("Johannes", "Schwenke", , "johannes.schwenke@gmail.com", role = c("aut", "cre"))
+Version: 0.0.1.0000
+Authors@R: c(
+    person("Johannes", "Schwenke", , "johannes.schwenke@gmail.com", role = c("aut", "cre")),
+    person("Felix", "Herkner", , "felix.herkner@meduniwien.ac.at", role = "aut"))
 Description: Contains function for Markov transition modelling (ccurent focus is on first order models), data vizualations, and power calculations.
 License: MIT + file LICENSE
 Encoding: UTF-8
@@ -15,13 +16,13 @@ Imports:
     future,
     future.callr,
     ggplot2,
+    methods,
     patchwork,
     Hmisc,
+    mvtnorm,
     rlang,
     rms,
-    rsample,
     VGAM,
-    survival,
     stats,
     tibble,
     tidyr,

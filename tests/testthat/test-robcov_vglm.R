@@ -8,587 +8,705 @@
 # 5. Model information is preserved
 # 6. Z-statistics and p-values are computed correctly
 
-test_that("robcov_vglm produces valid covariance estimates", {
-  skip_if_not_installed("VGAM")
+describe("robcov_vglm()", {
+  it("produces valid covariance estimates", {
+    skip_if_not_installed("VGAM")
 
-  # Generate simple test data
-  set.seed(123)
-  n <- 200
-  x <- rnorm(n)
-  lp <- 0.5 * x
-  probs <- cbind(
-    plogis(-1 - lp),
-    plogis(0 - lp) - plogis(-1 - lp),
-    plogis(1 - lp) - plogis(0 - lp),
-    1 - plogis(1 - lp)
-  )
-  y <- apply(probs, 1, function(p) sample(1:4, 1, prob = pmax(p, 0.001)))
+    # Generate simple test data
+    withr::local_seed(123)
+    n <- 200
+    x <- rnorm(n)
+    lp <- 0.5 * x
+    probs <- cbind(
+      plogis(-1 - lp),
+      plogis(0 - lp) - plogis(-1 - lp),
+      plogis(1 - lp) - plogis(0 - lp),
+      1 - plogis(1 - lp)
+    )
+    y <- apply(probs, 1, function(p) sample(1:4, 1, prob = pmax(p, 0.001)))
 
-  test_data <- data.frame(y = ordered(y), x = x)
+    test_data <- data.frame(y = ordered(y), x = x)
 
-  # Fit vglm
-  m <- VGAM::vglm(
-    y ~ x,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = test_data
-  )
+    # Fit vglm
+    m <- VGAM::vglm(
+      y ~ x,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = test_data
+    )
 
-  # Compute robust covariance
-  result <- robcov_vglm(m)
+    # Compute robust covariance
+    result <- robcov_vglm(m)
 
-  # Check output structure
-  expect_s3_class(result, "robcov_vglm")
+    # Check output structure
+    expect_s3_class(result, "robcov_vglm")
 
-  # Check variance and SE components
-  expect_true("var" %in% names(result))
-  expect_true("se" %in% names(result))
-  expect_true("scores" %in% names(result))
-  expect_true("bread" %in% names(result))
-  expect_true("meat" %in% names(result))
+    # Check variance and SE components
+    expect_contains(names(result), c("var", "se", "scores", "bread", "meat"))
 
-  # Check new components
+    # Check new components
+    expect_contains(
+      names(result),
+      c("coefficients", "z", "pvalues", "original_se")
+    )
 
-  expect_true("coefficients" %in% names(result))
-  expect_true("z" %in% names(result))
-  expect_true("pvalues" %in% names(result))
-  expect_true("original_se" %in% names(result))
+    # Check model information components
+    expect_contains(
+      names(result),
+      c("family", "constraints", "control", "call", "original_call")
+    )
 
-  # Check model information components
-  expect_true("family" %in% names(result))
-  expect_true("constraints" %in% names(result))
-  expect_true("control" %in% names(result))
-  expect_true("call" %in% names(result))
-  expect_true("original_call" %in% names(result))
+    # Check dimensions
+    p <- length(coef(m))
+    expect_equal(dim(result$var), c(p, p))
+    expect_length(result$se, p)
+    expect_length(result$coefficients, p)
+    expect_length(result$z, p)
+    expect_length(result$pvalues, p)
+    expect_equal(dim(result$scores), c(n, p))
+    expect_equal(dim(result$bread), c(p, p))
+    expect_equal(dim(result$meat), c(p, p))
 
-  # Check dimensions
-  p <- length(coef(m))
-  expect_equal(dim(result$var), c(p, p))
-  expect_length(result$se, p)
-  expect_length(result$coefficients, p)
-  expect_length(result$z, p)
-  expect_length(result$pvalues, p)
-  expect_equal(dim(result$scores), c(n, p))
-  expect_equal(dim(result$bread), c(p, p))
-  expect_equal(dim(result$meat), c(p, p))
+    # Check variance matrix is symmetric
+    expect_equal(result$var, t(result$var), tolerance = 1e-15)
 
-  # Check variance matrix is symmetric
-  expect_equal(result$var, t(result$var), tolerance = 1e-10)
+    # Check variance matrix is positive semi-definite
+    eigenvalues <- eigen(result$var, only.values = TRUE)$values
+    expect_all_true(eigenvalues >= -1e-10)
 
-  # Check variance matrix is positive semi-definite
-  eigenvalues <- eigen(result$var, only.values = TRUE)$values
-  expect_true(all(eigenvalues >= -1e-10))
+    # Check standard errors are positive
+    expect_all_true(result$se > 0)
 
-  # Check standard errors are positive
-  expect_true(all(result$se > 0))
+    # Check n matches
+    expect_equal(result$n, n)
+  })
 
-  # Check n matches
-  expect_equal(result$n, n)
-})
+  it("computes z-statistics and p-values correctly", {
+    skip_if_not_installed("VGAM")
 
+    # Generate simple test data with known effect
+    withr::local_seed(456)
+    n <- 500
+    x <- rnorm(n)
+    lp <- -0.5 + 1.5 * x # Strong effect
+    y <- rbinom(n, 1, plogis(lp))
 
-test_that("robcov_vglm computes z-statistics and p-values correctly", {
-  skip_if_not_installed("VGAM")
+    test_data <- data.frame(y = y, x = x)
 
-  # Generate simple test data with known effect
-  set.seed(456)
-  n <- 500
-  x <- rnorm(n)
-  lp <- -0.5 + 1.5 * x # Strong effect
-  y <- rbinom(n, 1, plogis(lp))
+    # Fit vglm
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
 
-  test_data <- data.frame(y = y, x = x)
+    # Compute robust covariance
+    result <- robcov_vglm(m)
 
-  # Fit vglm
-  m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
+    # Check z = coef / se
+    expected_z <- result$coefficients / result$se
+    expect_equal(result$z, expected_z, tolerance = 1e-10)
 
-  # Compute robust covariance
-  result <- robcov_vglm(m)
+    # Check p-values = 2 * pnorm(-abs(z))
+    expected_p <- 2 * pnorm(-abs(result$z))
+    expect_equal(result$pvalues, expected_p, tolerance = 1e-10)
 
-  # Check z = coef / se
-  expected_z <- result$coefficients / result$se
-  expect_equal(result$z, expected_z, tolerance = 1e-10)
+    # Check that strong effect has small p-value
+    expect_lt(result$pvalues["x"], 0.00001)
 
-  # Check p-values = 2 * pnorm(-abs(z))
-  expected_p <- 2 * pnorm(-abs(result$z))
-  expect_equal(result$pvalues, expected_p, tolerance = 1e-10)
+    # Check all p-values are in [0, 1]
+    expect_all_true(result$pvalues >= 0 & result$pvalues <= 1)
+  })
 
-  # Check that strong effect has small p-value
-  expect_lt(result$pvalues["x"], 0.05)
+  it("matches rms::robcov for binary outcome", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
 
-  # Check all p-values are in [0, 1]
-  expect_true(all(result$pvalues >= 0 & result$pvalues <= 1))
-})
+    # Generate binary outcome data
+    withr::local_seed(456)
+    n <- 500
+    x <- rnorm(n)
+    lp <- -0.5 + 0.8 * x
+    y <- rbinom(n, 1, plogis(lp))
 
+    test_data <- data.frame(y = y, x = x)
 
-test_that("robcov_vglm matches rms::robcov for binary outcome", {
-  skip_if_not_installed("VGAM")
-  skip_if_not_installed("rms")
+    # Fit orm
+    withr::local_options(datadist = "dd")
+    dd <- rms::datadist(test_data)
+    withr::local_environment(globalenv())
+    assign("dd", dd, envir = globalenv())
+    on.exit(rm("dd", envir = globalenv()), add = TRUE)
 
-  # Generate binary outcome data
-  set.seed(456)
-  n <- 500
-  x <- rnorm(n)
-  lp <- -0.5 + 0.8 * x
-  y <- rbinom(n, 1, plogis(lp))
+    m_orm <- rms::orm(y ~ x, data = test_data, x = TRUE, y = TRUE)
 
-  test_data <- data.frame(y = y, x = x)
+    # Fit vglm with binomialff (standard logistic)
+    m_vglm <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
 
-  # Fit orm
-  dd <- rms::datadist(test_data)
-  old_dd <- options(datadist = "dd")
-  on.exit(options(old_dd), add = TRUE)
+    # Compute robust covariance (unclustered)
+    orm_robust <- rms::robcov(m_orm)
+    vglm_robust <- robcov_vglm(m_vglm)
 
-  m_orm <- rms::orm(y ~ x, data = test_data, x = TRUE, y = TRUE)
+    # Compare SEs (should match to numerical precision)
+    se_orm <- sqrt(diag(vcov(orm_robust)))
+    se_vglm <- vglm_robust$se
 
-  # Fit vglm with binomialff (standard logistic)
-  m_vglm <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
+    # Use unname() because names differ between packages
+    expect_equal(unname(se_vglm), unname(se_orm), tolerance = 1e-6)
+  })
 
-  # Compute robust covariance (unclustered)
-  orm_robust <- rms::robcov(m_orm)
-  vglm_robust <- robcov_vglm(m_vglm)
+  it("matches rms::robcov for binary outcome with clustering", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
 
-  # Compare SEs (should match to numerical precision)
-  se_orm <- sqrt(diag(vcov(orm_robust)))
-  se_vglm <- vglm_robust$se
+    # Generate clustered binary outcome data
+    withr::local_seed(789)
+    n_clusters <- 50
+    n_per_cluster <- 10
+    n <- n_clusters * n_per_cluster
+    cluster <- rep(1:n_clusters, each = n_per_cluster)
 
-  # Use unname() because names differ between packages
-  expect_equal(unname(se_vglm), unname(se_orm), tolerance = 1e-5)
-})
+    x <- rnorm(n)
+    cluster_effect <- rep(rnorm(n_clusters, sd = 0.3), each = n_per_cluster)
+    lp <- -0.5 + 0.8 * x + cluster_effect
+    y <- rbinom(n, 1, plogis(lp))
 
+    test_data <- data.frame(y = y, x = x, cluster = cluster)
 
-test_that("robcov_vglm matches rms::robcov for binary outcome with clustering", {
-  skip_if_not_installed("VGAM")
-  skip_if_not_installed("rms")
+    # Fit orm
+    withr::local_options(datadist = "dd")
+    dd <- rms::datadist(test_data)
+    withr::local_environment(globalenv())
+    assign("dd", dd, envir = globalenv())
+    on.exit(rm("dd", envir = globalenv()), add = TRUE)
 
-  # Generate clustered binary outcome data
-  set.seed(789)
-  n_clusters <- 50
-  n_per_cluster <- 10
-  n <- n_clusters * n_per_cluster
-  cluster <- rep(1:n_clusters, each = n_per_cluster)
+    m_orm <- rms::orm(y ~ x, data = test_data, x = TRUE, y = TRUE)
 
-  x <- rnorm(n)
-  cluster_effect <- rep(rnorm(n_clusters, sd = 0.3), each = n_per_cluster)
-  lp <- -0.5 + 0.8 * x + cluster_effect
-  y <- rbinom(n, 1, plogis(lp))
+    # Fit vglm
+    m_vglm <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
 
-  test_data <- data.frame(y = y, x = x, cluster = cluster)
+    # Compute cluster-robust covariance (no small-sample adjustment to match rms)
+    orm_robust <- rms::robcov(m_orm, cluster = test_data$cluster)
+    vglm_robust <- robcov_vglm(
+      m_vglm,
+      cluster = test_data$cluster,
+      adjust = FALSE
+    )
 
-  # Fit orm
-  dd <- rms::datadist(test_data)
-  old_dd <- options(datadist = "dd")
-  on.exit(options(old_dd), add = TRUE)
+    # Compare SEs
+    se_orm <- sqrt(diag(vcov(orm_robust)))
+    se_vglm <- vglm_robust$se
 
-  m_orm <- rms::orm(y ~ x, data = test_data, x = TRUE, y = TRUE)
+    # Use unname() because names differ between packages
+    expect_equal(unname(se_vglm), unname(se_orm), tolerance = 1e-6)
 
-  # Fit vglm
-  m_vglm <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
+    # Check number of clusters is correct
+    expect_equal(vglm_robust$n_clusters, n_clusters)
+  })
 
-  # Compute cluster-robust covariance (no small-sample adjustment to match rms)
-  orm_robust <- rms::robcov(m_orm, cluster = test_data$cluster)
-  vglm_robust <- robcov_vglm(
-    m_vglm,
-    cluster = test_data$cluster,
-    adjust = FALSE
-  )
+  it("gives similar results to rms::robcov for ordinal outcome", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
 
-  # Compare SEs
-  se_orm <- sqrt(diag(vcov(orm_robust)))
-  se_vglm <- vglm_robust$se
-
-  # Use unname() because names differ between packages
-  expect_equal(unname(se_vglm), unname(se_orm), tolerance = 1e-6)
-
-  # Check number of clusters is correct
-  expect_equal(vglm_robust$n_clusters, n_clusters)
-})
-
-
-test_that("robcov_vglm gives similar results to rms::robcov for ordinal outcome", {
-  skip_if_not_installed("VGAM")
-  skip_if_not_installed("rms")
-
-  # Generate ordinal outcome data
-  set.seed(101)
-  n <- 400
-  x1 <- rnorm(n)
-  x2 <- rnorm(n)
-  lp <- 0.5 * x1 + 0.3 * x2
-  cuts <- c(-1, 0, 1)
-  probs <- matrix(NA, nrow = n, ncol = 4)
-  for (j in 1:4) {
-    if (j == 1) {
-      probs[, j] <- plogis(cuts[1] - lp)
-    } else if (j == 4) {
-      probs[, j] <- 1 - plogis(cuts[3] - lp)
-    } else {
-      probs[, j] <- plogis(cuts[j] - lp) - plogis(cuts[j - 1] - lp)
+    # Generate ordinal outcome data
+    withr::local_seed(101)
+    n <- 500
+    x1 <- rnorm(n)
+    x2 <- rnorm(n)
+    lp <- 0.5 * x1 + 0.3 * x2
+    cuts <- c(-1, 0, 1)
+    probs <- matrix(NA, nrow = n, ncol = 4)
+    for (j in 1:4) {
+      if (j == 1) {
+        probs[, j] <- plogis(cuts[1] - lp)
+      } else if (j == 4) {
+        probs[, j] <- 1 - plogis(cuts[3] - lp)
+      } else {
+        probs[, j] <- plogis(cuts[j] - lp) - plogis(cuts[j - 1] - lp)
+      }
     }
-  }
-  y <- apply(probs, 1, function(p) sample(1:4, 1, prob = pmax(p, 0.001)))
+    y <- apply(probs, 1, function(p) sample(1:4, 1, prob = pmax(p, 0.001)))
 
-  test_data <- data.frame(y = ordered(y), x1 = x1, x2 = x2)
+    test_data <- data.frame(y = ordered(y), x1 = x1, x2 = x2)
 
-  # Fit orm
-  dd <- rms::datadist(test_data)
-  old_dd <- options(datadist = "dd")
-  on.exit(options(old_dd), add = TRUE)
+    # Fit orm
+    withr::local_options(datadist = "dd")
+    dd <- rms::datadist(test_data)
+    withr::local_environment(globalenv())
+    assign("dd", dd, envir = globalenv())
+    on.exit(rm("dd", envir = globalenv()), add = TRUE)
 
-  m_orm <- rms::orm(y ~ x1 + x2, data = test_data, x = TRUE, y = TRUE)
+    m_orm <- rms::orm(y ~ x1 + x2, data = test_data, x = TRUE, y = TRUE)
 
-  # Fit vglm
-  m_vglm <- VGAM::vglm(
-    y ~ x1 + x2,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = test_data
-  )
+    # Fit vglm
+    m_vglm <- VGAM::vglm(
+      y ~ x1 + x2,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = test_data
+    )
 
-  # Compute robust covariance
-  orm_robust <- rms::robcov(m_orm)
-  vglm_robust <- robcov_vglm(m_vglm)
+    # Compute robust covariance
+    orm_robust <- rms::robcov(m_orm)
+    vglm_robust <- robcov_vglm(m_vglm)
 
-  # Compare regression coefficient SEs (allowing ~2% tolerance for ordinal)
-  # Extract regression coefficients (not intercepts)
-  se_orm_reg <- sqrt(diag(orm_robust$var))[c("x1", "x2")]
-  se_vglm_reg <- vglm_robust$se[c("x1", "x2")]
+    # Compare regression coefficient SEs
+    se_orm_reg <- sqrt(diag(orm_robust$var))
+    se_vglm_reg <- vglm_robust$se
 
-  # Ratios should be close to 1
-  ratios <- se_vglm_reg / se_orm_reg
-  expect_true(all(ratios > 0.97 & ratios < 1.03))
+    expect_equal(unname(se_orm_reg), unname(se_vglm_reg), tolerance = 1e-2)
+  })
+
+  it("validates inputs correctly", {
+    skip_if_not_installed("VGAM")
+
+    # Generate test data
+    withr::local_seed(404)
+    n <- 100
+    test_data <- data.frame(y = sample(1:3, n, replace = TRUE), x = rnorm(n))
+
+    # Fit vglm
+    m <- VGAM::vglm(
+      ordered(y) ~ x,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = test_data
+    )
+
+    # Should error with non-vglm object
+    expect_error(
+      robcov_vglm(lm(y ~ x, data = test_data)),
+      "must be a vglm object"
+    )
+
+    # Should error with wrong cluster length
+    expect_error(
+      robcov_vglm(m, cluster = 1:10),
+      "Length of 'cluster' must equal"
+    )
+
+    # expand
+  })
+
+  it("works with multiple predictors", {
+    skip_if_not_installed("VGAM")
+
+    # Generate test data with multiple predictors
+    withr::local_seed(707)
+    n <- 400
+    x1 <- rnorm(n)
+    x2 <- rnorm(n)
+    x3 <- rnorm(n)
+    lp <- 0.3 * x1 + 0.5 * x2 - 0.2 * x3
+    probs <- cbind(
+      plogis(-1 - lp),
+      plogis(0 - lp) - plogis(-1 - lp),
+      plogis(1 - lp) - plogis(0 - lp),
+      1 - plogis(1 - lp)
+    )
+    y <- apply(probs, 1, function(p) sample(1:4, 1, prob = pmax(p, 0.001)))
+
+    test_data <- data.frame(y = ordered(y), x1 = x1, x2 = x2, x3 = x3)
+
+    # Fit vglm
+    m <- VGAM::vglm(
+      y ~ x1 + x2 + x3,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = test_data
+    )
+
+    # Compute robust covariance
+    result <- robcov_vglm(m)
+
+    # Check we have correct number of parameters (3 intercepts + 3 reg coefs = 6)
+    expect_length(result$se, 6)
+    expect_length(result$coefficients, 6)
+    expect_length(result$z, 6)
+    expect_length(result$pvalues, 6)
+
+    # All SEs should be positive
+    expect_all_true(result$se > 0)
+
+    # Check parameter names
+    expect_contains(names(result$se), c("x1", "x2", "x3"))
+
+    # Names should be consistent across all vectors
+    expect_equal(names(result$coefficients), names(result$se))
+    expect_equal(names(result$coefficients), names(result$z))
+    expect_equal(names(result$coefficients), names(result$pvalues))
+  })
+
+  it("preserves model information", {
+    skip_if_not_installed("VGAM")
+
+    # Generate test data
+    withr::local_seed(808)
+    n <- 200
+    test_data <- data.frame(
+      y = ordered(sample(1:3, n, replace = TRUE)),
+      x = rnorm(n)
+    )
+
+    # Fit vglm
+    m <- VGAM::vglm(
+      y ~ x,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = test_data
+    )
+
+    # Compute robust covariance
+    result <- robcov_vglm(m)
+
+    # Check model information is preserved
+    expect_equal(result$coefficients, coef(m))
+    expect_equal(result$fitted.values, m@fitted.values)
+    expect_equal(result$residuals, m@residuals)
+    expect_equal(result$df.residual, m@df.residual)
+    expect_equal(result$df.total, m@df.total)
+
+    # Check family is preserved
+    expect_equal(class(result$family), class(m@family))
+
+    # Check constraints are preserved
+    expect_equal(result$constraints, m@constraints)
+
+    # Check control is preserved
+    expect_equal(result$control, m@control)
+
+    # Check original vcov matches
+    expect_equal(result$original_vcov, vcov(m))
+    expect_equal(result$original_se, sqrt(diag(vcov(m))))
+  })
 })
 
+describe("Score properties", {
+  it("sum to approximately zero", {
+    skip_if_not_installed("VGAM")
 
-test_that("score contributions sum to approximately zero", {
-  skip_if_not_installed("VGAM")
+    # Generate test data
+    withr::local_seed(202)
+    n <- 300
+    x <- rnorm(n)
+    lp <- 0.5 * x
+    probs <- cbind(
+      plogis(-1 - lp),
+      plogis(0 - lp) - plogis(-1 - lp),
+      1 - plogis(0 - lp)
+    )
+    y <- apply(probs, 1, function(p) sample(1:3, 1, prob = pmax(p, 0.001)))
 
-  # Generate test data
-  set.seed(202)
-  n <- 300
-  x <- rnorm(n)
-  lp <- 0.5 * x
-  probs <- cbind(
-    plogis(-1 - lp),
-    plogis(0 - lp) - plogis(-1 - lp),
-    1 - plogis(0 - lp)
-  )
-  y <- apply(probs, 1, function(p) sample(1:3, 1, prob = pmax(p, 0.001)))
+    test_data <- data.frame(y = ordered(y), x = x)
 
-  test_data <- data.frame(y = ordered(y), x = x)
+    # Fit vglm
+    m <- VGAM::vglm(
+      y ~ x,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = test_data
+    )
 
-  # Fit vglm
-  m <- VGAM::vglm(
-    y ~ x,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = test_data
-  )
+    # Compute robust covariance
+    result <- robcov_vglm(m)
 
-  # Compute robust covariance
-  result <- robcov_vglm(m)
-
-  # Score columns should sum to approximately zero (property of MLE)
-  score_sums <- colSums(result$scores)
-  expect_true(all(abs(score_sums) < 1e-3))
+    # Score columns should sum to approximately zero (property of MLE)
+    score_sums <- colSums(result$scores)
+    expect_all_true(abs(score_sums) < 1e-5)
+  })
 })
 
+describe("Small-sample adjustment", {
+  it("works correctly", {
+    skip_if_not_installed("VGAM")
 
-test_that("small-sample adjustment works correctly", {
-  skip_if_not_installed("VGAM")
+    # Generate clustered data
+    withr::local_seed(303)
+    n_clusters <- 20
+    n_per_cluster <- 15
+    n <- n_clusters * n_per_cluster
+    cluster <- rep(1:n_clusters, each = n_per_cluster)
 
-  # Generate clustered data
-  set.seed(303)
-  n_clusters <- 20
-  n_per_cluster <- 15
-  n <- n_clusters * n_per_cluster
-  cluster <- rep(1:n_clusters, each = n_per_cluster)
+    x <- rnorm(n)
+    y <- rbinom(n, 1, plogis(0.5 * x))
 
-  x <- rnorm(n)
-  y <- rbinom(n, 1, plogis(0.5 * x))
+    test_data <- data.frame(y = y, x = x, cluster = cluster)
 
-  test_data <- data.frame(y = y, x = x, cluster = cluster)
+    # Fit vglm
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
 
-  # Fit vglm
-  m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
+    # Compute with and without adjustment
+    result_noadj <- robcov_vglm(m, cluster = cluster, adjust = FALSE)
+    result_adj <- robcov_vglm(m, cluster = cluster, adjust = TRUE)
 
-  # Compute with and without adjustment
-  result_noadj <- robcov_vglm(m, cluster = cluster, adjust = FALSE)
-  result_adj <- robcov_vglm(m, cluster = cluster, adjust = TRUE)
+    # Adjustment factor is G/(G-1) = 20/19 ≈ 1.0526
+    expected_ratio <- sqrt(n_clusters / (n_clusters - 1))
 
-  # Adjustment factor is G/(G-1) = 20/19 ≈ 1.0526
-  expected_ratio <- sqrt(n_clusters / (n_clusters - 1))
-
-  # SEs with adjustment should be larger by this factor
-  se_ratio <- result_adj$se / result_noadj$se
-  expect_equal(
-    unname(se_ratio),
-    rep(expected_ratio, length(se_ratio)),
-    tolerance = 1e-10
-  )
+    # SEs with adjustment should be larger by this factor
+    se_ratio <- result_adj$se / result_noadj$se
+    expect_equal(
+      unname(se_ratio),
+      rep(expected_ratio, length(se_ratio)),
+      tolerance = 1e-10
+    )
+  })
 })
 
+describe("Utility methods", {
+  it("print and summary methods work", {
+    skip_if_not_installed("VGAM")
 
-test_that("robcov_vglm validates inputs correctly", {
-  skip_if_not_installed("VGAM")
+    # Generate test data
+    withr::local_seed(606)
+    n <- 100
+    test_data <- data.frame(y = sample(0:1, n, replace = TRUE), x = rnorm(n))
 
-  # Generate test data
-  set.seed(404)
-  n <- 100
-  test_data <- data.frame(y = sample(1:3, n, replace = TRUE), x = rnorm(n))
+    # Fit vglm
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
 
-  # Fit vglm
-  m <- VGAM::vglm(
-    ordered(y) ~ x,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = test_data
-  )
+    # Compute robust covariance
+    result <- robcov_vglm(m)
 
-  # Should error with non-vglm object
-  expect_error(
-    robcov_vglm(lm(y ~ x, data = test_data)),
-    "must be a vglm object"
-  )
+    # Test print method
+    expect_snapshot(print(result))
 
-  # Should error with wrong cluster length
-  expect_error(
-    robcov_vglm(m, cluster = 1:10),
-    "Length of 'cluster' must equal"
-  )
+    # Test summary method
+    expect_snapshot(summary(result))
+
+    # Test with clustering
+    cluster <- rep(1:10, each = 10)
+    result_cl <- robcov_vglm(m, cluster = cluster)
+    expect_snapshot(summary(result_cl))
+
+    # Test with clustering and adjustment
+    result_adj <- robcov_vglm(m, cluster = cluster, adjust = TRUE)
+    expect_snapshot(summary(result_adj))
+
+    # Test print method returns invisibly
+    expect_invisible(print(result))
+
+    # Test summary returns coefficient table
+    summary_result <- summary(result)
+    expect_contains(names(summary_result), "coefficients")
+    expect_s3_class(summary_result$coefficients, "data.frame")
+    expect_contains(
+      names(summary_result$coefficients),
+      c("Estimate", "Std. Error", "z value", "Pr(>|z|)")
+    )
+  })
+
+  it("coef and vcov methods work correctly", {
+    skip_if_not_installed("VGAM")
+
+    # Generate test data
+    withr::local_seed(707)
+    n <- 100
+    test_data <- data.frame(y = sample(0:1, n, replace = TRUE), x = rnorm(n))
+
+    # Fit vglm
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
+
+    # Compute robust covariance
+    result <- robcov_vglm(m)
+
+    # Test coef method
+    expect_equal(coef(result), result$coefficients)
+    expect_equal(coef(result), coef(m))
+    expect_length(coef(result), 2) # intercept + x
+
+    # Test vcov method
+    expect_equal(vcov(result), result$var)
+    expect_equal(dim(vcov(result)), c(2, 2))
+    expect_equal(vcov(result), t(vcov(result))) # symmetric
+  })
 })
 
+# Stress Tests & Edge Cases for robcov_vglm
+#
+# These tests focus on "breaking" the function with:
+# 1. Missing data (NAs) handling
+# 2. Models with weights and offsets
+# 3. Non-parallel (Partial Proportional Odds) models
+# 4. Rank-deficient clusters (clusters < parameters)
+# 5. Factor levels issues (empty levels)
 
-test_that("compare_se_orm_vglm produces correct comparison", {
-  skip_if_not_installed("VGAM")
-  skip_if_not_installed("rms")
+describe("robcov_vglm() stress tests", {
+  it("handles missing data correctly (alignment with clusters)", {
+    skip_if_not_installed("VGAM")
 
-  # Generate test data with 4 levels (more typical for ordinal)
-  set.seed(505)
-  n <- 300
-  x <- rnorm(n)
-  lp <- 0.5 * x
-  probs <- cbind(
-    plogis(-1.5 - lp),
-    plogis(-0.5 - lp) - plogis(-1.5 - lp),
-    plogis(0.5 - lp) - plogis(-0.5 - lp),
-    1 - plogis(0.5 - lp)
-  )
-  y <- apply(probs, 1, function(p) sample(1:4, 1, prob = pmax(p, 0.001)))
+    # Generate data with NAs
+    withr::local_seed(9001)
+    n <- 200
+    x <- rnorm(n)
+    y <- rbinom(n, 1, 0.5)
 
-  test_data <- data.frame(y = ordered(y), x = x)
+    # Introduce NAs in predictors and outcome
+    x[1:10] <- NA
+    y[11:20] <- NA
 
-  # Fit orm
-  dd <- rms::datadist(test_data)
-  old_dd <- options(datadist = "dd")
-  on.exit(options(old_dd), add = TRUE)
+    test_data <- data.frame(y = y, x = x, id = 1:n)
 
-  m_orm <- rms::orm(y ~ x, data = test_data, x = TRUE, y = TRUE)
+    # Fit vglm (will drop 20 rows)
+    # Note: vglm does not have a 'na.action' argument by default like lm,
+    # but handles NAs by dropping them if na.action is set globally or in model.frame
+    # We explicitly remove NAs to simulate the user passing "clean" data vs "dirty" clusters
 
-  # Fit vglm
-  m_vglm <- VGAM::vglm(
-    y ~ x,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = test_data
-  )
+    clean_data <- na.omit(test_data)
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = clean_data)
 
-  # Compare
-  comparison <- compare_se_orm_vglm(m_orm, m_vglm)
+    # Case 1: Cluster vector is too long (user forgot to drop NAs from cluster var)
+    # This simulates a very common user error
+    expect_error(
+      robcov_vglm(m, cluster = test_data$id),
+      "Length of 'cluster' must equal"
+    )
 
-  # Check output structure
-  expect_s3_class(comparison, "data.frame")
-  expect_true(all(
-    c(
-      "parameter",
-      "se_orm_model",
-      "se_vglm_model",
-      "se_orm_robust",
-      "se_vglm_robust",
-      "ratio_model",
-      "ratio_robust"
-    ) %in%
-      names(comparison)
-  ))
+    # Case 2: Correct usage
+    res <- robcov_vglm(m, cluster = clean_data$id)
+    expect_s3_class(res, "robcov_vglm")
+    expect_equal(res$n, 180) # 200 - 20 dropped
+  })
 
-  # Check that ratios are reasonable (close to 1)
-  expect_true(all(comparison$ratio_model > 0.9 & comparison$ratio_model < 1.1))
-  expect_true(all(
-    comparison$ratio_robust > 0.9 & comparison$ratio_robust < 1.1
-  ))
+  it("works with model weights", {
+    skip_if_not_installed("VGAM")
 
-  # Check number of rows matches number of parameters (should have 3 intercepts + 1 coef = 4)
-  n_params <- length(coef(m_orm))
-  expect_equal(nrow(comparison), n_params)
-})
+    withr::local_seed(9002)
+    n <- 100
+    x <- rnorm(n)
+    y <- rbinom(n, 1, 0.5)
+    weights <- runif(n, 0.5, 2)
 
+    test_data <- data.frame(y = y, x = x, w = weights)
 
-test_that("print and summary methods work", {
-  skip_if_not_installed("VGAM")
+    # Fit weighted model
+    m <- VGAM::vglm(
+      y ~ x,
+      family = VGAM::binomialff,
+      data = test_data,
+      weights = w
+    )
 
-  # Generate test data
-  set.seed(606)
-  n <- 100
-  test_data <- data.frame(y = sample(0:1, n, replace = TRUE), x = rnorm(n))
+    # Robust covariance should account for weights implicitly via the score function
+    # (VGAM::weights(deriv=TRUE) returns weighted derivatives)
+    res <- robcov_vglm(m)
 
-  # Fit vglm
-  m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
+    expect_all_true(res$se > 0)
+    expect_equal(length(res$se), 2)
+  })
 
-  # Compute robust covariance
-  result <- robcov_vglm(m)
+  it("works with model offsets", {
+    skip_if_not_installed("VGAM")
 
-  # Test print method
-  output_print <- capture.output(print(result))
-  expect_true(any(grepl("Robust", output_print)))
-  expect_true(any(grepl("Number of observations", output_print)))
-  expect_true(any(grepl("Coefficients", output_print)))
-  expect_true(any(grepl("Robust SE", output_print)))
+    withr::local_seed(9003)
+    n <- 100
+    x <- rnorm(n)
+    off <- rep(0.5, n) # fixed offset
+    y <- rbinom(n, 1, plogis(0.5 * x + off))
 
-  # Test summary method
-  output_summary <- capture.output(summary(result))
-  expect_true(any(grepl("Robust", output_summary)))
-  expect_true(any(grepl("Number of observations", output_summary)))
-  expect_true(any(grepl("Estimate", output_summary)))
-  expect_true(any(grepl("Std. Error", output_summary)))
-  expect_true(any(grepl("z value", output_summary)))
-  expect_true(any(grepl("Pr\\(>\\|z\\|\\)", output_summary)))
-  expect_true(any(grepl("Signif. codes", output_summary)))
+    test_data <- data.frame(y = y, x = x, off = off)
 
-  # Test with clustering
-  cluster <- rep(1:10, each = 10)
-  result_cl <- robcov_vglm(m, cluster = cluster)
-  output_cl <- capture.output(summary(result_cl))
-  expect_true(any(grepl("Number of clusters", output_cl)))
+    # Fit model with offset
+    m <- VGAM::vglm(
+      y ~ x,
+      family = VGAM::binomialff,
+      data = test_data,
+      offset = off
+    )
 
-  # Test with clustering and adjustment
-  result_adj <- robcov_vglm(m, cluster = cluster, adjust = TRUE)
-  output_adj <- capture.output(summary(result_adj))
-  expect_true(any(grepl("Small-sample adjustment", output_adj)))
+    res <- robcov_vglm(m)
 
-  # Test print method returns invisibly
-  expect_invisible(print(result))
+    # Check that it didn't crash and produced valid SEs
+    expect_s3_class(res, "robcov_vglm")
+    expect_all_true(res$se > 0)
 
-  # Test summary returns coefficient table
-  summary_result <- summary(result)
-  expect_true("coefficients" %in% names(summary_result))
-  expect_s3_class(summary_result$coefficients, "data.frame")
-  expect_true(all(
-    c("Estimate", "Std. Error", "z value", "Pr(>|z|)") %in%
-      names(summary_result$coefficients)
-  ))
-})
+    # Offset should act like a fixed intercept shift, not a parameter
+    expect_contains(names(coef(res)), c("(Intercept)", "x"))
+    expect_false("off" %in% names(coef(res)))
+  })
 
+  it("handles non-parallel (general) ordinal models", {
+    skip_if_not_installed("VGAM")
 
-test_that("coef and vcov methods work correctly", {
-  skip_if_not_installed("VGAM")
+    # Generate ordinal data
+    withr::local_seed(9004)
+    n <- 300
+    x <- rnorm(n)
+    y <- sample(1:3, n, replace = TRUE)
+    test_data <- data.frame(y = ordered(y), x = x)
 
-  # Generate test data
-  set.seed(707)
-  n <- 100
-  test_data <- data.frame(y = sample(0:1, n, replace = TRUE), x = rnorm(n))
+    # Fit model WITHOUT parallel assumption
+    # This means 'x' will have a different effect for 1->2 vs 2->3
+    m_nopar <- VGAM::vglm(
+      y ~ x,
+      family = VGAM::cumulative(parallel = FALSE),
+      data = test_data
+    )
 
-  # Fit vglm
-  m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
+    res <- robcov_vglm(m_nopar)
 
-  # Compute robust covariance
-  result <- robcov_vglm(m)
+    # Parameters should be: (Intercept):1, (Intercept):2, x:1, x:2
+    # Total = 4 parameters
+    expect_length(coef(res), 4)
 
-  # Test coef method
-  expect_equal(coef(result), result$coefficients)
-  expect_equal(coef(result), coef(m))
-  expect_length(coef(result), 2) # intercept + x
+    # Check dimensions of variance matrix
+    expect_equal(dim(res$var), c(4, 4))
 
-  # Test vcov method
-  expect_equal(vcov(result), result$var)
-  expect_equal(dim(vcov(result)), c(2, 2))
-  expect_equal(vcov(result), t(vcov(result))) # symmetric
-})
+    # Ensure all SEs are positive
+    expect_all_true(res$se > 0)
+  })
 
+  it("handles rank-deficient clusters (More parameters than clusters)", {
+    skip_if_not_installed("VGAM")
 
-test_that("robcov_vglm works with multiple predictors", {
-  skip_if_not_installed("VGAM")
+    # Scenario: 5 clusters, but model has 2 parameters
+    # This is "risky" but mathematically possible.
+    # Real danger is if Clusters < Parameters (e.g., 2 clusters, 5 params)
 
-  # Generate test data with multiple predictors
-  set.seed(707)
-  n <- 400
-  x1 <- rnorm(n)
-  x2 <- rnorm(n)
-  x3 <- rnorm(n)
-  lp <- 0.3 * x1 + 0.5 * x2 - 0.2 * x3
-  probs <- cbind(
-    plogis(-1 - lp),
-    plogis(0 - lp) - plogis(-1 - lp),
-    plogis(1 - lp) - plogis(0 - lp),
-    1 - plogis(1 - lp)
-  )
-  y <- apply(probs, 1, function(p) sample(1:4, 1, prob = pmax(p, 0.001)))
+    withr::local_seed(9005)
+    n_clusters <- 3
+    n_per <- 20
+    n <- n_clusters * n_per
+    cluster <- rep(1:n_clusters, each = n_per)
+    x1 <- rnorm(n)
+    x2 <- rnorm(n)
+    x3 <- rnorm(n)
+    y <- rbinom(n, 1, 0.5)
 
-  test_data <- data.frame(y = ordered(y), x1 = x1, x2 = x2, x3 = x3)
+    test_data <- data.frame(y = y, x1 = x1, x2 = x2, x3 = x3, cluster = cluster)
 
-  # Fit vglm
-  m <- VGAM::vglm(
-    y ~ x1 + x2 + x3,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = test_data
-  )
+    # Model has 4 params (Int + x1 + x2 + x3), but only 3 clusters
+    # The meat matrix will be rank deficient (rank at most 3)
+    m <- VGAM::vglm(
+      y ~ x1 + x2 + x3,
+      family = VGAM::binomialff,
+      data = test_data
+    )
 
-  # Compute robust covariance
-  result <- robcov_vglm(m)
+    # This should NOT crash, but might produce warnings or singular matrices
+    # We want to ensure the code is robust enough to return *something*
+    res <- robcov_vglm(m, cluster = cluster)
 
-  # Check we have correct number of parameters (3 intercepts + 3 reg coefs = 6)
-  expect_length(result$se, 6)
-  expect_length(result$coefficients, 6)
-  expect_length(result$z, 6)
-  expect_length(result$pvalues, 6)
+    expect_s3_class(res, "robcov_vglm")
 
-  # All SEs should be positive
-  expect_true(all(result$se > 0))
+    # Check if the variance matrix is singular (determinant approx 0)
+    # We expect it to be singular here because Rank(Meat) <= 3 < 4
+    # But robcov_vglm shouldn't crash
+    expect_equal(res$n_clusters, 3)
+  })
 
-  # Check parameter names
-  expect_true("x1" %in% names(result$se))
-  expect_true("x2" %in% names(result$se))
-  expect_true("x3" %in% names(result$se))
+  it("handles clusters with empty factor levels", {
+    skip_if_not_installed("VGAM")
 
-  # Names should be consistent across all vectors
-  expect_equal(names(result$coefficients), names(result$se))
-  expect_equal(names(result$coefficients), names(result$z))
-  expect_equal(names(result$coefficients), names(result$pvalues))
-})
+    withr::local_seed(9006)
+    n <- 50
+    x <- rnorm(n)
+    y <- rbinom(n, 1, 0.5)
 
+    # Create factor with levels "A", "B", "C", but only use "A" and "B"
+    cluster_char <- sample(c("A", "B"), n, replace = TRUE)
+    cluster_fac <- factor(cluster_char, levels = c("A", "B", "C"))
 
-test_that("robcov_vglm preserves model information", {
-  skip_if_not_installed("VGAM")
+    test_data <- data.frame(y = y, x = x, cluster = cluster_fac)
 
-  # Generate test data
-  set.seed(808)
-  n <- 200
-  test_data <- data.frame(
-    y = ordered(sample(1:3, n, replace = TRUE)),
-    x = rnorm(n)
-  )
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
 
-  # Fit vglm
-  m <- VGAM::vglm(
-    y ~ x,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = test_data
-  )
+    # This ensures rowsum() or internal logic doesn't create NA rows for empty level "C"
+    res <- robcov_vglm(m, cluster = cluster_fac)
 
-  # Compute robust covariance
-  result <- robcov_vglm(m)
+    expect_s3_class(res, "robcov_vglm")
 
-  # Check model information is preserved
-  expect_equal(result$coefficients, coef(m))
-  expect_equal(result$fitted.values, m@fitted.values)
-  expect_equal(result$residuals, m@residuals)
-  expect_equal(result$df.residual, m@df.residual)
-  expect_equal(result$df.total, m@df.total)
-
-  # Check family is preserved
-  expect_equal(class(result$family), class(m@family))
-
-  # Check constraints are preserved
-  expect_equal(result$constraints, m@constraints)
-
-  # Check control is preserved
-  expect_equal(result$control, m@control)
-
-  # Check original vcov matches
-  expect_equal(result$original_vcov, vcov(m))
-  expect_equal(result$original_se, sqrt(diag(vcov(m))))
+    # Should only detect 2 actual clusters (A and B), not 3 factor levels
+    expect_equal(res$n_clusters, 2)
+    expect_all_true(!is.na(res$se))
+  })
 })

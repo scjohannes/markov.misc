@@ -41,7 +41,7 @@ fit_functions. Example:
 \item{output_path}{Character. Path to directory where results will be saved
 (required). Two subdirectories will be created:
 \itemize{
-\item \verb{summary/analysis_name/}: Summary statistics (first element of fit function return)
+\item \verb{summary/analysis_name/}: (Deprecated) Summary statistics (first element of fit function return)
 \item \verb{details/analysis_name/}: Additional results (remaining elements of fit function return)
 }}
 
@@ -64,6 +64,16 @@ bootstrap distributions, SOPs, detailed model output). Saved to
 
 \item{seed}{Integer. Base random seed (default: 123). Actual seed will be
 \code{seed + iter_num}.}
+
+\item{rerandomize}{Logical. If TRUE, rerandomizes treatment assignment within
+the sampled data. This is useful for Type I error simulations where the null
+hypothesis of no treatment effect should hold. Default is FALSE.}
+
+\item{id_var}{Character. Name of the patient identifier variable in the data.
+Used for rerandomization. Default is "id".}
+
+\item{tx_var}{Character. Name of the treatment indicator variable in the data.
+Used for rerandomization. Default is "tx".}
 }
 \value{
 A tibble combining results from all analysis functions with columns:
@@ -118,7 +128,7 @@ SOPs, detailed output, etc.)
 \strong{File saving}:
 The function saves results to two separate directory structures:
 \enumerate{
-\item \strong{Summary results} (first list element): Saved to
+\item \strong{Summary results} (first list element) (Deprecated): Saved to
 \code{output_path/summary/analysis_name/analysis_name_iter_N.rds}
 \item \strong{Additional results} (remaining list elements): Saved to
 \code{output_path/details/analysis_name/analysis_name_iter_N.rds}
@@ -139,7 +149,7 @@ within individual fitting functions, not by this orchestrator. This design:
 simulation iterations:
 
 \if{html}{\out{<div class="sourceCode r">}}\preformatted{library(furrr)
-plan(multisession, workers = 8)
+plan(future.callr::callr, workers = 8)
 results <- future_map_dfr(
   1:1000,
   ~assess_operating_characteristics(iter_num = ., ...),
@@ -221,7 +231,7 @@ fit_ttest <- function(data, iter) {
 
 # Parallelize across iterations - each gets different sample
 library(furrr)
-plan(multisession, workers = 8)
+plan(future.callr::callr, workers = 8)
 results <- future_map_dfr(
   1:1000,
   ~assess_operating_characteristics(

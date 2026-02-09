@@ -9,7 +9,7 @@ bootstrap_standardized_sops(
   data,
   n_boot,
   workers = NULL,
-  parallel = FALSE,
+  parallel = NULL,
   ylevels = factor(1:6),
   absorb = 6,
   include_coefs = TRUE,
@@ -29,19 +29,29 @@ model updating with bootstrap samples.}
 
 \item{n_boot}{Number of bootstrap samples}
 
-\item{workers}{Number of workers used for parallelization. Default is
-NULL}
+\item{workers}{Number of workers for parallel processing. If NULL (default)
+or 1, sequential processing is used. If > 1, uses parallel processing.
+Set to NULL only if this function is being called in isolation. If you're
+running multiple simulations in parallel at a higher level, keep this at
+NULL or 1 to avoid nested parallelization and resource contention.}
 
-\item{parallel}{Whether parallelization should be used (default FALSE).
-Set to TRUE only if this function is being called in isolation. If you're
-running multiple simulations in parallel at a higher level, keep this FALSE
-to avoid nested parallelization and resource contention.}
+\item{parallel}{(Deprecated) Logical indicating whether to use parallel
+processing. Use the \code{workers} parameter instead.}
 
 \item{ylevels}{States in the data (e.g., 1:6)}
 
 \item{absorb}{Absorbing state (e.g., 6 for death)}
 
+\item{include_coefs}{Logical. If TRUE (default), returns the treatment coefficient
+from each bootstrap iteration in addition to the SOPs.}
+
 \item{times}{Time points in the data. Default is \code{1:max(data[["time"]])}}
+
+\item{update_datadist}{Logical. If TRUE (default), updates the datadist object
+in the global environment for each bootstrap sample. Required for rms models.}
+
+\item{use_coefstart}{Logical. If TRUE, uses the original model coefficients as
+starting values when refitting. Default is FALSE.}
 
 \item{varnames}{List of variable names in the data with components:
 \itemize{
@@ -51,8 +61,9 @@ to avoid nested parallelization and resource contention.}
 \item tx: treatment indicator (default "tx")
 }}
 
-\item{coefs}{Should the coefficients of treatment for each bootstrap iteration
-also be returned?}
+\item{t_covs}{Optional data frame for non-linear time handling (e.g., splines).
+Rows must match the length of \code{times}, with columns matching the
+time-varying covariate names used in the model formula.}
 }
 \value{
 A tibble with columns:

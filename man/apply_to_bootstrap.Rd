@@ -9,8 +9,8 @@ apply_to_bootstrap(
   analysis_fn,
   data,
   id_var,
-  parallel = FALSE,
   workers = NULL,
+  parallel = NULL,
   packages = c("rms", "VGAM", "Hmisc", "stats", "dplyr"),
   globals = character(0)
 )
@@ -28,11 +28,12 @@ be joined with boot_samples on each worker to materialize the data.}
 
 \item{id_var}{Name of the grouping variable in data (e.g., "id")}
 
-\item{parallel}{Logical indicating whether to use parallel processing
-(default FALSE)}
+\item{workers}{Number of workers for parallel processing. If NULL (default)
+or 1, sequential processing is used. If > 1, uses parallel processing with
+future.callr::callr strategy.}
 
-\item{workers}{Number of workers for parallel processing. If NULL (default),
-uses parallel::detectCores() - 1}
+\item{parallel}{(Deprecated) Logical indicating whether to use parallel
+processing. Use the \code{workers} parameter instead.}
 
 \item{packages}{Character vector of packages needed by \code{analysis_fn}.
 Default is c("rms", "VGAM", "Hmisc", "stats", "dplyr")}
@@ -59,11 +60,10 @@ This function implements a memory-efficient just-in-time bootstrap approach:
 \item Full bootstrap datasets are never stored in memory simultaneously
 }
 
-If \code{parallel = TRUE}, uses future.callr::callr strategy for parallel
+If \code{workers} is NULL or 1, uses sequential processing with purrr::map().
+If \code{workers > 1}, uses future.callr::callr strategy for parallel
 processing, which provides isolated R processes for each worker. This makes
 it safe to modify the global environment (e.g., for datadist).
-
-If \code{parallel = FALSE}, uses sequential processing with purrr::map().
 }
 \examples{
 \dontrun{
@@ -90,7 +90,7 @@ results <- apply_to_bootstrap(
   analysis_fn = analyze_boot,
   data = my_data,
   id_var = "id",
-  parallel = TRUE,
+  workers = 8,
   globals = c("original_model")
 )
 }

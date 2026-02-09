@@ -16,7 +16,9 @@ standardize_sops(
 )
 }
 \arguments{
-\item{model}{A fitted model object (orm, vglm, rmsb).}
+\item{model}{A fitted model object (orm, vglm, rmsb). For \code{vglm} models,
+the family \strong{must} be \code{cumulative(reverse = TRUE, ...)}. Other families or
+\code{reverse = FALSE} will be rejected with an error.}
 
 \item{data}{A data frame containing patient trajectory data.}
 

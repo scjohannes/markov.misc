@@ -53,6 +53,9 @@
 #' }
 #'
 #' @importFrom dplyr filter mutate
+#' @importFrom stats setNames aggregate model.matrix predict
+#' @importFrom utils modifyList
+#' @importFrom methods slot
 #'
 #' @export
 prepare_markov_data <- function(
@@ -193,7 +196,7 @@ relevel_factors_consecutive <- function(
   }
 
   # Create mapping from old to new state numbers
-  state_mapping <- setNames(seq_along(states_present), states_present)
+  state_mapping <- stats::setNames(seq_along(states_present), states_present)
 
   # Relevel each factor column
   for (col in factor_cols) {
@@ -536,6 +539,9 @@ states_to_tte_old <- function(
 #' @param covariates Character vector of additional covariate names to include in
 #'   the output (default: c("age", "sofa")). The first value of each covariate
 #'   per patient will be retained.
+#' @param absorbing_state Integer. The absorbing state code (e.g., 6 for death).
+#'   Rows where \code{yprev} equals the absorbing state are filtered out, as
+#'   transitions from the absorbing state are not meaningful. Default is 6.
 #'
 #' @return A tibble in start-stop format with columns:
 #'   \code{id}, \code{tx}, \code{start}, \code{stop}, \code{y}, \code{yprev},
@@ -940,6 +946,8 @@ tidy_bootstrap_coefs <- function(
 #'   in the `y` column (default: 1).
 #' @param death_status Integer code identifying the competing event (e.g., death)
 #'   in the `y` column (default: 6).
+#' @param version_old Logical. If TRUE (default), uses the original implementation.
+#'   If FALSE, uses an updated implementation with different logic for status assignment.
 #'
 #' @return A data frame where each row represents an interval at risk. The output
 #'   includes a `status` column:

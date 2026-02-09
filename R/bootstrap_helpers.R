@@ -176,10 +176,11 @@ materialize_bootstrap_sample <- function(boot_ids, data, id_var) {
 #' @param data The original data frame (before bootstrap sampling). This will
 #'   be joined with boot_samples on each worker to materialize the data.
 #' @param id_var Name of the grouping variable in data (e.g., "id")
-#' @param parallel Logical indicating whether to use parallel processing
-#'   (default FALSE)
-#' @param workers Number of workers for parallel processing. If NULL (default),
-#'   uses parallel::detectCores() - 1
+#' @param workers Number of workers for parallel processing. If NULL (default)
+#'   or 1, sequential processing is used. If > 1, uses parallel processing with
+#'   future.callr::callr strategy.
+#' @param parallel (Deprecated) Logical indicating whether to use parallel
+#'   processing. Use the \code{workers} parameter instead.
 #' @param packages Character vector of packages needed by \code{analysis_fn}.
 #'   Default is c("rms", "VGAM", "Hmisc", "stats", "dplyr")
 #' @param globals Character vector of global variables/functions needed by
@@ -198,11 +199,10 @@ materialize_bootstrap_sample <- function(boot_ids, data, id_var) {
 #'   \item Full bootstrap datasets are never stored in memory simultaneously
 #' }
 #'
-#' If \code{parallel = TRUE}, uses future.callr::callr strategy for parallel
+#' If \code{workers} is NULL or 1, uses sequential processing with purrr::map().
+#' If \code{workers > 1}, uses future.callr::callr strategy for parallel
 #' processing, which provides isolated R processes for each worker. This makes
 #' it safe to modify the global environment (e.g., for datadist).
-#'
-#' If \code{parallel = FALSE}, uses sequential processing with purrr::map().
 #'
 #' @examples
 #' \dontrun{
@@ -229,7 +229,7 @@ materialize_bootstrap_sample <- function(boot_ids, data, id_var) {
 #'   analysis_fn = analyze_boot,
 #'   data = my_data,
 #'   id_var = "id",
-#'   parallel = TRUE,
+#'   workers = 8,
 #'   globals = c("original_model")
 #' )
 #' }
@@ -245,15 +245,26 @@ apply_to_bootstrap <- function(
   analysis_fn,
   data,
   id_var,
-  parallel = FALSE,
   workers = NULL,
+  parallel = NULL,
   packages = c("rms", "VGAM", "Hmisc", "stats", "dplyr"),
   globals = character(0)
 ) {
-  # Set up workers
-  if (is.null(workers)) {
-    workers <- parallel::detectCores() - 1
+  # Handle deprecated parallel parameter
+  if (!is.null(parallel)) {
+    warning(
+      "The 'parallel' argument is deprecated. ",
+      "Please use 'workers' instead.\n",
+      "  - For sequential processing: workers = NULL or workers = 1\n",
+      "  - For parallel processing: workers = N (e.g., workers = 8)"
+    )
+    if (parallel && is.null(workers)) {
+      workers <- parallel::detectCores() - 1
+    }
   }
+
+  # Determine whether to parallelize based on workers
+  use_parallel <- !is.null(workers) && workers > 1
 
   # Wrapper function that materializes data then runs analysis
   wrapper_fn <- function(boot_ids) {
@@ -265,7 +276,7 @@ apply_to_bootstrap <- function(
   }
 
   # Apply function to bootstrap samples
-  if (parallel) {
+  if (use_parallel) {
     plan(callr, workers = workers)
 
     results <- furrr::future_map(
@@ -300,16 +311,29 @@ apply_to_bootstrap <- function(
 #' @param absorb Absorbing state in original levels
 #' @param update_datadist Logical indicating whether to update datadist
 #'   (only needed for rms::orm models)
+#' @param use_coefstart Logical indicating whether to use starting coefficients
+#'   from the original model when refitting (only for vglm models).
 #'
 #' @return A list with components:
-#'   - model: Refitted model on bootstrap data (or NULL if fitting failed)
-#'   - data: Bootstrap data with releveled factors
-#'   - ylevels: Updated ylevels (or NULL if not provided)
-#'   - absorb: Updated absorb (or NULL if not provided)
-#'   - missing_states: Character vector of missing state levels
+#'   \itemize{
+#'     \item model: Refitted model on bootstrap data (or NULL if fitting failed)
+#'     \item data: Bootstrap data with releveled factors
+#'     \item ylevels: Updated ylevels (or NULL if not provided)
+#'     \item absorb: Updated absorb (or NULL if not provided)
+#'     \item missing_states: Character vector of missing state levels
+#'   }
 #'
-#' @keywords internal
-#' @noRd
+#' @details
+#' This function wraps common bootstrap operations:
+#' 1. Relevel factors to consecutive integers if states are missing
+#' 2. Update datadist for rms models
+
+#' 3. Refit the model on the bootstrap data
+#'
+#' @seealso [relevel_factors_consecutive()], [fast_group_bootstrap()],
+#'   [apply_to_bootstrap()]
+#'
+#' @export
 
 bootstrap_analysis_wrapper <- function(
   boot_data,

@@ -13,10 +13,15 @@
 #'   because the ID variable is needed for group bootstrap but is typically not included
 #'   in the model formula.
 #' @param n_boot Number of bootstrap samples
-#' @param workers Number of workers used for parallelization. Default is
-#'   parallel::detectCores() - 1
-#' @param parallel Whether parallelization should be used (default FALSE)
+#' @param workers Number of workers for parallel processing. If NULL (default)
+#'   or 1, sequential processing is used. If > 1, uses parallel processing.
+#' @param parallel (Deprecated) Logical indicating whether to use parallel
+#'   processing. Use the \code{workers} parameter instead.
 #' @param id_var Name of the ID variable for group bootstrap (default "id")
+#' @param use_coefstart Logical. If TRUE, uses the original model coefficients as
+#'   starting values when refitting. This can speed up convergence but may affect
+#'   results if bootstrap samples differ substantially from the original data.
+#'   Default is FALSE.
 #'
 #' @return A tibble with bootstrap results. Each row represents one bootstrap
 #'   iteration and contains:
@@ -92,10 +97,23 @@ bootstrap_model_coefs <- function(
   data = NULL,
   n_boot,
   workers = NULL,
-  parallel = FALSE,
+  parallel = NULL,
   id_var = "id",
   use_coefstart = FALSE
 ) {
+  # Handle deprecated parallel parameter
+  if (!is.null(parallel)) {
+    warning(
+      "The 'parallel' argument is deprecated. ",
+      "Please use 'workers' instead.\n",
+      "  - For sequential processing: workers = NULL or workers = 1\n",
+      "  - For parallel processing: workers = N (e.g., workers = 8)"
+    )
+    if (parallel && is.null(workers)) {
+      workers <- parallel::detectCores() - 1
+    }
+  }
+
   # Check model class
   if (!inherits(model, "orm") && !inherits(model, "vglm")) {
     stop(
@@ -120,8 +138,9 @@ bootstrap_model_coefs <- function(
   # Check for yprev variable and warn if not a factor
   if ("yprev" %in% names(data) && !is.factor(data$yprev)) {
     warning(
-      "Variable 'yprev' should be a factor but is not. "
+      "Variable 'yprev' should be a factor but is not. Converting to factor."
     )
+    data$yprev <- factor(data$yprev)
   }
 
   # Identify factor columns
@@ -165,7 +184,6 @@ bootstrap_model_coefs <- function(
     analysis_fn = analysis_fn,
     data = data,
     id_var = id_var,
-    parallel = parallel,
     workers = workers,
     packages = c("rms", "VGAM", "stats", "dplyr"),
     globals = c(
@@ -199,17 +217,22 @@ bootstrap_model_coefs <- function(
 #'   model updating with bootstrap samples.
 #' @param data A data frame containing the patient trajectory data
 #' @param n_boot Number of bootstrap samples
-#' @param workers Number of workers used for parallelization. Default is
-#'   NULL
-#' @param parallel Whether parallelization should be used (default FALSE).
-#'   Set to TRUE only if this function is being called in isolation. If you're
-#'   running multiple simulations in parallel at a higher level, keep this FALSE
-#'   to avoid nested parallelization and resource contention.
+#' @param workers Number of workers for parallel processing. If NULL (default)
+#'   or 1, sequential processing is used. If > 1, uses parallel processing.
+#'   Set to NULL only if this function is being called in isolation. If you're
+#'   running multiple simulations in parallel at a higher level, keep this at
+#'   NULL or 1 to avoid nested parallelization and resource contention.
+#' @param parallel (Deprecated) Logical indicating whether to use parallel
+#'   processing. Use the \code{workers} parameter instead.
 #' @param ylevels States in the data (e.g., 1:6)
 #' @param absorb Absorbing state (e.g., 6 for death)
-#' @param coefs Should the coefficients of treatment for each bootstrap iteration
-#'    also be returned?
+#' @param include_coefs Logical. If TRUE (default), returns the treatment coefficient
+#'   from each bootstrap iteration in addition to the SOPs.
 #' @param times Time points in the data. Default is \code{1:max(data[["time"]])}
+#' @param update_datadist Logical. If TRUE (default), updates the datadist object
+#'   in the global environment for each bootstrap sample. Required for rms models.
+#' @param use_coefstart Logical. If TRUE, uses the original model coefficients as
+#'   starting values when refitting. Default is FALSE.
 #' @param varnames List of variable names in the data with components:
 #'   \itemize{
 #'     \item tvarname: time variable name (default "time")
@@ -217,6 +240,9 @@ bootstrap_model_coefs <- function(
 #'     \item id: patient identifier (default "id")
 #'     \item tx: treatment indicator (default "tx")
 #'   }
+#' @param t_covs Optional data frame for non-linear time handling (e.g., splines).
+#'   Rows must match the length of \code{times}, with columns matching the
+#'   time-varying covariate names used in the model formula.
 #'
 #' @return A tibble with columns:
 #'   \itemize{
@@ -324,20 +350,33 @@ bootstrap_model_coefs <- function(
 #' @export
 
 bootstrap_standardized_sops <- function(
-    model,
-    data,
-    n_boot,
-    workers = NULL,
-    parallel = FALSE,
-    ylevels = factor(1:6),
-    absorb = 6,
-    include_coefs = TRUE,
-    times = NULL,
-    update_datadist = TRUE,
-    use_coefstart = FALSE,
-    varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
-    t_covs = NULL
+  model,
+  data,
+  n_boot,
+  workers = NULL,
+  parallel = NULL,
+  ylevels = factor(1:6),
+  absorb = 6,
+  include_coefs = TRUE,
+  times = NULL,
+  update_datadist = TRUE,
+  use_coefstart = FALSE,
+  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx"),
+  t_covs = NULL
 ) {
+  # Handle deprecated parallel parameter
+  if (!is.null(parallel)) {
+    warning(
+      "The 'parallel' argument is deprecated. ",
+      "Please use 'workers' instead.\n",
+      "  - For sequential processing: workers = NULL or workers = 1\n",
+      "  - For parallel processing: workers = N (e.g., workers = 8)"
+    )
+    if (parallel && is.null(workers)) {
+      workers <- parallel::detectCores() - 1
+    }
+  }
+
   # Check model class
   if (!inherits(model, "orm") && !inherits(model, "vglm")) {
     stop(
@@ -383,8 +422,8 @@ bootstrap_standardized_sops <- function(
     if (is.null(m_boot)) {
       return(list(
         sop_result = NULL,
-        coefs = NULL)
-      )
+        coefs = NULL
+      ))
     }
 
     # Get states present in original numbering (for mapping back later)
@@ -415,7 +454,9 @@ bootstrap_standardized_sops <- function(
     if (include_coefs == TRUE) {
       # Extract coefficients
       coefs <- as.list(coef(m_boot))
-    } else {coefs <- NULL}
+    } else {
+      coefs <- NULL
+    }
 
     if (!is.null(sop_result)) {
       # Expand back to original state space with zeros for missing states
@@ -431,7 +472,7 @@ bootstrap_standardized_sops <- function(
           original_state <- states_present[i]
           sop_tx_full[, as.character(original_state)] <- sop_result$sop_tx[, i]
           sop_ctrl_full[, as.character(original_state)] <-
-            sop_result$sop_ctrl[,i]
+            sop_result$sop_ctrl[, i]
         }
 
         sop_result <- list(
@@ -443,8 +484,7 @@ bootstrap_standardized_sops <- function(
         sop_result <- sop_result
       }
     }
-    return(list(sop_result = sop_result,
-                coefs = coefs))
+    return(list(sop_result = sop_result, coefs = coefs))
   }
 
   # Apply analysis function to bootstrap samples with JIT materialization
@@ -453,7 +493,6 @@ bootstrap_standardized_sops <- function(
     analysis_fn = analysis_fn,
     data = data,
     id_var = varnames$id,
-    parallel = parallel,
     workers = workers,
     packages = c("rms", "VGAM", "Hmisc", "dplyr", "stats"),
     globals = c(
@@ -508,7 +547,6 @@ bootstrap_standardized_sops <- function(
     tidyr::unnest_wider(coefs)
 
   return(
-    list(sops = sop_results,
-         coefs = coefs_results)
+    list(sops = sop_results, coefs = coefs_results)
   )
 }
