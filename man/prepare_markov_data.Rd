@@ -15,8 +15,10 @@ prepare_markov_data(
 \item{data}{A data frame containing Markov trajectory data with columns
 \code{y} (current state) and \code{yprev} (previous state).}
 
-\item{absorbing_state}{Integer. The absorbing state to filter out (default: 6
-for death). Observations where \code{yprev} equals this value are removed.}
+\item{absorbing_state}{Integer or integer vector. The absorbing state(s) to
+filter out (default: 6 for death). Observations where \code{yprev} equals any of
+these values are removed. Can be a single value (e.g., 6) or a vector of
+multiple absorbing states (e.g., c(1, 6) for both home discharge and death).}
 
 \item{ordered_response}{Logical. Should \code{y} be converted to ordered factor?
 (default: TRUE). Required for clm and vglm, not required for orm.}
@@ -49,11 +51,19 @@ datasets.
 \item \strong{rms::orm}: Automatically treats integers as ordered factors.
 \item \strong{ordinal::clm}: Only accepts ordered factors.
 }
+
+\strong{Multiple absorbing states}: When modeling scenarios with multiple absorbing
+states (e.g., discharge home and death), specify them as a vector. For example,
+\code{absorbing_state = c(1, 6)} will remove all transitions from either state 1
+(home) or state 6 (death).
 }
 \examples{
 \dontrun{
-# Prepare data
-model_data <- prepare_markov_data(trajectories)
+# Prepare data with single absorbing state (death only)
+model_data <- prepare_markov_data(trajectories, absorbing_state = 6)
+
+# Prepare data with multiple absorbing states (home and death)
+model_data <- prepare_markov_data(trajectories, absorbing_state = c(1, 6))
 
 # Fit with VGAM (no robust SEs; use bootstrap for inference)
 library(VGAM)

@@ -2,68 +2,178 @@
 % Please edit documentation in R/simulate_trajectories.R
 \name{sim_trajectories_deterministic}
 \alias{sim_trajectories_deterministic}
-\title{Simulate Patient Trajectories with Non-Linear (Quadratic) Dynamics}
+\title{Simulate Patient Trajectories Using "Line of Destiny" Model}
 \usage{
 sim_trajectories_deterministic(
   n_patients = 1000,
-  follow_up_time = 60,
+  follow_up_time = 28,
   n_states = 6,
-  mu_linear = -0.1,
-  linear_sd = 0.02,
-  mu_quad = 0,
-  quad_sd = 6e-04,
-  mu_treatment_effect = 0,
-  sigma_rw = 0.25,
-  x0_mean = 0.1,
-  x0_sd = 1,
-  thresholds = c(-1.8, -0.5, 0.5, 1.2, 2.3),
+  B0 = 4,
+  B1 = -0.4,
+  B2 = 0,
+  b0_sd = 1,
+  mortality_prob_control = 0.08,
+  mortality_prob_treatment = 0.08,
+  b1_mortality_mean = 1.5,
+  b1_mortality_sd = 0.2,
+  b1_recovery_mean = -0.35,
+  b1_recovery_sd = 0.12,
   treatment_prob = 0.5,
+  absorbing_states = c(1, 7),
   seed = NULL
 )
 }
 \arguments{
 \item{n_patients}{Integer. Number of patients (default: 1000).}
 
-\item{follow_up_time}{Integer. Days to simulate (default: 60).}
+\item{follow_up_time}{Integer. Days to simulate (default: 28).}
 
-\item{n_states}{Integer. Number of states (default: 6).}
+\item{n_states}{Integer. Number of ordinal states (default: 6).
+State 1 = recovery (absorbing), State 6 = death (absorbing).}
 
-\item{mu_linear}{Numeric. Initial linear slope at t=0 (default: -0.1).
-Negative values indicate improvement.}
+\item{B0}{Numeric. Fixed intercept for the model (default: 4).
+This should be set so that baseline states are distributed across
+the middle range (e.g., states 2-5 for hospitalized patients).}
 
-\item{linear_sd}{Numeric. SD of the linear slope between patients (default: 0.02).}
+\item{B1}{Numeric. Fixed slope for log(time) (default: -0.4.
+Negative values indicate improvement over log-time.}
 
-\item{mu_quad}{Numeric. Quadratic coefficient (acceleration) (default: 0).
-The default is 0 (linear recovery). Positive values combined with a negative
-linear slope will cause patients to improve, bottom out, and then worsen (relapse).}
+\item{B2}{Numeric. Fixed treatment effect on slope (default: 0).
+The treatment group's slope is B1 + B2×Z where Z=1 for treatment.}
 
-\item{quad_sd}{Numeric. SD of the quadratic term between patients (default: 0.0006).}
+\item{b0_sd}{Numeric. SD of random intercept b₀ᵢ (default: 1).}
 
-\item{mu_treatment_effect}{Numeric. Effect of treatment on the \emph{linear} slope
-(default: 0). If set to a negative value (e.g., -0.05), treatment accelerates recovery.}
+\item{mortality_prob_control}{Numeric. Probability of death trajectory for control
+group (default: 0.08). These patients get large positive b₁ᵢ values.}
 
-\item{sigma_rw}{Numeric. Daily random walk noise (default: 0.25).}
+\item{mortality_prob_treatment}{Numeric. Probability of death trajectory for treatment
+group (default: 0.08). Should be ≤ mortality_prob_control.}
 
-\item{x0_mean}{Numeric. Baseline severity mean (default: 0.1).
-Represents mild/moderate starting severity.}
+\item{b1_mortality_mean}{Numeric. Mean of b₁ᵢ for patients destined to die (default: 1.5).
+Large positive values ensure progression to death.}
 
-\item{x0_sd}{Numeric. Baseline severity SD (default: 1.0).}
+\item{b1_mortality_sd}{Numeric. SD of b₁ᵢ for mortality trajectories (default: 0.2).}
 
-\item{thresholds}{Numeric vector. Cutpoints for states (default: c(-1.8, -0.5, 0.5, 1.2, 2.3)).}
+\item{b1_recovery_mean}{Numeric. Mean of b₁ᵢ for patients destined to recover (default: -0.35).
+Large negative values ensure fast recovery.}
 
-\item{treatment_prob}{Numeric. Probability of treatment (default: 0.5).}
+\item{b1_recovery_sd}{Numeric. SD of b₁ᵢ for recovery trajectories (default: 0.12).}
 
-\item{seed}{Integer. Seed for reproducibility.}
+\item{treatment_prob}{Numeric. Probability of treatment assignment (default: 0.5).}
+
+\item{absorbing_states}{Integer vector. States that are absorbing (default: c(1, 6)).
+Typically c(1, n_states) for recovery and death. Note: patients cannot start
+in absorbing states at baseline (day 0); they are constrained to transient states.}
+
+\item{seed}{Integer. Seed for reproducibility (default: NULL).}
 }
 \value{
-A tibble with id, time, tx, y, x.
+A tibble with columns:
+\itemize{
+\item id: patient identifier
+\item time: day since randomization (0 to follow_up_time, where 0 = baseline/randomization)
+\item tx: treatment assignment (0 = control, 1 = treatment)
+\item y: observed ordinal state
+\item yprev: previous state (lagged y, non-missing for time >= 1)
+\item x: continuous latent value (θ₀ᵢ + θ₁ᵢ × log(d) for d >= 1, θ₀ᵢ for d = 0)
+\item theta0: patient-specific total intercept (B0 + b₀ᵢ)
+\item theta1: patient-specific total slope (B1 + B2×Z + b₁ᵢ)
+\item b0: random intercept b₀ᵢ
+\item b1: random slope b₁ᵢ
+}
+
+A tibble with id, time, tx, y, yprev, x, theta0, theta1.
 }
 \description{
-Generates deterministic patient trajectories where the underlying latent
-variable follows a quadratic curve (time + time^2) with random walk noise.
+Generates deterministic patient trajectories where each patient follows their own
+random line: θ₀ᵢ + θ₁ᵢ × log(d), where d is the day since randomization.
+The observed ordinal score for day d is given as floor of θ₀ᵢ + θ₁ᵢ × log(d).
+Death (highest state) and recovery (state 1) are absorbing states.
 }
 \details{
-Default values are for a \strong{mild to moderate respiratory viral disease population},
-the default parameters simulate a general recovery trend (negative linear
-slope).
+This implements the data generating mechanism from Dodd et al. (2020) for
+COVID-19 ordinal outcome power analysis, where subjects deterministically slide
+up or down their own "line of destiny" and report the integer value each day.
+
+The "line of destiny" model generates trajectories according to:
+
+\strong{Y_id = B0 + B1×log(d) + B2×Z×log(d) + b₀ᵢ + b₁ᵢ×log(d)}
+
+where:
+\itemize{
+\item B0, B1, B2 are fixed effects (population-level parameters)
+\item b₀ᵢ ~ N(0, b0_sd²) is the random intercept
+\item b₁ᵢ is a random slope with mixture distribution:
+\itemize{
+\item With probability p_death: b₁ᵢ ~ N(b1_mortality_mean, b1_mortality_sd²) → death
+\item With probability (1 - p_death): b₁ᵢ ~ N(b1_recovery_mean, b1_recovery_sd²) → recovery
+}
+\item Z is treatment indicator (0 or 1)
+\item d is day since randomization
+}
+
+\strong{Implementation steps:}
+\enumerate{
+\item Assign treatment Z ~ Bernoulli(treatment_prob)
+\item Sample random effects for each patient:
+\itemize{
+\item b₀ᵢ ~ N(0, b0_sd²)
+\item Mortality indicator I ~ Bernoulli(p_death) where p_death depends on treatment
+\item If I=1: b₁ᵢ ~ N(b1_mortality_mean, b1_mortality_sd²)
+\item If I=0: b₁ᵢ ~ N(b1_recovery_mean, b1_recovery_sd²)
+}
+\item Calculate total slope for each patient:
+θ₁ᵢ = B1 + B2×Z + b₁ᵢ
+\item Generate trajectories:
+\itemize{
+\item Day 0: xᵢ(0) = B0 + b₀ᵢ, yᵢ(0) = floor(xᵢ(0))
+\item Days 1+: xᵢ(d) = B0 + b₀ᵢ + θ₁ᵢ×log(d), yᵢ(d) = floor(xᵢ(d))
+\item Constrain y to 1, n_states
+}
+\item Once a patient reaches an absorbing state (1 or 7), they remain there.
+}
+
+The log-time transformation log(d) creates realistic non-linear progression:
+rapid initial change that slows over time. The floor() operation discretizes
+the continuous trajectory into ordinal states.
+}
+\examples{
+\dontrun{
+# Default: 10\% mortality in control, 5\% in treatment
+traj <- sim_trajectories_deterministic(
+  n_patients = 1000,
+  follow_up_time = 28,
+  seed = 123
+)
+
+# Higher mortality scenario (20\% control, 10\% treatment)
+traj_high_mort <- sim_trajectories_deterministic(
+  n_patients = 1000,
+  mortality_prob_control = 0.20,
+  mortality_prob_treatment = 0.10,
+  seed = 456
+)
+
+# Treatment effect on recovery slope (faster recovery)
+traj_tx_effect <- sim_trajectories_deterministic(
+  n_patients = 1000,
+  theta1_treatment_effect = -0.05,  # More negative = faster improvement
+  seed = 789
+)
+
+# Visualize trajectories
+library(ggplot2)
+traj |>
+  dplyr::filter(id <= 20) |>
+  ggplot(aes(x = time, y = y, group = id, color = factor(tx))) +
+  geom_line() +
+  labs(title = "Lines of Destiny", color = "Treatment")
+}
+
+}
+\references{
+Dodd, Lori E., Dean Follmann, Jing Wang, Franz Koenig, Lisa L. Korn,
+Christian Schoergenhofer, Michael Proschan, et al. 2020. “Endpoints for
+Randomized Controlled Clinical Trials for COVID-19 Treatments.” Clinical
+Trials (London, England) 17 (5): 472–82.
 }
