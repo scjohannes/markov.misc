@@ -434,10 +434,10 @@ sim_trajectories_brownian <- function(
   if (!is.null(allowed_start_state)) {
     if (!is.integer(allowed_start_state)) {
       stop("allowed_start_state must be NULL or an integer")
-      }
+    }
     if (!all(allowed_start_state %in% 1:n_states)) {
       stop("All allowed_start_state must be between 1 and n_states")
-      }
+    }
   }
 
   if (!is.null(absorbing_state)) {
@@ -583,135 +583,320 @@ sim_trajectories_brownian <- function(
 }
 
 
-#' Simulate Patient Trajectories with Non-Linear (Quadratic) Dynamics
+#' Simulate Patient Trajectories Using "Line of Destiny" Model
 #'
-#' Generates deterministic patient trajectories where the underlying latent
-#' variable follows a quadratic curve (time + time^2) with random walk noise.
+#' Generates deterministic patient trajectories where each patient follows their own
+#' random line: θ₀ᵢ + θ₁ᵢ × log(d), where d is the day since randomization.
+#' The observed ordinal score for day d is given as floor of θ₀ᵢ + θ₁ᵢ × log(d).
+#' Death (highest state) and recovery (state 1) are absorbing states.
 #'
-#' Default values are for a **mild to moderate respiratory viral disease population**,
-#' the default parameters simulate a general recovery trend (negative linear
-#' slope).
+#' This implements the data generating mechanism from Dodd et al. (2020) for
+#' COVID-19 ordinal outcome power analysis, where subjects deterministically slide
+#' up or down their own "line of destiny" and report the integer value each day.
 #'
 #' @param n_patients Integer. Number of patients (default: 1000).
-#' @param follow_up_time Integer. Days to simulate (default: 60).
-#' @param n_states Integer. Number of states (default: 6).
-#' @param mu_linear Numeric. Initial linear slope at t=0 (default: -0.1).
-#'   Negative values indicate improvement.
-#' @param linear_sd Numeric. SD of the linear slope between patients (default: 0.02).
-#' @param mu_quad Numeric. Quadratic coefficient (acceleration) (default: 0).
-#'   The default is 0 (linear recovery). Positive values combined with a negative
-#'   linear slope will cause patients to improve, bottom out, and then worsen (relapse).
-#' @param quad_sd Numeric. SD of the quadratic term between patients (default: 0.0006).
-#' @param mu_treatment_effect Numeric. Effect of treatment on the *linear* slope
-#'   (default: 0). If set to a negative value (e.g., -0.05), treatment accelerates recovery.
-#' @param sigma_rw Numeric. Daily random walk noise (default: 0.25).
-#' @param x0_mean Numeric. Baseline severity mean (default: 0.1).
-#'   Represents mild/moderate starting severity.
-#' @param x0_sd Numeric. Baseline severity SD (default: 1.0).
-#' @param thresholds Numeric vector. Cutpoints for states (default: c(-1.8, -0.5, 0.5, 1.2, 2.3)).
-#' @param treatment_prob Numeric. Probability of treatment (default: 0.5).
-#' @param seed Integer. Seed for reproducibility.
+#' @param follow_up_time Integer. Days to simulate (default: 28).
+#' @param n_states Integer. Number of ordinal states (default: 6).
+#'   State 1 = recovery (absorbing), State 6 = death (absorbing).
+#' @param B0 Numeric. Fixed intercept for the model (default: 4).
+#'   This should be set so that baseline states are distributed across
+#'   the middle range (e.g., states 2-5 for hospitalized patients).
+#' @param B1 Numeric. Fixed slope for log(time) (default: -0.4.
+#'   Negative values indicate improvement over log-time.
+#' @param B2 Numeric. Fixed treatment effect on slope (default: 0).
+#'   The treatment group's slope is B1 + B2×Z where Z=1 for treatment.
+#' @param b0_sd Numeric. SD of random intercept b₀ᵢ (default: 1).
+#' @param mortality_prob_control Numeric. Probability of death trajectory for control
+#'   group (default: 0.08). These patients get large positive b₁ᵢ values.
+#' @param mortality_prob_treatment Numeric. Probability of death trajectory for treatment
+#'   group (default: 0.08). Should be ≤ mortality_prob_control.
+#' @param b1_mortality_mean Numeric. Mean of b₁ᵢ for patients destined to die (default: 1.5).
+#'   Large positive values ensure progression to death.
+#' @param b1_mortality_sd Numeric. SD of b₁ᵢ for mortality trajectories (default: 0.2).
+#' @param b1_recovery_mean Numeric. Mean of b₁ᵢ for patients destined to recover (default: -0.35).
+#'   Large negative values ensure fast recovery.
+#' @param b1_recovery_sd Numeric. SD of b₁ᵢ for recovery trajectories (default: 0.12).
+#' @param treatment_prob Numeric. Probability of treatment assignment (default: 0.5).
+#' @param absorbing_states Integer vector. States that are absorbing (default: c(1, 6)).
+#'   Typically c(1, n_states) for recovery and death. Note: patients cannot start
+#'   in absorbing states at baseline (day 0); they are constrained to transient states.
+#' @param seed Integer. Seed for reproducibility (default: NULL).
 #'
-#' @return A tibble with id, time, tx, y, x.
+#' @return A tibble with columns:
+#'   - id: patient identifier
+#'   - time: day since randomization (0 to follow_up_time, where 0 = baseline/randomization)
+#'   - tx: treatment assignment (0 = control, 1 = treatment)
+#'   - y: observed ordinal state
+#'   - yprev: previous state (lagged y, non-missing for time >= 1)
+#'   - x: continuous latent value (θ₀ᵢ + θ₁ᵢ × log(d) for d >= 1, θ₀ᵢ for d = 0)
+#'   - theta0: patient-specific total intercept (B0 + b₀ᵢ)
+#'   - theta1: patient-specific total slope (B1 + B2×Z + b₁ᵢ)
+#'   - b0: random intercept b₀ᵢ
+#'   - b1: random slope b₁ᵢ
 #'
-#' @importFrom stats rnorm rbinom
+#' @details
+#' The "line of destiny" model generates trajectories according to:
+#'
+#' **Y_id = B0 + B1×log(d) + B2×Z×log(d) + b₀ᵢ + b₁ᵢ×log(d)**
+#'
+#' where:
+#' - B0, B1, B2 are fixed effects (population-level parameters)
+#' - b₀ᵢ ~ N(0, b0_sd²) is the random intercept
+#' - b₁ᵢ is a random slope with mixture distribution:
+#'   * With probability p_death: b₁ᵢ ~ N(b1_mortality_mean, b1_mortality_sd²) → death
+#'   * With probability (1 - p_death): b₁ᵢ ~ N(b1_recovery_mean, b1_recovery_sd²) → recovery
+#' - Z is treatment indicator (0 or 1)
+#' - d is day since randomization
+#'
+#' **Implementation steps:**
+#'
+#' 1. Assign treatment Z ~ Bernoulli(treatment_prob)
+#'
+#' 2. Sample random effects for each patient:
+#'    - b₀ᵢ ~ N(0, b0_sd²)
+#'    - Mortality indicator I ~ Bernoulli(p_death) where p_death depends on treatment
+#'    - If I=1: b₁ᵢ ~ N(b1_mortality_mean, b1_mortality_sd²)
+#'    - If I=0: b₁ᵢ ~ N(b1_recovery_mean, b1_recovery_sd²)
+#'
+#' 3. Calculate total slope for each patient:
+#'    θ₁ᵢ = B1 + B2×Z + b₁ᵢ
+#'
+#' 4. Generate trajectories:
+#'    - Day 0: xᵢ(0) = B0 + b₀ᵢ, yᵢ(0) = floor(xᵢ(0))
+#'    - Days 1+: xᵢ(d) = B0 + b₀ᵢ + θ₁ᵢ×log(d), yᵢ(d) = floor(xᵢ(d))
+#'    - Constrain y to 1, n_states
+#'
+#' 5. Once a patient reaches an absorbing state (1 or 7), they remain there.
+#'
+#' The log-time transformation log(d) creates realistic non-linear progression:
+#' rapid initial change that slows over time. The floor() operation discretizes
+#' the continuous trajectory into ordinal states.
+#'
+#' @examples
+#' \dontrun{
+#' # Default: 10% mortality in control, 5% in treatment
+#' traj <- sim_trajectories_deterministic(
+#'   n_patients = 1000,
+#'   follow_up_time = 28,
+#'   seed = 123
+#' )
+#'
+#' # Higher mortality scenario (20% control, 10% treatment)
+#' traj_high_mort <- sim_trajectories_deterministic(
+#'   n_patients = 1000,
+#'   mortality_prob_control = 0.20,
+#'   mortality_prob_treatment = 0.10,
+#'   seed = 456
+#' )
+#'
+#' # Treatment effect on recovery slope (faster recovery)
+#' traj_tx_effect <- sim_trajectories_deterministic(
+#'   n_patients = 1000,
+#'   theta1_treatment_effect = -0.05,  # More negative = faster improvement
+#'   seed = 789
+#' )
+#'
+#' # Visualize trajectories
+#' library(ggplot2)
+#' traj |>
+#'   dplyr::filter(id <= 20) |>
+#'   ggplot(aes(x = time, y = y, group = id, color = factor(tx))) +
+#'   geom_line() +
+#'   labs(title = "Lines of Destiny", color = "Treatment")
+#' }
+#'
+#' @references
+#' Dodd, Lori E., Dean Follmann, Jing Wang, Franz Koenig, Lisa L. Korn,
+#' Christian Schoergenhofer, Michael Proschan, et al. 2020. “Endpoints for
+#' Randomized Controlled Clinical Trials for COVID-19 Treatments.” Clinical
+#' Trials (London, England) 17 (5): 472–82.
+
+#'
+#' @return A tibble with id, time, tx, y, yprev, x, theta0, theta1.
+#'
+#' @importFrom stats rbinom rnorm
 #' @importFrom tibble tibble
-#' @importFrom dplyr mutate left_join arrange
+#' @importFrom dplyr mutate left_join arrange group_by ungroup
 #' @importFrom tidyr pivot_longer
 #'
 #' @export
 sim_trajectories_deterministic <- function(
   n_patients = 1000,
-  follow_up_time = 60,
+  follow_up_time = 28,
   n_states = 6,
-  mu_linear = -0.1,
-  linear_sd = 0.02,
-  mu_quad = 0,
-  quad_sd = 0.0006,
-  mu_treatment_effect = 0,
-  sigma_rw = 0.25,
-  x0_mean = 0.1,
-  x0_sd = 1.0,
-  thresholds = c(-1.8, -0.5, 0.5, 1.2, 2.3),
+  B0 = 4,
+  B1 = -0.40,
+  B2 = 0,
+  b0_sd = 1.0,
+  mortality_prob_control = 0.08,
+  mortality_prob_treatment = 0.08,
+  b1_mortality_mean = 1.5,
+  b1_mortality_sd = 0.2,
+  b1_recovery_mean = -0.35,
+  b1_recovery_sd = 0.12,
   treatment_prob = 0.5,
+  absorbing_states = c(1, 7),
   seed = NULL
 ) {
-  # --- Validation ---
-  if (length(thresholds) != n_states - 1) {
-    stop("Thresholds length error")
+  # --- Input Validation ---
+  if (n_patients < 1 || !is.numeric(n_patients)) {
+    stop("n_patients must be a positive integer")
   }
+
+  if (follow_up_time < 1 || !is.numeric(follow_up_time)) {
+    stop("follow_up_time must be a positive integer")
+  }
+
+  if (n_states < 2 || !is.numeric(n_states)) {
+    stop("n_states must be at least 2")
+  }
+
+  if (mortality_prob_control < 0 || mortality_prob_control > 1) {
+    stop("mortality_prob_control must be between 0 and 1")
+  }
+
+  if (mortality_prob_treatment < 0 || mortality_prob_treatment > 1) {
+    stop("mortality_prob_treatment must be between 0 and 1")
+  }
+
+  if (treatment_prob < 0 || treatment_prob > 1) {
+    stop("treatment_prob must be between 0 and 1")
+  }
+
+  if (!all(absorbing_states %in% 1:n_states)) {
+    stop("All absorbing_states must be between 1 and n_states")
+  }
+
   if (!is.null(seed)) {
     set.seed(seed)
   }
 
-  # --- Setup ---
-  X <- matrix(NA_real_, n_patients, follow_up_time + 1)
-  Y <- matrix(NA_integer_, n_patients, follow_up_time + 1)
+  # --- Treatment Assignment ---
   treatment <- rbinom(n_patients, 1, treatment_prob)
 
-  # --- Assign Individual Parameters ---
-  # 1. Linear term (Velocity): Varies by patient + Treatment effect
-  # Note: We apply treatment only to the linear term (initial response)
-  beta1_i <- rnorm(n_patients, mu_linear, linear_sd) +
-    (treatment * mu_treatment_effect)
+  # --- Generate Patient-Specific Random Effects ---
+  # Random intercepts: b₀ᵢ ~ N(0, b0_sd²)
+  b0 <- rnorm(n_patients, mean = 0, sd = b0_sd)
 
-  # 2. Quadratic term (Acceleration/Curvature): Varies by patient
-  beta2_i <- rnorm(n_patients, mu_quad, quad_sd)
+  # Random slopes: b₁ᵢ from mixture distribution
+  b1 <- numeric(n_patients)
 
-  # --- Simulation Loop ---
   for (i in 1:n_patients) {
-    # Baseline
-    X[i, 1] <- rnorm(1, x0_mean, x0_sd)
-    Y[i, 1] <- findInterval(X[i, 1], thresholds) + 1
-
-    absorbed <- FALSE
-    if (Y[i, 1] == n_states) {
-      absorbed <- TRUE
+    # Determine mortality probability based on treatment
+    mort_prob <- if (treatment[i] == 1) {
+      mortality_prob_treatment
+    } else {
+      mortality_prob_control
     }
 
-    for (t in 2:(follow_up_time + 1)) {
+    # Decide if patient is destined to die or recover
+    is_mortality_trajectory <- runif(1) < mort_prob
+
+    if (is_mortality_trajectory) {
+      # Patient destined to die: b₁ᵢ ~ N(b1_mortality_mean, b1_mortality_sd²)
+      b1[i] <- rnorm(1, b1_mortality_mean, b1_mortality_sd)
+    } else {
+      # Patient destined to recover: b₁ᵢ ~ N(b1_recovery_mean, b1_recovery_sd²)
+      b1[i] <- rnorm(1, b1_recovery_mean, b1_recovery_sd)
+    }
+  }
+
+  # --- Compute Total Intercepts and Slopes ---
+  # Total intercept: θ₀ᵢ = B0 + b₀ᵢ
+  theta0 <- B0 + b0
+
+  # Total slope: θ₁ᵢ = B1 + B2×Z + b₁ᵢ
+  theta1 <- B1 + B2 * treatment + b1 # --- Simulate Trajectories ---
+  # Initialize matrices for latent X and observed Y
+  # Need follow_up_time + 1 columns to include day 0 (baseline/randomization)
+  X <- matrix(NA_real_, n_patients, follow_up_time + 1)
+  Y <- matrix(NA_integer_, n_patients, follow_up_time + 1)
+
+  for (i in 1:n_patients) {
+    absorbed <- FALSE
+    absorbed_state <- NA_integer_
+
+    # Day 0 (baseline/randomization): use only intercept θ₀ᵢ
+    X[i, 1] <- theta0[i]
+    y_raw <- floor(X[i, 1])
+    y_constrained <- max(1, min(n_states, y_raw))
+
+    # Ensure patient doesn't start in absorbing state at baseline
+    # If they would start in an absorbing state, move them to nearest transient state
+    if (y_constrained %in% absorbing_states) {
+      if (y_constrained == 1) {
+        y_constrained <- 2 # Move up from home to hospital
+      } else if (y_constrained == n_states) {
+        y_constrained <- n_states - 1 # Move down from death to ICU
+      }
+    }
+
+    Y[i, 1] <- y_constrained # Days 1 to follow_up_time: apply log-time model
+    for (d in 1:follow_up_time) {
       if (absorbed) {
-        Y[i, t] <- n_states
-        X[i, t] <- NA
+        # Remain in absorbing state
+        Y[i, d + 1] <- absorbed_state
+        X[i, d + 1] <- NA_real_
       } else {
-        # Calculate the deterministic drift for this specific timepoint
-        # The derivative of (b1*t + b2*t^2) is (b1 + 2*b2*t)
-        # Note: t here represents the step index.
-        # Since we are adding to the *previous* X, we add the instantaneous slope.
-        current_drift <- beta1_i[i] + (2 * beta2_i[i] * (t - 1))
+        # Calculate latent value: θ₀ᵢ + θ₁ᵢ × log(d)
+        X[i, d + 1] <- theta0[i] + theta1[i] * log(d)
 
-        # Update Latent X
-        X[i, t] <- X[i, t - 1] + current_drift + rnorm(1, 0, sigma_rw)
+        # Observed state: floor of latent value
+        y_raw <- floor(X[i, d + 1])
 
-        # Map to Observed Y
-        state <- findInterval(X[i, t], thresholds) + 1
+        # Constrain to valid state range [1, n_states]
+        y_constrained <- max(1, min(n_states, y_raw))
 
-        if (state >= n_states) {
-          Y[i, t] <- n_states
+        Y[i, d + 1] <- y_constrained
+
+        # Check if entered absorbing state
+        if (y_constrained %in% absorbing_states) {
           absorbed <- TRUE
-        } else {
-          Y[i, t] <- state
+          absorbed_state <- y_constrained
         }
       }
     }
   }
 
-  # --- Formatting ---
-  dat_x <- as.data.frame(X)
-  colnames(dat_x) <- as.character(0:follow_up_time)
-  dat_x <- dat_x |>
-    dplyr::mutate(id = 1:n_patients, tx = treatment) |>
-    tidyr::pivot_longer(-c(id, tx), names_to = "time", values_to = "x")
-
+  # --- Format Output as Long Data Frame ---
+  # Convert Y matrix to data frame
   dat_y <- as.data.frame(Y)
   colnames(dat_y) <- as.character(0:follow_up_time)
   dat_y <- dat_y |>
-    dplyr::mutate(id = 1:n_patients, tx = treatment) |>
-    tidyr::pivot_longer(-c(id, tx), names_to = "time", values_to = "y")
+    dplyr::mutate(
+      id = 1:n_patients,
+      tx = treatment,
+      theta0 = theta0,
+      theta1 = theta1,
+      b0 = b0,
+      b1 = b1
+    ) |>
+    tidyr::pivot_longer(
+      cols = -c(id, tx, theta0, theta1, b0, b1),
+      names_to = "time",
+      values_to = "y"
+    ) |>
+    dplyr::mutate(time = as.integer(time))
 
-  result <- dplyr::left_join(dat_y, dat_x, by = c("id", "tx", "time")) |>
-    dplyr::mutate(time = as.integer(time)) |>
-    dplyr::arrange(id, time)
+  # Convert X matrix to data frame
+  dat_x <- as.data.frame(X)
+  colnames(dat_x) <- as.character(0:follow_up_time)
+  dat_x <- dat_x |>
+    dplyr::mutate(id = 1:n_patients) |>
+    tidyr::pivot_longer(
+      cols = -id,
+      names_to = "time",
+      values_to = "x"
+    ) |>
+    dplyr::mutate(time = as.integer(time))
+
+  # Combine and add lagged y (yprev)
+  result <- dplyr::left_join(dat_y, dat_x, by = c("id", "time")) |>
+    dplyr::arrange(id, time) |>
+    dplyr::group_by(id) |>
+    dplyr::mutate(yprev = dplyr::lag(y, 1)) |>
+    dplyr::ungroup() |>
+    dplyr::filter_out(time == 0)
 
   return(tibble::tibble(result))
 }
