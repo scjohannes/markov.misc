@@ -1193,6 +1193,11 @@ avg_sops <- function(
 #'   }
 #' @param return_draws Logical. If TRUE, stores all individual simulation/bootstrap
 #'   draws as an attribute. Extract with `get_draws()`. Default is TRUE
+#' @param resample_baseline Logical. For `method = "simulation"` with
+#'   `markov_avg_sops` objects, resample baseline patients with replacement for
+#'   each simulation draw when marginalizing (default FALSE). This adds uncertainty
+#'   from the empirical baseline covariate distribution. When FALSE, averages
+#'   over the original baseline sample in every draw.
 #' @param update_datadist Logical. Whether to update datadist for rms models
 #'   during bootstrap. Default is TRUE.
 #' @param use_coefstart Logical. Use original coefficients as starting values
@@ -1215,7 +1220,9 @@ avg_sops <- function(
 #' 1. Extract coefficient vector beta_hat and (robust) variance-covariance Sigma
 #' 2. Draw n_sim coefficient vectors from MVN(beta_hat, Sigma)
 #' 3. For each draw, replace model coefficients and compute SOPs
-#' 4. Compute confidence intervals from the empirical distribution
+#' 4. For `avg_sops()` objects, optionally resample baseline patients with
+#'    replacement before marginalization (`resample_baseline = TRUE`)
+#' 5. Compute confidence intervals from the empirical distribution
 #'
 #' - Works for both individual-level (`sops()`) and averaged (`avg_sops()`) SOPs
 #'
@@ -1305,6 +1312,7 @@ inferences <- function(
   conf_level = 0.95,
   conf_type = "perc",
   return_draws = TRUE,
+  resample_baseline = FALSE,
   update_datadist = TRUE,
   use_coefstart = FALSE,
   ...
@@ -1334,7 +1342,8 @@ inferences <- function(
       conf_level = conf_level,
       conf_type = conf_type,
       workers = workers,
-      return_draws = return_draws
+      return_draws = return_draws,
+      resample_baseline = resample_baseline
     )
   } else if (method == "bootstrap") {
     inferences_bootstrap(
@@ -1368,6 +1377,8 @@ inferences <- function(
 #' @param workers Number of parallel workers. If NULL or 1, uses sequential
 #'   processing. If > 1, uses parallel processing.
 #' @param return_draws Store individual draws?
+#' @param resample_baseline For `markov_avg_sops` objects, resample baseline
+#'   patients with replacement for each draw before marginalization?
 #'
 #' @return The input object with added confidence intervals.
 #'
@@ -1379,7 +1390,8 @@ inferences_simulation <- function(
   conf_level,
   conf_type,
   workers,
-  return_draws
+  return_draws,
+  resample_baseline
 ) {
   # Check for mvtnorm package
   if (!requireNamespace("mvtnorm", quietly = TRUE)) {
@@ -1403,6 +1415,12 @@ inferences_simulation <- function(
 
   # For avg_sops objects
   is_avg <- inherits(object, "markov_avg_sops")
+
+  if (!is.logical(resample_baseline) || length(resample_baseline) != 1 ||
+      is.na(resample_baseline)) {
+    stop("`resample_baseline` must be a single TRUE/FALSE value.")
+  }
+
   if (is_avg) {
     variables <- avg_args$variables
     by <- avg_args$by
@@ -1503,6 +1521,12 @@ inferences_simulation <- function(
 
       # Define fast analysis function
       analysis_fn <- function(i) {
+        baseline_weights <- NULL
+        if (is_avg && resample_baseline) {
+          idx <- sample.int(n_each, size = n_each, replace = TRUE)
+          baseline_weights <- tabulate(idx, nbins = n_each) / n_each
+        }
+
         # Compute effective coefficients from beta draw
         Gamma_i <- compute_Gamma(beta_draws[i, ], C_list)
 
@@ -1528,7 +1552,8 @@ inferences_simulation <- function(
             ylevels = ylevels,
             variables = variables,
             n_cf = n_cf,
-            n_each = n_each
+            n_each = n_each,
+            weights = baseline_weights
           )
         } else {
           # Individual-level: convert array to data frame
@@ -1552,6 +1577,12 @@ inferences_simulation <- function(
   if (!use_fast_path) {
     # --- SLOW PATH: Use soprob_markov with coefficient replacement ---
     analysis_fn <- function(i) {
+      baseline_weights <- NULL
+      if (is_avg && resample_baseline) {
+        idx <- sample.int(n_each, size = n_each, replace = TRUE)
+        baseline_weights <- tabulate(idx, nbins = n_each) / n_each
+      }
+
       # Replace coefficients
       model_i <- set_coef(model, beta_draws[i, ])
 
@@ -1584,11 +1615,12 @@ inferences_simulation <- function(
           grid = grid,
           times = times,
           ylevels = ylevels,
-          variables = variables,
-          n_cf = n_cf,
-          n_each = n_each
-        )
-      } else {
+            variables = variables,
+            n_cf = n_cf,
+            n_each = n_each,
+            weights = baseline_weights
+          )
+        } else {
         # Individual-level: convert array to data frame
         result <- array_to_df_individual(
           sops_array,
@@ -1631,6 +1663,7 @@ inferences_simulation <- function(
       "variables",
       "n_cf",
       "n_each",
+      "resample_baseline",
       "use_fast_path",
       "by"
     )
@@ -1703,6 +1736,7 @@ inferences_simulation <- function(
   attr(final_result, "n_successful") <- length(sim_results)
   attr(final_result, "conf_level") <- conf_level
   attr(final_result, "conf_type") <- conf_type
+  attr(final_result, "resample_baseline") <- is_avg && resample_baseline
   attr(final_result, "method") <- "simulation"
 
   if (return_draws) {
@@ -2059,10 +2093,22 @@ marginalize_sops_array <- function(
   ylevels,
   variables,
   n_cf,
-  n_each
+  n_each,
+  weights = NULL
 ) {
   n_times <- length(times)
   n_states <- length(ylevels)
+
+  if (!is.null(weights)) {
+    if (!is.numeric(weights) || length(weights) != n_each || any(weights < 0)) {
+      stop("`weights` must be a non-negative numeric vector of length n_each.")
+    }
+    weight_sum <- sum(weights)
+    if (!is.finite(weight_sum) || weight_sum <= 0) {
+      stop("`weights` must have a positive finite sum.")
+    }
+    weights <- weights / weight_sum
+  }
 
   # Average within each counterfactual group
   avg_sops_list <- vector("list", n_cf)
@@ -2071,7 +2117,20 @@ marginalize_sops_array <- function(
     end_idx <- cf_i * n_each
 
     sops_cf <- sops_array[start_idx:end_idx, , , drop = FALSE]
-    avg_sops_mat <- apply(sops_cf, c(2, 3), mean)
+    if (is.null(weights)) {
+      avg_sops_mat <- apply(sops_cf, c(2, 3), mean)
+    } else {
+      sops_cf_mat <- matrix(
+        aperm(sops_cf, c(2, 3, 1)),
+        nrow = n_times * n_states,
+        ncol = n_each
+      )
+      avg_sops_mat <- matrix(
+        as.vector(sops_cf_mat %*% weights),
+        nrow = n_times,
+        ncol = n_states
+      )
+    }
 
     avg_sops_list[[cf_i]] <- avg_sops_mat
   }
