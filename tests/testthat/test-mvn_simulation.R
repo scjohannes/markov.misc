@@ -100,7 +100,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
       skip_if_not_installed("rms")
 
       data <- make_test_data(n_patients = 100, seed = 333, follow_up_time = 15)
-      m_orm <- orm(
+      m_orm <- rms::orm(
         y ~ time_lin + time_nlin_1 + tx + yprev,
         data = data,
         x = TRUE,
@@ -247,6 +247,95 @@ describe("MVN Simulation-Based Inference for SOPs", {
       expected_rows_per_draw <- n_times * n_states * n_tx
       actual_rows_per_draw <- nrow(draws) / n_draws
       expect_equal(actual_rows_per_draw, expected_rows_per_draw)
+    })
+
+    it("adds baseline-resampling uncertainty for avg_sops when enabled", {
+      skip_if_not_installed("VGAM")
+      skip_if_not_installed("rms")
+      skip_if_not_installed("mvtnorm")
+
+      data <- make_test_data(n_patients = 60, seed = 778, follow_up_time = 10)
+      baseline_data <- data[data$time == 1, ]
+      m_vglm <- make_test_model(data)
+
+      avg_result <- avg_sops(
+        model = m_vglm,
+        newdata = baseline_data,
+        variables = list(tx = c(0, 1)),
+        times = 1:10,
+        ylevels = 1:6,
+        absorb = 6,
+        id_var = "id"
+      )
+
+      p <- length(coef(m_vglm))
+      V_zero <- matrix(0, nrow = p, ncol = p)
+
+      no_resample <- inferences(
+        avg_result,
+        method = "simulation",
+        n_sim = 80,
+        vcov = V_zero,
+        resample_baseline = FALSE,
+        return_draws = FALSE
+      )
+
+      with_resample <- inferences(
+        avg_result,
+        method = "simulation",
+        n_sim = 80,
+        vcov = V_zero,
+        resample_baseline = TRUE,
+        return_draws = FALSE
+      )
+
+      expect_true(all(no_resample$std.error < 1e-12, na.rm = TRUE))
+      expect_gt(mean(with_resample$std.error, na.rm = TRUE), 1e-6)
+      expect_identical(attr(no_resample, "resample_baseline"), FALSE)
+      expect_identical(attr(with_resample, "resample_baseline"), TRUE)
+    })
+
+    it("typically increases standard errors when baseline resampling is enabled", {
+      skip_if_not_installed("VGAM")
+      skip_if_not_installed("rms")
+      skip_if_not_installed("mvtnorm")
+
+      data <- make_test_data(n_patients = 35, seed = 779, follow_up_time = 10)
+      baseline_data <- data[data$time == 1, ]
+      m_robust <- make_test_model(data, robust = TRUE)
+
+      avg_result <- avg_sops(
+        model = m_robust,
+        newdata = baseline_data,
+        variables = list(tx = c(0, 1)),
+        times = 1:10,
+        ylevels = 1:6,
+        absorb = 6,
+        id_var = "id"
+      )
+
+      set.seed(4242)
+      no_resample <- inferences(
+        avg_result,
+        method = "simulation",
+        n_sim = 120,
+        resample_baseline = FALSE,
+        return_draws = FALSE
+      )
+
+      set.seed(4242)
+      with_resample <- inferences(
+        avg_result,
+        method = "simulation",
+        n_sim = 120,
+        resample_baseline = TRUE,
+        return_draws = FALSE
+      )
+
+      expect_gt(
+        mean(with_resample$std.error, na.rm = TRUE),
+        mean(no_resample$std.error, na.rm = TRUE)
+      )
     })
 
     it("works with custom vcov matrix", {
