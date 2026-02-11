@@ -13,6 +13,7 @@ inferences(
   conf_level = 0.95,
   conf_type = "perc",
   return_draws = TRUE,
+  resample_baseline = FALSE,
   update_datadist = TRUE,
   use_coefstart = FALSE,
   ...
@@ -52,6 +53,12 @@ distribution.
 \item{return_draws}{Logical. If TRUE, stores all individual simulation/bootstrap
 draws as an attribute. Extract with \code{get_draws()}. Default is TRUE}
 
+\item{resample_baseline}{Logical. For \code{method = "simulation"} with
+\code{markov_avg_sops} objects, resample baseline patients with replacement for
+each simulation draw when marginalizing (default FALSE). This adds uncertainty
+from the empirical baseline covariate distribution. When FALSE, averages
+over the original baseline sample in every draw.}
+
 \item{update_datadist}{Logical. Whether to update datadist for rms models
 during bootstrap. Default is TRUE.}
 
@@ -84,6 +91,8 @@ The simulation method works as follows:
 \item Extract coefficient vector beta_hat and (robust) variance-covariance Sigma
 \item Draw n_sim coefficient vectors from MVN(beta_hat, Sigma)
 \item For each draw, replace model coefficients and compute SOPs
+\item For \code{avg_sops()} objects, optionally resample baseline patients with
+replacement before marginalization (\code{resample_baseline = TRUE})
 \item Compute confidence intervals from the empirical distribution
 }
 \itemize{

@@ -11,7 +11,8 @@ inferences_simulation(
   conf_level,
   conf_type,
   workers,
-  return_draws
+  return_draws,
+  resample_baseline
 )
 }
 \arguments{
@@ -29,6 +30,9 @@ inferences_simulation(
 processing. If > 1, uses parallel processing.}
 
 \item{return_draws}{Store individual draws?}
+
+\item{resample_baseline}{For \code{markov_avg_sops} objects, resample baseline
+patients with replacement for each draw before marginalization?}
 }
 \value{
 The input object with added confidence intervals.

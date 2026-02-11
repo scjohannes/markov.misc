@@ -11,7 +11,8 @@ marginalize_sops_array(
   ylevels,
   variables,
   n_cf,
-  n_each
+  n_each,
+  weights = NULL
 )
 }
 \arguments{
