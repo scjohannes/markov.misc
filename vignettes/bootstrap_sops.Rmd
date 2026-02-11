@@ -51,6 +51,10 @@ if (!dir.exists(OUTPUT_PATH)) dir.create(OUTPUT_PATH)
 ## Step 1: Simulate Trial Data
 
 We simulate a discrete-time process using a latent Brownian motion model.
+We also add a baseline age covariate (one value per patient) drawn from a
+normal distribution. Age is not part of the outcome-generating mechanism, but
+we include it in the fitted models to illustrate standardization over an
+additional baseline covariate.
 
 ```{r superpop}
 markov_data <- sim_trajectories_brownian(
@@ -61,6 +65,14 @@ markov_data <- sim_trajectories_brownian(
   seed = SEED,
   mu_treatment_effect = 0
 )
+
+# Add a baseline age covariate (one value per patient)
+age_lookup <- tibble(
+  id = sort(unique(markov_data$id)),
+  age = rnorm(length(unique(markov_data$id)), mean = 65, sd = 12)
+)
+markov_data <- markov_data |>
+  left_join(age_lookup, by = "id")
 
 # Empirical SOPs (for reference)
 plot_sops(markov_data, geom = "line", linetype_var = "tx", facet_var = NULL) + 
@@ -154,6 +166,7 @@ cons_flexible <- list(
   
   # Strict PO effect for the rest
   "yprev"           = cbind(PO_effect = 1),
+  "age"             = cbind(PO_effect = 1),
   "time_nlin_1"     = cbind(PO_effect = 1),
   "time_nlin_2"     = cbind(PO_effect = 1),
   "time_lin:tx"     = cbind(PO_effect = 1),
@@ -171,7 +184,7 @@ cons_flexible <- list(
 # Model A: Simple Proportional Odds
 # parallel = TRUE enforces PO for all terms
 m_simple <- vglm(
-  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) + tx + yprev, 
+  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) + tx + age + yprev,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
@@ -179,7 +192,7 @@ m_simple <- vglm(
 # Model B: Treatment-Time Interaction
 # parallel = TRUE, but formula allows tx effect to change over time
 m_inter <- vglm(
-  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + yprev, 
+  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + age + yprev,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
@@ -188,7 +201,7 @@ m_inter <- vglm(
 # Uses constraints to relax PO for time_lin
 # For the formula, we need to use manually created spline terms
 m_flex <- vglm(
-  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) + tx + yprev + yprev:time_lin + tx:time_lin, 
+  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) + tx + age + yprev + yprev:time_lin + tx:time_lin,
   family = cumulative(reverse = TRUE, parallel = FALSE ~ time_lin + tx), 
   data = data, 
   constraints = cons_flexible
@@ -235,8 +248,13 @@ bs_flex   <- run_boot(m_flex,   "Model C")
 
 ### Simulation from MVN
 
+For MVN-based inference, `inferences(method = "simulation")` now supports
+optional baseline resampling via `resample_baseline = TRUE`. This adds
+uncertainty from the empirical baseline covariate distribution without refitting
+the model.
+
 ```{r}
-run_mvn <- function(model, name) {
+run_mvn <- function(model, name, resample_baseline = FALSE) {
   cat(paste0("MVN Simulation - Model ", name, "...\n"))
   avg_sops(
     robcov_vglm(model, cluster = data$id), #model needs to have cluster robust SEs
@@ -250,22 +268,65 @@ run_mvn <- function(model, name) {
   ) |> 
      inferences(
       method = "simulation",
-      n_sim = R*40, 
+      n_sim = R, 
       conf_level = 0.95,
-      workers = 6,
+      workers = 1,
+      resample_baseline = resample_baseline,
       return_draws = TRUE
     )
 }
 
+run_mvn_set <- function(resample_baseline = FALSE) {
+  list(
+    simple = run_mvn(
+      m_simple,
+      if (resample_baseline) "Model A (resample)" else "Model A (default)",
+      resample_baseline = resample_baseline
+    ),
+    inter = run_mvn(
+      m_inter,
+      if (resample_baseline) "Model B (resample)" else "Model B (default)",
+      resample_baseline = resample_baseline
+    ),
+    flex = run_mvn(
+      m_flex,
+      if (resample_baseline) "Model C (resample)" else "Model C (default)",
+      resample_baseline = resample_baseline
+    )
+  )
+}
+
 set.seed(SEED)
 t1 <- Sys.time()
-bs_simple_mvn <- run_mvn(m_simple, "Model A")
+res_mvn_default <- run_mvn_set(resample_baseline = FALSE)
 t2 <- Sys.time()
 
 t2 - t1
 
-bs_inter_mvn  <- run_mvn(m_inter,  "Model B")
-bs_flex_mvn   <- run_mvn(m_flex,   "Model C")
+set.seed(SEED)
+res_mvn_resample <- run_mvn_set(resample_baseline = TRUE)
+
+bs_simple_mvn <- res_mvn_default$simple
+bs_inter_mvn  <- res_mvn_default$inter
+bs_flex_mvn   <- res_mvn_default$flex
+
+bs_simple_mvn_rs <- res_mvn_resample$simple
+bs_inter_mvn_rs  <- res_mvn_resample$inter
+bs_flex_mvn_rs   <- res_mvn_resample$flex
+```
+
+```{r}
+# Compare average CI widths for model A with vs without baseline resampling
+bind_rows(
+  bs_simple_mvn |>
+    mutate(setting = "MVN (default, no baseline resampling)"),
+  bs_simple_mvn_rs |>
+    mutate(setting = "MVN + baseline resampling")
+) |>
+  group_by(setting, tx, state) |>
+  summarise(mean_ci_width = mean(conf.high - conf.low), .groups = "drop") |>
+  filter(state == 1) |>
+  knitr::kable(digits = 3)
 ```
 
 ## Step 5: Visualization
@@ -359,7 +420,49 @@ p3_mvn <- ggplot(bs_flex_mvn, aes(x = time)) +
 # Combine using patchwork
 (p1_mvn | p2_mvn | p3_mvn) +
   plot_layout(guides = "collect") +
-  patchwork::plot_annotation(title = "MVN")
+  patchwork::plot_annotation(title = "MVN (Default: no baseline resampling)")
+```
+
+```{r}
+p1_mvn_rs <- ggplot(bs_simple_mvn_rs, aes(x = time)) +
+  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
+  geom_ribbon(aes(ymin = conf.low,
+                  ymax = conf.high,
+                  fill = factor(state),
+                  group = interaction(state, tx)),
+              alpha = 0.2,
+              color = NA) +
+  scale_fill_brewer(palette = "Dark2") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Model A: PO")
+
+p2_mvn_rs <- ggplot(bs_inter_mvn_rs, aes(x = time)) +
+  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
+  geom_ribbon(aes(ymin = conf.low,
+                  ymax = conf.high,
+                  fill = factor(state),
+                  group = interaction(state, tx)),
+              alpha = 0.2,
+              color = NA) +
+  scale_fill_brewer(palette = "Dark2") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Model B: PO + Interaction")
+
+p3_mvn_rs <- ggplot(bs_flex_mvn_rs, aes(x = time)) +
+  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
+  geom_ribbon(aes(ymin = conf.low,
+                  ymax = conf.high,
+                  fill = factor(state),
+                  group = interaction(state, tx)),
+              alpha = 0.2,
+              color = NA) +
+  scale_fill_brewer(palette = "Dark2") +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(title = "Model C: Partial PO + Interactions")
+
+(p1_mvn_rs | p2_mvn_rs | p3_mvn_rs) +
+  plot_layout(guides = "collect") +
+  patchwork::plot_annotation(title = "MVN + Baseline Resampling")
 ```
 
 ### 2. Difference in Time Spent in State 1 (Home)
@@ -412,6 +515,12 @@ diff_res_mvn <- bind_rows(
   get_diff_dist(bs_flex_mvn,   "Model C (Flexible)")
 )
 
+diff_res_mvn_rs <- bind_rows(
+  get_diff_dist(bs_simple_mvn_rs, "Model A (Simple)"),
+  get_diff_dist(bs_inter_mvn_rs,  "Model B (Interact)"),
+  get_diff_dist(bs_flex_mvn_rs,   "Model C (Flexible)")
+)
+
 # Plot
 plot_diff_mvn <- ggplot(diff_res_mvn |> filter(state == 1), aes(x = delta, y = model, fill = model)) +
   stat_dots(side = "bottom", scale = 0.4, color = NA) +
@@ -428,15 +537,32 @@ plot_diff_mvn <- ggplot(diff_res_mvn |> filter(state == 1), aes(x = delta, y = m
   theme(legend.position = "none") +
   coord_cartesian(xlim = c(-2.5, 2.5))
 
-# plot_diff_boot + 
-  plot_diff_mvn
+plot_diff_mvn_rs <- ggplot(diff_res_mvn_rs |> filter(state == 1), aes(x = delta, y = model, fill = model)) +
+  stat_dots(side = "bottom", scale = 0.4, color = NA) +
+  stat_halfeye(alpha = 0.6, scale = 0.4) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(
+    title = "Difference in Time Spent in State 1 (Home)",
+    subtitle = "MVN + baseline resampling",
+    x = "Difference (Days)",
+    y = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  coord_cartesian(xlim = c(-2.5, 2.5))
+
+plot_diff_mvn / plot_diff_mvn_rs
 ```
 
 ### Summary of Estimates
 
 ```{r}
-diff_res_mvn |>
-  group_by(model, state) |>
+bind_rows(
+  diff_res_mvn |> mutate(setting = "MVN (default)"),
+  diff_res_mvn_rs |> mutate(setting = "MVN + baseline resampling")
+) |>
+  group_by(setting, model, state) |>
   summarise(
     mean_tx_1 = mean(tx_1),
     mean_tx_0 = mean(tx_0),
