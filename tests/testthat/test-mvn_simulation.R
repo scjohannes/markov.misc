@@ -6,6 +6,7 @@
 # 3. inferences(method = "simulation") produces valid confidence intervals
 # 4. inferences() works for both avg_sops and sops objects
 # 5. get_draws() extracts simulation draws correctly
+# 6. score-bootstrap simulation works for robcov_vglm avg_sops pipelines
 
 describe("MVN Simulation-Based Inference for SOPs", {
   describe("set_coef()", {
@@ -249,58 +250,11 @@ describe("MVN Simulation-Based Inference for SOPs", {
       expect_equal(actual_rows_per_draw, expected_rows_per_draw)
     })
 
-    it("adds baseline-resampling uncertainty for avg_sops when enabled", {
+    it("supports score-bootstrap engine for avg_sops with robcov_vglm", {
       skip_if_not_installed("VGAM")
       skip_if_not_installed("rms")
-      skip_if_not_installed("mvtnorm")
 
-      data <- make_test_data(n_patients = 60, seed = 778, follow_up_time = 10)
-      baseline_data <- data[data$time == 1, ]
-      m_vglm <- make_test_model(data)
-
-      avg_result <- avg_sops(
-        model = m_vglm,
-        newdata = baseline_data,
-        variables = list(tx = c(0, 1)),
-        times = 1:10,
-        ylevels = 1:6,
-        absorb = 6,
-        id_var = "id"
-      )
-
-      p <- length(coef(m_vglm))
-      V_zero <- matrix(0, nrow = p, ncol = p)
-
-      no_resample <- inferences(
-        avg_result,
-        method = "simulation",
-        n_sim = 80,
-        vcov = V_zero,
-        resample_baseline = FALSE,
-        return_draws = FALSE
-      )
-
-      with_resample <- inferences(
-        avg_result,
-        method = "simulation",
-        n_sim = 80,
-        vcov = V_zero,
-        resample_baseline = TRUE,
-        return_draws = FALSE
-      )
-
-      expect_true(all(no_resample$std.error < 1e-12, na.rm = TRUE))
-      expect_gt(mean(with_resample$std.error, na.rm = TRUE), 1e-6)
-      expect_identical(attr(no_resample, "resample_baseline"), FALSE)
-      expect_identical(attr(with_resample, "resample_baseline"), TRUE)
-    })
-
-    it("typically increases standard errors when baseline resampling is enabled", {
-      skip_if_not_installed("VGAM")
-      skip_if_not_installed("rms")
-      skip_if_not_installed("mvtnorm")
-
-      data <- make_test_data(n_patients = 35, seed = 779, follow_up_time = 10)
+      data <- make_test_data(n_patients = 50, seed = 778, follow_up_time = 10)
       baseline_data <- data[data$time == 1, ]
       m_robust <- make_test_model(data, robust = TRUE)
 
@@ -314,28 +268,24 @@ describe("MVN Simulation-Based Inference for SOPs", {
         id_var = "id"
       )
 
-      set.seed(4242)
-      no_resample <- inferences(
+      result_score <- inferences(
         avg_result,
         method = "simulation",
-        n_sim = 120,
-        resample_baseline = FALSE,
-        return_draws = FALSE
+        engine = "score_bootstrap",
+        n_sim = 60,
+        return_draws = TRUE
       )
 
-      set.seed(4242)
-      with_resample <- inferences(
-        avg_result,
-        method = "simulation",
-        n_sim = 120,
-        resample_baseline = TRUE,
-        return_draws = FALSE
-      )
+      expect_contains(names(result_score), c("conf.low", "conf.high", "std.error"))
+      expect_equal(attr(result_score, "method"), "simulation")
+      expect_equal(attr(result_score, "engine"), "score_bootstrap")
+      expect_equal(attr(result_score, "score_weight_dist"), "exponential")
+      expect_gt(mean(result_score$std.error, na.rm = TRUE), 0)
 
-      expect_gt(
-        mean(with_resample$std.error, na.rm = TRUE),
-        mean(no_resample$std.error, na.rm = TRUE)
-      )
+      draws <- get_draws(result_score)
+      expect_s3_class(draws, "data.frame")
+      expect_contains(names(draws), c("draw_id", "estimate", "time", "state", "tx"))
+      expect_lte(length(unique(draws$draw_id)), 60)
     })
 
     it("works with custom vcov matrix", {
@@ -526,6 +476,35 @@ describe("MVN Simulation-Based Inference for SOPs", {
       expect_error(
         inferences(avg_result, method = "invalid"),
         "'arg' should be one of"
+      )
+
+      # Error: score bootstrap requires robcov_vglm
+      expect_error(
+        inferences(
+          avg_result,
+          method = "simulation",
+          engine = "score_bootstrap",
+          n_sim = 20
+        ),
+        "requires a 'robcov_vglm' model"
+      )
+
+      # Error: score bootstrap requires avg_sops objects
+      sops_result <- sops(
+        model = m_vglm,
+        newdata = data[data$time == 1, ],
+        times = 1:10,
+        ylevels = 1:6,
+        absorb = 6
+      )
+      expect_error(
+        inferences(
+          sops_result,
+          method = "simulation",
+          engine = "score_bootstrap",
+          n_sim = 20
+        ),
+        "currently supports only 'markov_avg_sops'"
       )
     })
 

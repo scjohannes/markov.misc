@@ -85,11 +85,12 @@ The `avg_sops` function (`R/sops.R`) implements G-computation to estimate popula
 
 The `inferences()` function serves as a unified entry point for estimating uncertainty (`R/sops.R`).
 
-### Method A: MVN Simulation (Fast Parametric Bootstrap)
+### Method A: Simulation Engines (No Refit)
 
--   **Mechanism**: Draws coefficient vectors from a Multivariate Normal distribution $\beta^* \sim N(\hat{\beta}, \Sigma_{robust})$.
--   **Efficiency**: Uses the "Fast Path" (see above) to update predictions without refitting the model or reconstructing design matrices.
--   **Use Case**: Primary method for interactive analysis and individual-level predictions.
+-   **MVN Engine** (`engine = "mvn"`): Draws coefficient vectors from a Multivariate Normal distribution $\beta^* \sim N(\hat{\beta}, \Sigma_{robust})`.
+-   **Score-Bootstrap Engine** (`engine = "score_bootstrap"`): Uses cluster-level multiplier perturbations of score contributions with a one-step Newton update for coefficients. In v1, this is implemented for `robcov_vglm` objects in `avg_sops() |> inferences()` pipelines.
+-   **Efficiency**: Both engines reuse the "Fast Path" (see above) to update predictions without refitting the model or reconstructing design matrices.
+-   **Use Case**: Primary method for interactive analysis; score-bootstrap captures uncertainty from both coefficients and empirical patient mix in marginal (`avg_sops`) inference.
 
 ### Method B: Non-parametric Bootstrap
 
