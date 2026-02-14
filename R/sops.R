@@ -1858,14 +1858,22 @@ generate_score_bootstrap_draws <- function(
   }
   if (length(cluster) != nrow(scores)) {
     stop(
-      "Length of `model$cluster` (", length(cluster), ") does not match ",
-      "the number of score rows (", nrow(scores), ")."
+      "Length of `model$cluster` (",
+      length(cluster),
+      ") does not match ",
+      "the number of score rows (",
+      nrow(scores),
+      ")."
     )
   }
   if (length(beta_hat) != ncol(scores)) {
     stop(
-      "Coefficient length (", length(beta_hat), ") does not match ",
-      "score columns (", ncol(scores), ")."
+      "Coefficient length (",
+      length(beta_hat),
+      ") does not match ",
+      "score columns (",
+      ncol(scores),
+      ")."
     )
   }
 
@@ -1902,7 +1910,44 @@ generate_score_bootstrap_draws <- function(
     w_cluster <- stats::rexp(n_clusters, rate = 1)
     u_cluster <- w_cluster - 1
 
+    # multiple each centered patient weight by the patient-level score
+    # contribution, then sum across patients to get the overall score
+    # perturbation for the draw.
+
+    # Before applying the weights, colSums of the scores would be (by
+    # definition) zero (because we're looking at the first derivative at the MLE
+    #).
+
+    # U_star is the perturbed total score vector for this draw. U_start
+    # represents what the total score (first derivative of the log-likelihood)
+    # would be if had resampled patients
     U_star <- as.vector(crossprod(u_cluster, scores_clustered))
+
+    # One-Step Newton-Raphson Update:
+    # If we ignore covariance: if var(beta_x) very low, then even if U_star is
+    # large, then the update will be small.
+    #
+    # Reminder to self bread %*% U_start is equivanelt to sum(bread[i, ] *
+    # U_star) for each row of bread.
+
+    # We can use Newton-Raphson to find root of the score equation, which gives
+    # us the new MLE estimates for this draw.
+    # We want to find where $f(x) = 0$ (our score)
+    # $x_{new} = x_{old} - \frac{f(x_{old})}{f'(x_{old})}$
+    # $x$ is is beta
+    # $f(x)$ is the score equation, which is zero at the MLE
+    # $f'(x)$ is the Hessian
+    # $$\beta_{new} = \beta_{old} - \frac{U(\beta_{old})}{H(\beta_{old})}$$
+
+    # Dividing by a matrix is the same as multiplying by the inverse, so we can
+    # write:
+    # $\beta_{new} = \beta_{old} - H^{-1} \times U(\beta_{old})$
+    # vcov (V) is defined as the inverse of the negative Hessian ($V = (-H)^{-1}$), so we can rewrite:
+    # $\beta_{new} = \beta_{old} + V \times U(\beta_{old})$
+    # The new beta (x1) is where the tangent line at the old beta (x0) intersects the x-axis (where score = 0).
+
+    # The bread (vcov) is the inverse of the negative Hessian
+
     beta_draws[i, ] <- beta_hat + as.vector((bread %*% U_star) / n_obs)
 
     w_patient <- w_cluster[cluster_idx]
