@@ -56,6 +56,8 @@ information plus robust covariance estimates:
 
 \strong{Sandwich components:}
 \item{scores}{Matrix of observation-level score contributions (n x p)}
+\item{influence_beta_obs}{Matrix of observation-level influence
+contributions for \eqn{\beta} (n x p), computed via \code{VGAM::Influence()}}
 \item{bread}{The "bread" matrix (scaled inverse Hessian)}
 \item{meat}{The "meat" matrix}
 
