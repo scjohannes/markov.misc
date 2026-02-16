@@ -1,0 +1,594 @@
+---
+title: "Mathematical Derivation: One-Step Score Bootstrap for Markov SOPs"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Mathematical Derivation: One-Step Score Bootstrap for Markov SOPs}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5,
+  out.width = "100%",
+  dpi = 300
+)
+```
+
+## Goal
+
+This vignette derives the one-step Newton-Raphson approximation used in the
+score bootstrap to efficiently estimate uncertainty in State Occupation
+Probabilities (SOPs).
+
+To build intuition before the full matrix derivation, we first work through a
+single-intercept model where the geometry can be seen directly.
+
+## Setup
+
+```{r setup, message=FALSE}
+library(markov.misc)
+library(VGAM)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(patchwork)
+
+SEED <- 20260216
+N <- 100
+P_TRUE <- 0.6
+
+set.seed(SEED)
+dat <- tibble(
+  id = seq_len(N),
+  y_bin = rbinom(N, size = 1, prob = P_TRUE),
+  y = ordered(y_bin, levels = c(0, 1))
+)
+
+fit <- vglm(
+  y ~ 1,
+  family = cumulative(reverse = TRUE),
+  data = dat
+)
+
+# One-observation-per-cluster to mirror the score-bootstrap machinery
+# while intentionally ignoring clustering structure.
+fit_rb <- robcov_vglm(fit, cluster = dat$id)
+
+beta_hat <- as.numeric(stats::coef(fit)[1])
+scores <- as.numeric(fit_rb$scores[, 1])
+bread <- as.numeric(fit_rb$bread[1, 1])
+n_obs <- fit_rb$n
+v_hat <- bread / n_obs
+
+stopifnot(length(stats::coef(fit)) == 1)
+stopifnot(abs(sum(scores)) < 1e-8)
+stopifnot(isTRUE(all.equal(v_hat, as.numeric(stats::vcov(fit)[1, 1]), tolerance = 1e-10)))
+
+y_num <- dat$y_bin
+```
+
+For this fixed dataset, the fitted intercept corresponds to:
+
+```{r}
+tibble(
+  quantity = c("beta_hat", "plogis(beta_hat)", "sample mean(y)"),
+  value = c(beta_hat, plogis(beta_hat), mean(y_num))
+)
+```
+
+## Log-Likelihood Geometry in 1D
+
+For Bernoulli outcomes with one intercept:
+
+- log-likelihood: $\ell(\beta) = \sum_i \{y_i \beta - \log(1 + e^\beta)\}$,
+- score: $U(\beta) = \sum_i (y_i - \text{logit}^{-1}(\beta))$,
+- Hessian: $H(\beta) = -n\,p(\beta)\{1-p(\beta)\}$.
+
+```{r ll-score-hess}
+ll_fn <- function(beta, y) {
+  sum(y * beta - log1p(exp(beta)))
+}
+
+score_fn <- function(beta, y) {
+  sum(y - plogis(beta))
+}
+
+hess_fn <- function(beta, n) {
+  p <- plogis(beta)
+  -n * p * (1 - p)
+}
+
+beta_grid <- seq(beta_hat - 4, beta_hat + 4, length.out = 500)
+geom_df <- tibble(
+  beta = beta_grid,
+  loglik = vapply(beta_grid, ll_fn, numeric(1), y = y_num),
+  score = vapply(beta_grid, score_fn, numeric(1), y = y_num),
+  hess = vapply(beta_grid, hess_fn, numeric(1), n = n_obs)
+)
+
+p_ll <- ggplot(geom_df, aes(beta, loglik)) +
+  geom_line(linewidth = 0.8, color = "#2C3E50") +
+  geom_vline(xintercept = beta_hat, linetype = "dashed", color = "#C0392B") +
+  labs(
+    title = "Log-likelihood",
+    x = expression(beta),
+    y = expression(ell(beta))
+  ) +
+  theme_minimal()
+
+p_score <- ggplot(geom_df, aes(beta, score)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_line(linewidth = 0.8, color = "#2874A6") +
+  geom_vline(xintercept = beta_hat, linetype = "dashed", color = "#C0392B") +
+  labs(
+    title = "First derivative (Score)",
+    x = expression(beta),
+    y = expression(U(beta))
+  ) +
+  theme_minimal()
+
+p_hess <- ggplot(geom_df, aes(beta, hess)) +
+  geom_line(linewidth = 0.8, color = "#117864") +
+  geom_vline(xintercept = beta_hat, linetype = "dashed", color = "#C0392B") +
+  labs(
+    title = "Second derivative (Hessian)",
+    x = expression(beta),
+    y = expression(H(beta))
+  ) +
+  theme_minimal()
+
+(p_ll / p_score / p_hess) +
+  plot_annotation(title = "Likelihood Geometry for a Single Intercept")
+```
+
+At the MLE (`beta_hat`), the score is approximately zero.
+
+## Score Contributions and Exponential Reweighting
+
+Keeping this dataset fixed, we now perturb the score equation the same way the
+score bootstrap does.
+
+`robcov_vglm()` gives observation-level score contributions $s_i$ at
+$\hat\beta$. In this one-parameter case, these are scalar values.
+
+For one score-bootstrap draw:
+
+- sample weights $w_i \sim \text{Exp}(1)$,
+- center them as $u_i = w_i - 1$,
+- compute perturbed score at the MLE:
+  $$
+  U^*(\hat\beta) = \sum_i u_i s_i.
+  $$
+
+```{r single-perturbation}
+set.seed(SEED + 1)
+w_i <- rexp(n_obs, rate = 1)
+u_i <- w_i - 1
+
+contrib_df <- tibble(
+  obs = seq_len(n_obs),
+  score_i = scores,
+  centered_weight = u_i,
+  weighted_score_i = u_i * score_i
+)
+
+score_totals <- tibble(
+  type = c("Original total score", "Perturbed total score"),
+  value = c(sum(contrib_df$score_i), sum(contrib_df$weighted_score_i))
+)
+
+knitr::kable(score_totals, digits = 4)
+```
+
+```{r contribution-viz}
+p_contrib <- ggplot(contrib_df, aes(obs, weighted_score_i)) +
+  geom_hline(yintercept = 0, color = "grey70") +
+  geom_linerange(aes(ymin = 0, ymax = weighted_score_i), color = "#2874A6", alpha = 0.6) +
+  labs(
+    title = "Perturbed contribution per observation",
+    x = "Observation",
+    y = expression((w[i] - 1) * s[i])
+  ) +
+  theme_minimal()
+
+p_contrib
+```
+
+## How the Total Score Curve Changes
+
+The key geometric effect is that exponential reweighting tilts the score curve
+and moves its root.
+
+The unweighted score curve is:
+$$
+U(\beta) = \sum_i (y_i - \text{logit}^{-1}(\beta)).
+$$
+
+With one exponential draw, the weighted score curve is:
+$$
+U_w(\beta) = \sum_i w_i (y_i - \text{logit}^{-1}(\beta)).
+$$
+
+At $\hat\beta$, $U(\hat\beta)=0$, while generally $U_w(\hat\beta)\neq 0$.
+
+```{r score-shift-viz}
+score_curve_df <- tibble(
+  beta = beta_grid,
+  unweighted = vapply(beta_grid, score_fn, numeric(1), y = y_num),
+  weighted = vapply(
+    beta_grid,
+    function(b) sum(w_i * (y_num - plogis(b))),
+    numeric(1)
+  )
+) |>
+  pivot_longer(cols = c(unweighted, weighted), names_to = "curve", values_to = "score")
+
+overview <- ggplot(score_curve_df, aes(beta, score, color = curve)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_line(linewidth = 0.9) +
+  geom_vline(xintercept = beta_hat, linetype = "dashed", color = "grey35") +
+  scale_color_manual(
+    values = c(unweighted = "#2C3E50", weighted = "#C0392B"),
+    labels = c(unweighted = "U(beta)", weighted = "U_w(beta)")
+  ) +
+  labs(
+    title = "Score curve before and after reweighting",
+    x = expression(beta),
+    y = "Score",
+    color = NULL
+  ) +
+  theme_minimal()
+
+zoomed <- ggplot(score_curve_df, aes(beta, score, color = curve)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_line(linewidth = 0.9) +
+  geom_vline(xintercept = beta_hat, linetype = "dashed", color = "grey35") +
+  scale_color_manual(
+    values = c(unweighted = "#2C3E50", weighted = "#C0392B"),
+    labels = c(unweighted = "U(beta)", weighted = "U_w(beta)")
+  ) +
+  coord_cartesian(xlim = c(0.5, 1.25), ylim = c(-5, 5)) +
+  labs(
+    title = "Score curve before and after reweighting (zoomed)",
+    x = expression(beta),
+    y = "Score",
+    color = NULL
+  ) +
+  theme_minimal()
+
+overview / zoomed
+```
+
+## One-Step Update as a Tangent Approximation
+
+Given that shifted score curve, the package uses a one-step Newton-style update
+to approximate the new root.
+
+In 1D, the one-step score-bootstrap update used in the package is:
+$$
+\beta^* \approx \hat\beta + V(\hat\beta) \, U^*(\hat\beta),
+$$
+
+where $V(\hat\beta)=(-H(\hat\beta))^{-1}$, and in package terms
+$V(\hat\beta) = \texttt{bread}/n$.
+
+```{r tangent-viz}
+U_star <- sum(contrib_df$weighted_score_i)
+H_hat <- hess_fn(beta_hat, n_obs)
+beta_one_step <- beta_hat + v_hat * U_star
+
+weighted_score_fn <- function(beta) {
+  sum(w_i * (y_num - plogis(beta)))
+}
+
+find_root <- function(f, center, step = 2, max_iter = 25) {
+  left <- center - step
+  right <- center + step
+  f_left <- f(left)
+  f_right <- f(right)
+  iter <- 0
+
+  while (sign(f_left) == sign(f_right) && iter < max_iter) {
+    step <- step * 1.5
+    left <- center - step
+    right <- center + step
+    f_left <- f(left)
+    f_right <- f(right)
+    iter <- iter + 1
+  }
+
+  if (sign(f_left) == sign(f_right)) {
+    return(NA_real_)
+  }
+
+  stats::uniroot(f, c(left, right))$root
+}
+
+beta_exact <- find_root(weighted_score_fn, center = beta_hat)
+stopifnot(is.finite(beta_exact))
+
+tangent_df <- tibble(
+  beta = beta_grid,
+  weighted_score = vapply(beta_grid, weighted_score_fn, numeric(1)),
+  tangent = U_star + H_hat * (beta - beta_hat)
+)
+
+ggplot(tangent_df, aes(beta)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_line(aes(y = weighted_score, color = "Weighted score curve"), linewidth = 1) +
+  geom_line(aes(y = tangent, color = "Tangent at beta_hat"), linewidth = 1, linetype = "dotted") +
+  geom_vline(aes(xintercept = beta_hat, color = "beta_hat"), linetype = "dotdash") +
+  geom_vline(aes(xintercept = beta_one_step, color = "One-step beta*"), linetype = "dotdash") +
+  geom_vline(aes(xintercept = beta_exact, color = "Exact weighted-MLE root"), linetype = "dotdash") +
+  scale_color_manual(
+    values = c(
+      "Weighted score curve" = "#2C3E50",
+      "Tangent at beta_hat" = "#7D3C98",
+      "beta_hat" = "#1E8449",
+      "One-step beta*" = "#D35400",
+      "Exact weighted-MLE root" = "#C0392B"
+    )
+  ) +
+  coord_cartesian(xlim = c(0.7, 1.0), ylim = c(-5, 5)) +
+  labs(
+    title = "One-step Newton update from the tangent line",
+    x = expression(beta),
+    y = "Weighted score",
+    color = NULL
+  ) +
+  theme_minimal()
+```
+
+```{r one-step-comparison}
+tibble(
+  quantity = c("beta_hat", "U_star(beta_hat)", "beta_one_step", "beta_exact"),
+  value = c(beta_hat, U_star, beta_one_step, beta_exact)
+) |>
+  knitr::kable(digits = 5)
+```
+
+------------------------------------------------------------------------
+
+Now we translate that 1D picture into the full clustered, multi-parameter
+setting used for Markov SOP inference.
+
+In the figures above, we saw three key ingredients: a score root at the MLE,
+exponential perturbation of the score equation, and a tangent-based one-step
+root update. The derivation below is exactly the same logic, written in vector
+and matrix form.
+
+## 1. The Maximum Likelihood Framework
+
+Let $\ell(\beta)$ be the log-likelihood of our model given parameters $\beta$.
+In a clustered dataset with $G$ clusters (patients), the total log-likelihood
+is the sum of the cluster-level log-likelihoods:
+$$
+\ell(\beta) = \sum_{g=1}^G \ell_g(\beta)
+$$
+
+The **Score vector** $U(\beta)$ is the gradient of the log-likelihood:
+$$
+U(\beta) = \nabla \ell(\beta) = \sum_{g=1}^G U_g(\beta), \quad
+\text{where } U_g(\beta) = \frac{\partial \ell_g}{\partial \beta}
+$$
+
+``` r
+# Cluster-level scores (aggregated from observation-level scores)
+scores_clustered <- rowsum(scores, cluster_fac, reorder = FALSE)
+```
+
+The **Hessian matrix** $H(\beta)$ is the second derivative (curvature):
+$$
+H(\beta) = \nabla^2 \ell(\beta) = \sum_{g=1}^G H_g(\beta)
+$$
+
+At the Maximum Likelihood Estimate (MLE) $\hat{\beta}$, the total score is
+exactly zero:
+$$
+U(\hat{\beta}) = \sum_{g=1}^G U_g(\hat{\beta}) = \mathbf{0}
+$$
+
+------------------------------------------------------------------------
+
+## 2. The Perturbed Likelihood
+
+In the intercept plots above, one exponential draw tilted the score curve and
+moved its root. In the general setting, we do that at the cluster level.
+
+In the score bootstrap, we assign a random weight $w_g \sim \text{Exp}(1)$ to
+each cluster.
+
+``` r
+w_cluster <- stats::rexp(n_clusters, rate = 1)
+```
+
+We want to find the new parameter estimate $\beta^*$ that maximizes the
+**weighted log-likelihood**:
+$$
+\ell^*(\beta) = \sum_{g=1}^G w_g \ell_g(\beta)
+$$
+
+The corresponding perturbed score function is:
+$$
+U^*(\beta) = \sum_{g=1}^G w_g U_g(\beta)
+$$
+
+We are looking for $\beta^*$ such that the perturbed score is zero:
+$U^*(\beta^*) = \mathbf{0}$.
+
+------------------------------------------------------------------------
+
+## 3. One-Step Update in the Multi-Parameter Case
+
+The tangent-line figure in 1D is the scalar version of the update below.
+
+### From score root-finding to one-step update
+
+In maximum likelihood estimation, we want to solve the perturbed score equation
+$U^*(\beta^*) = \mathbf{0}$.
+
+Start from the classical scalar Newton step:
+$$
+x_{new} = x_{old} - \frac{f(x_{old})}{f'(x_{old})}
+$$
+
+In multiple dimensions, the derivative is a matrix, so we use an inverse:
+$$
+x_{new} = x_{old} - [f'(x_{old})]^{-1} f(x_{old})
+$$
+
+Now substitute each symbol for our score-bootstrap setting:
+
+| Standard Newton-Raphson         | Score Bootstrap Setting              |
+|---------------------------------|--------------------------------------|
+| $x$ = unknown                   | $\beta$ = model parameters           |
+| $f(x)$ = function to zero out   | $U^*(\beta)$ = perturbed score       |
+| $f'(x)$ = derivative            | $H(\beta)$ = Hessian                 |
+| $x_{old}$ = current guess       | $\hat{\beta}$ = original MLE         |
+| $x_{new}$ = updated value       | $\beta^*$ = perturbed parameter draw |
+
+Taking one Newton step from $\hat{\beta}$ then gives:
+$$
+\beta^* \approx \hat{\beta} - [H(\hat{\beta})]^{-1} \cdot U^*(\hat{\beta})
+$$
+
+Because $H(\hat{\beta})$ is negative definite at a maximum, this is typically
+written as:
+$$
+\beta^* \approx \hat{\beta} + [-H(\hat{\beta})]^{-1} \cdot U^*(\hat{\beta})
+$$
+
+In multiple dimensions, this uses a matrix inverse rather than scalar division.
+A first-order Taylor justification is provided in the Appendix.
+
+### Centered exponential multipliers
+
+We simplify $U^*(\hat{\beta})$ using the fact that the original total score is
+zero:
+$$
+U^*(\hat{\beta}) = \sum w_g U_g(\hat{\beta})
+= \sum (w_g - 1) U_g(\hat{\beta}) + \underbrace{\sum U_g(\hat{\beta})}_{\mathbf{0}}
+$$
+Let $u_g = (w_g - 1)$ be the centered multipliers.
+
+``` r
+u_cluster <- w_cluster - 1
+```
+
+Then:
+$$
+U^* = \sum_{g=1}^G u_g U_g(\hat{\beta})
+$$
+
+``` r
+U_star <- as.vector(crossprod(u_cluster, scores_clustered))
+```
+
+### Bread-matrix implementation
+
+In statistics:
+$$
+\text{Var}(\hat{\beta}) \approx [-H(\hat{\beta})]^{-1}
+$$
+
+In this package, bread is defined as:
+$$
+B = n \cdot \text{Var}(\hat{\beta}) = n \cdot [-H(\hat{\beta})]^{-1}
+$$
+
+So:
+$$
+[-H(\hat{\beta})]^{-1} = \frac{B}{n}
+$$
+
+Substituting into the one-step update:
+$$
+\beta^* \approx \hat{\beta} + \frac{B}{n} \cdot U_{\text{star}}
+= \hat{\beta} + \frac{1}{n}(B \cdot U_{\text{star}})
+$$
+
+We compute $(B \cdot U_{\text{star}})$ first (matrix times vector), then divide
+by $n$.
+
+``` r
+beta_draws[i, ] <- beta_hat + as.vector((bread %*% U_star) / n_obs)
+```
+
+------------------------------------------------------------------------
+
+## 4. Usage in G-Computation
+
+Once we have the perturbed parameters $\beta^*$, we use them to generate the
+population-average (marginal) SOPs.
+
+### Step A: Predict
+
+For each patient $i$, we calculate their individual-level SOPs given the new
+parameters:
+$$
+\text{SOP}_i(t, s) = f(\text{Data}_i, \beta^*)
+$$
+
+``` r
+# Fast Path (Pre-calculated components)
+sops_array <- markov_msm_run(components, Gamma_i, times, absorb)
+
+# Slow Path (Full prediction)
+sops_array <- soprob_markov(object = model_i, data = newdata_pred, ...)
+```
+
+### Step B: Weighted Average
+
+We then average these individual probabilities across the population.
+Crucially, we use the same weights $w_g$ that we used to perturb the
+coefficients to account for sampling uncertainty:
+$$
+\overline{\text{SOP}}(t, s) =
+\frac{\sum_{i=1}^N w_i \cdot \text{SOP}_i(t, s)}{\sum_{i=1}^N w_i}
+$$
+
+``` r
+# Normalizing to a simplex
+weights <- weights / weight_sum
+
+# Weighted marginalization (Dot product of probabilities and weights)
+avg_sops_mat <- matrix(as.vector(sops_cf_mat %*% weights), ...)
+```
+
+**Why use the same weights?** The bootstrap samples patients with the weights
+$w_g$. To maintain consistency, we must:
+
+1. Perturb coefficients using weights $w_g$ (reflecting sampling uncertainty)
+2. Average patient predictions using the *same* weights $w_g$ (reflecting the
+   "sampled" population)
+
+By normalizing by $\sum_{i=1}^N w_i$ (the simplex), we ensure the final
+marginalized estimate remains a valid probability between 0 and 1.
+
+------------------------------------------------------------------------
+
+## Appendix: First-Order Taylor Justification
+
+Instead of fully refitting the weighted likelihood for each draw, we linearize
+$U^*(\beta)$ around $\hat{\beta}$:
+$$
+U^*(\beta^*) \approx U^*(\hat{\beta}) +
+\frac{\partial U^*(\hat{\beta})}{\partial \beta} (\beta^* - \hat{\beta}) =
+\mathbf{0}
+$$
+
+Let $\Delta\beta = (\beta^* - \hat{\beta})$. Rearranging gives:
+$$
+\Delta\beta \approx -
+\left[ \frac{\partial U^*(\hat{\beta})}{\partial \beta} \right]^{-1}
+U^*(\hat{\beta})
+$$
+
+The derivative term is the weighted Hessian $\sum_g w_g H_g$. Since
+$E[w_g]=1$, we approximate it with the original Hessian and recover the
+one-step update used in the main text.
