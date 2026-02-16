@@ -1,0 +1,906 @@
+---
+title: "Score Bootstrap Intuition in a One-Parameter Model"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Score Bootstrap Intuition in a One-Parameter Model}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5,
+  out.width = "100%",
+  dpi = 300
+)
+```
+
+## Goal
+
+This vignette builds score-bootstrap intuition in progressively harder steps.
+We start with the simplest case (a single intercept parameter), then move to
+repeated-simulation checks.
+
+Roadmap:
+
+1. On one fixed dataset: fit `VGAM::vglm(y ~ 1)`, inspect log-likelihood
+   geometry, perturb score contributions, and apply the one-step update.
+2. On that same dataset: compare 1000 score-bootstrap draws to 1000
+   nonparametric bootstrap draws.
+3. Across many simulated datasets under the null: assess calibration for
+   intercept inference, then repeat for the `tx` coefficient in a simple
+   Markov transition model.
+
+## Setup
+
+```{r setup, message=FALSE}
+library(markov.misc)
+library(VGAM)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(patchwork)
+library(furrr)
+library(future.callr)
+
+SEED <- 20260216
+N <- 100
+P_TRUE <- 0.6
+N_DRAWS <- 1000
+
+set.seed(SEED)
+dat <- tibble(
+  id = seq_len(N),
+  y_bin = rbinom(N, size = 1, prob = P_TRUE),
+  y = ordered(y_bin, levels = c(0, 1))
+)
+
+fit <- vglm(
+  y ~ 1,
+  family = cumulative(reverse = TRUE),
+  data = dat
+)
+
+# One-observation-per-cluster to mirror the score-bootstrap machinery
+# while intentionally ignoring clustering structure.
+fit_rb <- robcov_vglm(fit, cluster = dat$id)
+
+beta_hat <- as.numeric(stats::coef(fit)[1])
+scores <- as.numeric(fit_rb$scores[, 1])
+bread <- as.numeric(fit_rb$bread[1, 1])
+n_obs <- fit_rb$n
+v_hat <- bread / n_obs
+
+stopifnot(length(stats::coef(fit)) == 1)
+stopifnot(abs(sum(scores)) < 1e-8)
+stopifnot(isTRUE(all.equal(v_hat, as.numeric(stats::vcov(fit)[1, 1]), tolerance = 1e-10)))
+
+y_num <- dat$y_bin
+```
+
+For this fixed dataset, the fitted intercept corresponds to:
+
+```{r}
+tibble(
+  quantity = c("beta_hat", "plogis(beta_hat)", "sample mean(y)"),
+  value = c(beta_hat, plogis(beta_hat), mean(y_num))
+)
+```
+
+## Log-Likelihood Geometry in 1D
+
+For Bernoulli outcomes with one intercept:
+
+- log-likelihood: $\ell(\beta) = \sum_i \{y_i \beta - \log(1 + e^\beta)\}$,
+- score: $U(\beta) = \sum_i (y_i - \text{logit}^{-1}(\beta))$,
+- Hessian: $H(\beta) = -n\,p(\beta)\{1-p(\beta)\}$.
+
+```{r ll-score-hess}
+ll_fn <- function(beta, y) {
+  sum(y * beta - log1p(exp(beta)))
+}
+
+score_fn <- function(beta, y) {
+  sum(y - plogis(beta))
+}
+
+hess_fn <- function(beta, n) {
+  p <- plogis(beta)
+  -n * p * (1 - p)
+}
+
+beta_grid <- seq(beta_hat - 4, beta_hat + 4, length.out = 500)
+geom_df <- tibble(
+  beta = beta_grid,
+  loglik = vapply(beta_grid, ll_fn, numeric(1), y = y_num),
+  score = vapply(beta_grid, score_fn, numeric(1), y = y_num),
+  hess = vapply(beta_grid, hess_fn, numeric(1), n = n_obs)
+)
+
+p_ll <- ggplot(geom_df, aes(beta, loglik)) +
+  geom_line(linewidth = 0.8, color = "#2C3E50") +
+  geom_vline(xintercept = beta_hat, linetype = "dashed", color = "#C0392B") +
+  labs(
+    title = "Log-likelihood",
+    x = expression(beta),
+    y = expression(ell(beta))
+  ) +
+  theme_minimal()
+
+p_score <- ggplot(geom_df, aes(beta, score)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_line(linewidth = 0.8, color = "#2874A6") +
+  geom_vline(xintercept = beta_hat, linetype = "dashed", color = "#C0392B") +
+  labs(
+    title = "First derivative (Score)",
+    x = expression(beta),
+    y = expression(U(beta))
+  ) +
+  theme_minimal()
+
+p_hess <- ggplot(geom_df, aes(beta, hess)) +
+  geom_line(linewidth = 0.8, color = "#117864") +
+  geom_vline(xintercept = beta_hat, linetype = "dashed", color = "#C0392B") +
+  labs(
+    title = "Second derivative (Hessian)",
+    x = expression(beta),
+    y = expression(H(beta))
+  ) +
+  theme_minimal()
+
+(p_ll / p_score / p_hess) +
+  plot_annotation(title = "Likelihood Geometry for a Single Intercept")
+```
+
+At the MLE (`beta_hat`), the score is approximately zero.
+
+## Score Contributions and Exponential Reweighting
+
+Keeping this dataset fixed, we now perturb the score equation the same way the
+score bootstrap does.
+
+`robcov_vglm()` gives observation-level score contributions $s_i$ at
+$\hat\beta$. In this one-parameter case, these are scalar values.
+
+For one score-bootstrap draw:
+
+- sample weights $w_i \sim \text{Exp}(1)$,
+- center them as $u_i = w_i - 1$,
+- compute perturbed score at the MLE:
+  $$
+  U^*(\hat\beta) = \sum_i u_i s_i.
+  $$
+
+```{r single-perturbation}
+set.seed(SEED + 1)
+w_i <- rexp(n_obs, rate = 1)
+u_i <- w_i - 1
+
+contrib_df <- tibble(
+  obs = seq_len(n_obs),
+  score_i = scores,
+  centered_weight = u_i,
+  weighted_score_i = u_i * score_i
+)
+
+score_totals <- tibble(
+  type = c("Original total score", "Perturbed total score"),
+  value = c(sum(contrib_df$score_i), sum(contrib_df$weighted_score_i))
+)
+
+knitr::kable(score_totals, digits = 4)
+```
+
+```{r contribution-viz}
+p_contrib <- ggplot(contrib_df, aes(obs, weighted_score_i)) +
+  geom_hline(yintercept = 0, color = "grey70") +
+  geom_linerange(aes(ymin = 0, ymax = weighted_score_i), color = "#2874A6", alpha = 0.6) +
+  labs(
+    title = "Perturbed contribution per observation",
+    x = "Observation",
+    y = expression((w[i] - 1) * s[i])
+  ) +
+  theme_minimal()
+
+p_contrib
+```
+
+## How the Total Score Curve Changes
+
+The key geometric effect is that exponential reweighting tilts the score curve
+and moves its root.
+
+The unweighted score curve is:
+$$
+U(\beta) = \sum_i (y_i - \text{logit}^{-1}(\beta)).
+$$
+
+With one exponential draw, the weighted score curve is:
+$$
+U_w(\beta) = \sum_i w_i (y_i - \text{logit}^{-1}(\beta)).
+$$
+
+At $\hat\beta$, $U(\hat\beta)=0$, while generally $U_w(\hat\beta)\neq 0$.
+
+```{r score-shift-viz}
+score_curve_df <- tibble(
+  beta = beta_grid,
+  unweighted = vapply(beta_grid, score_fn, numeric(1), y = y_num),
+  weighted = vapply(
+    beta_grid,
+    function(b) sum(w_i * (y_num - plogis(b))),
+    numeric(1)
+  )
+) |>
+  pivot_longer(cols = c(unweighted, weighted), names_to = "curve", values_to = "score")
+
+overview <- ggplot(score_curve_df, aes(beta, score, color = curve)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_line(linewidth = 0.9) +
+  geom_vline(xintercept = beta_hat, linetype = "dashed", color = "grey35") +
+  scale_color_manual(
+    values = c(unweighted = "#2C3E50", weighted = "#C0392B"),
+    labels = c(unweighted = "U(beta)", weighted = "U_w(beta)")
+  ) +
+  # coord_cartesian(xlim = c(0.5, 1.25), ylim = c(-5, 5)) +
+  labs(
+    title = "Score curve before and after reweighting",
+    x = expression(beta),
+    y = "Score",
+    color = NULL
+  ) +
+  theme_minimal()
+
+zoomed <- ggplot(score_curve_df, aes(beta, score, color = curve)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_line(linewidth = 0.9) +
+  geom_vline(xintercept = beta_hat, linetype = "dashed", color = "grey35") +
+  scale_color_manual(
+    values = c(unweighted = "#2C3E50", weighted = "#C0392B"),
+    labels = c(unweighted = "U(beta)", weighted = "U_w(beta)")
+  ) +
+  coord_cartesian(xlim = c(0.5, 1.25), ylim = c(-5, 5)) +
+  labs(
+    title = "Score curve before and after reweighting (zoomed)",
+    x = expression(beta),
+    y = "Score",
+    color = NULL
+  ) +
+  theme_minimal()
+
+overview / zoomed
+```
+
+## One-Step Update as a Tangent Approximation
+
+Given that shifted score curve, the package uses a one-step Newton-style update
+to approximate the new root.
+
+In 1D, the one-step score-bootstrap update used in the package is:
+$$
+\beta^* \approx \hat\beta + V(\hat\beta) \, U^*(\hat\beta),
+$$
+
+
+where $V(\hat\beta)=(-H(\hat\beta))^{-1}$, and in package terms
+$V(\hat\beta) = \texttt{bread}/n$.
+
+```{r tangent-viz}
+U_star <- sum(contrib_df$weighted_score_i)
+H_hat <- hess_fn(beta_hat, n_obs)
+beta_one_step <- beta_hat + v_hat * U_star
+
+weighted_score_fn <- function(beta) {
+  sum(w_i * (y_num - plogis(beta)))
+}
+
+find_root <- function(f, center, step = 2, max_iter = 25) {
+  left <- center - step
+  right <- center + step
+  f_left <- f(left)
+  f_right <- f(right)
+  iter <- 0
+
+  while (sign(f_left) == sign(f_right) && iter < max_iter) {
+    step <- step * 1.5
+    left <- center - step
+    right <- center + step
+    f_left <- f(left)
+    f_right <- f(right)
+    iter <- iter + 1
+  }
+
+  if (sign(f_left) == sign(f_right)) {
+    return(NA_real_)
+  }
+
+  stats::uniroot(f, c(left, right))$root
+}
+
+beta_exact <- find_root(weighted_score_fn, center = beta_hat)
+stopifnot(is.finite(beta_exact))
+
+tangent_df <- tibble(
+  beta = beta_grid,
+  weighted_score = vapply(beta_grid, weighted_score_fn, numeric(1)),
+  tangent = U_star + H_hat * (beta - beta_hat)
+)
+
+ggplot(tangent_df, aes(beta)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  geom_line(aes(y = weighted_score, color = "Weighted score curve"), linewidth = 1) +
+  geom_line(aes(y = tangent, color = "Tangent at beta_hat"), linewidth = 1, linetype = "dotted") +
+  geom_vline(aes(xintercept = beta_hat, color = "beta_hat"), linetype = "dotdash") +
+  geom_vline(aes(xintercept = beta_one_step, color = "One-step beta*"), linetype = "dotdash") +
+  geom_vline(aes(xintercept = beta_exact, color = "Exact weighted-MLE root"), linetype = "dotdash") +
+  scale_color_manual(
+    values = c(
+      "Weighted score curve" = "#2C3E50",
+      "Tangent at beta_hat" = "#7D3C98",
+      "beta_hat" = "#1E8449",
+      "One-step beta*" = "#D35400",
+      "Exact weighted-MLE root" = "#C0392B"
+    )
+  ) +
+  coord_cartesian(xlim = c(0.7, 1.0), ylim = c(-5, 5)) +
+  labs(
+    title = "One-step Newton update from the tangent line",
+    x = expression(beta),
+    y = "Weighted score",
+    color = NULL
+  ) +
+  theme_minimal()
+```
+
+```{r one-step-comparison}
+tibble(
+  quantity = c("beta_hat", "U_star(beta_hat)", "beta_one_step", "beta_exact"),
+  value = c(beta_hat, U_star, beta_one_step, beta_exact)
+) |>
+  knitr::kable(digits = 5)
+```
+
+## 1000 Score-Bootstrap Draws vs 1000 Nonparametric Bootstrap Draws
+
+We now move from a single perturbation to many draws and compare distributions
+on the same observed dataset.
+
+```{r draw-generators}
+draw_score_boot <- function(n_draws, beta_hat, v_hat, scores) {
+  n_obs <- length(scores)
+  u_mat <- matrix(rexp(n_draws * n_obs, rate = 1) - 1, nrow = n_draws, ncol = n_obs)
+  U_star <- as.vector(u_mat %*% scores)
+  beta_hat + v_hat * U_star
+}
+
+draw_nonparam_boot <- function(n_draws, dat) {
+  out <- numeric(n_draws)
+  n <- nrow(dat)
+
+  for (i in seq_len(n_draws)) {
+    idx <- sample.int(n, size = n, replace = TRUE)
+    dat_b <- dat[idx, , drop = FALSE]
+    fit_b <- vglm(y ~ 1, family = cumulative(reverse = TRUE), data = dat_b)
+    out[i] <- as.numeric(stats::coef(fit_b)[1])
+  }
+
+  out
+}
+```
+
+```{r run-draws}
+set.seed(SEED + 2)
+t_score <- system.time({
+  beta_score <- draw_score_boot(
+    n_draws = N_DRAWS,
+    beta_hat = beta_hat,
+    v_hat = v_hat,
+    scores = scores
+  )
+})["elapsed"]
+
+set.seed(SEED + 3)
+t_nonparam <- system.time({
+  beta_nonparam <- draw_nonparam_boot(
+    n_draws = N_DRAWS,
+    dat = dat
+  )
+})["elapsed"]
+
+stopifnot(length(beta_score) == N_DRAWS, length(beta_nonparam) == N_DRAWS)
+stopifnot(all(is.finite(beta_score)), all(is.finite(beta_nonparam)))
+```
+
+```{r draw-summary}
+summarize_draws <- function(x, method) {
+  tibble(
+    method = method,
+    mean = mean(x),
+    sd = stats::sd(x),
+    q025 = as.numeric(stats::quantile(x, 0.025)),
+    q50 = as.numeric(stats::quantile(x, 0.5)),
+    q95 = as.numeric(stats::quantile(x, 0.95)),
+    q975 = as.numeric(stats::quantile(x, 0.975))
+  )
+}
+
+summary_tbl <- bind_rows(
+  summarize_draws(beta_score, "Score bootstrap"),
+  summarize_draws(beta_nonparam, "Nonparametric bootstrap")
+)
+
+runtime_tbl <- tibble(
+  method = c("Score bootstrap", "Nonparametric bootstrap"),
+  elapsed_seconds = c(as.numeric(t_score), as.numeric(t_nonparam))
+)
+
+knitr::kable(summary_tbl, digits = 4, caption = "Distribution summary of intercept draws")
+knitr::kable(runtime_tbl, digits = 3, caption = "Runtime for 1000 draws")
+```
+
+```{r distribution-comparison}
+draws_df <- bind_rows(
+  tibble(beta = beta_score, method = "Score bootstrap"),
+  tibble(beta = beta_nonparam, method = "Nonparametric bootstrap")
+)
+
+p_density <- ggplot(draws_df, aes(beta, fill = method, color = method)) +
+  geom_density(alpha = 0.20, linewidth = 0.9) +
+  labs(
+    title = "Intercept draw distributions",
+    x = expression(beta),
+    y = "Density",
+    fill = NULL,
+    color = NULL
+  ) +
+  theme_minimal()
+
+probs <- seq(0.01, 0.99, by = 0.01)
+qq_df <- tibble(
+  nonparametric = as.numeric(stats::quantile(beta_nonparam, probs = probs)),
+  score_bootstrap = as.numeric(stats::quantile(beta_score, probs = probs))
+)
+
+p_qq <- ggplot(qq_df, aes(nonparametric, score_bootstrap)) +
+  geom_point(alpha = 0.7, size = 1.4, color = "#2C3E50") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "#C0392B") +
+  labs(
+    title = "QQ comparison",
+    x = "Nonparametric bootstrap quantiles",
+    y = "Score bootstrap quantiles"
+  ) +
+  theme_minimal()
+
+p_density | p_qq
+```
+
+## Repeated-Simulation Check: Intercept Inference
+
+The previous section compared draw distributions for one dataset. Now we assess
+whether score-bootstrap intervals are calibrated across many independently
+simulated datasets.
+
+We use a null data-generating process with $p = 0.5$, so the true intercept
+is $\beta_{\text{true}} = 0$. Type I error is the proportion of simulations
+where a 95% interval excludes 0.
+
+```{r simulation-settings}
+N_SIM <- 1000
+N_SIM_OBS <- 100
+P_SIM <- 0.5
+BETA_TRUE <- qlogis(P_SIM)
+B_SIM_DRAWS <- 1000
+ALPHA <- 0.05
+SIM_WORKERS <- 6
+```
+
+```{r simulation-helper}
+run_one_sim <- function(sim_id, n_obs, p_true, n_draws) {
+  dat_sim <- tibble(
+    id = seq_len(n_obs),
+    y_bin = rbinom(n_obs, size = 1, prob = p_true),
+    y = ordered(y_bin, levels = c(0, 1))
+  )
+
+  fit_sim <- vglm(
+    y ~ 1,
+    family = cumulative(reverse = TRUE),
+    data = dat_sim
+  )
+  fit_sim_rb <- robcov_vglm(fit_sim, cluster = dat_sim$id)
+
+  beta_hat_sim <- as.numeric(stats::coef(fit_sim)[1])
+  scores_sim <- as.numeric(fit_sim_rb$scores[, 1])
+  v_hat_sim <- as.numeric(fit_sim_rb$bread[1, 1] / fit_sim_rb$n)
+
+  beta_score_sim <- draw_score_boot(
+    n_draws = n_draws,
+    beta_hat = beta_hat_sim,
+    v_hat = v_hat_sim,
+    scores = scores_sim
+  )
+
+  ci_low <- as.numeric(stats::quantile(beta_score_sim, 0.025))
+  ci_high <- as.numeric(stats::quantile(beta_score_sim, 0.975))
+  draw_mean <- mean(beta_score_sim)
+
+  tibble(
+    sim_id = sim_id,
+    method = "Score bootstrap",
+    beta_hat = beta_hat_sim,
+    mle_bias = beta_hat_sim - BETA_TRUE,
+    draw_mean = draw_mean,
+    bias = draw_mean - BETA_TRUE,
+    ci_low = ci_low,
+    ci_high = ci_high,
+    ci_width = ci_high - ci_low,
+    covered = (ci_low <= BETA_TRUE) && (ci_high >= BETA_TRUE),
+    reject_h0 = (ci_low > 0) || (ci_high < 0)
+  )
+}
+```
+
+```{r run-simulations}
+run_sim_map <- function() {
+  furrr::future_map_dfr(
+    seq_len(N_SIM),
+    ~run_one_sim(.x, n_obs = N_SIM_OBS, p_true = P_SIM, n_draws = B_SIM_DRAWS),
+    .options = furrr::furrr_options(seed = TRUE),
+    .progress = TRUE
+  )
+}
+
+future::plan(future.callr::callr, workers = SIM_WORKERS)
+
+set.seed(SEED + 4)
+t_sim <- system.time({
+  sim_results <- run_sim_map()
+})["elapsed"]
+
+future::plan(future::sequential)
+```
+
+```{r sim-summary}
+sim_summary <- sim_results |>
+  summarise(
+    method = "Score bootstrap",
+    mean_mle_bias = mean(mle_bias),
+    mean_draw_bias = mean(bias),
+    empirical_sd_draw_mean = stats::sd(draw_mean),
+    coverage = mean(covered),
+    type1_error = mean(reject_h0),
+    avg_ci_width = mean(ci_width)
+  )
+
+sim_summary <- sim_summary |>
+  mutate(
+    mcse_coverage = sqrt((coverage * (1 - coverage)) / N_SIM),
+    mcse_type1 = sqrt((type1_error * (1 - type1_error)) / N_SIM)
+  )
+
+# sim_runtime <- tibble(
+#   setting = paste0(
+#     N_SIM,
+#     " simulations (",
+#     B_SIM_DRAWS,
+#     " score-bootstrap draws per simulation)"
+#   ),
+#   elapsed_seconds = as.numeric(t_sim)
+# )
+
+knitr::kable(sim_summary, digits = 4, caption = "Simulation performance summary")
+```
+
+```{r sim-plot}
+nominal_df <- tibble(
+  metric = c("Coverage", "Type I error"),
+  estimate = c(sim_summary$coverage, sim_summary$type1_error),
+  mcse = c(sim_summary$mcse_coverage, sim_summary$mcse_type1),
+  nominal = c(1 - ALPHA, ALPHA)
+) |>
+  mutate(
+    low = pmax(0, estimate - 1.96 * mcse),
+    high = pmin(1, estimate + 1.96 * mcse)
+  )
+
+p_nominal <- ggplot(nominal_df, aes(metric, estimate)) +
+  geom_col(width = 0.55, fill = "#2C3E50", alpha = 0.9) +
+  geom_errorbar(aes(ymin = low, ymax = high), width = 0.12) +
+  geom_point(aes(y = nominal), color = "#C0392B", size = 2.8) +
+  geom_segment(
+    aes(x = as.numeric(factor(metric)) - 0.22, xend = as.numeric(factor(metric)) + 0.22, y = nominal, yend = nominal),
+    linetype = "dashed",
+    color = "#C0392B"
+  ) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title = "Nominality Check (Estimate with MCSE)",
+    x = NULL,
+    y = "Probability"
+  ) +
+  theme_minimal()
+
+p_bias <- ggplot(sim_results, aes(x = bias)) +
+  geom_histogram(bins = 18, fill = "#2874A6", color = "white", alpha = 0.9) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "#C0392B") +
+  labs(
+    title = "Simulation-level Bias (Draw Mean - True beta)",
+    x = "Bias",
+    y = "Count"
+  ) +
+  theme_minimal()
+
+p_nominal | p_bias
+```
+
+Because this is a null scenario ($\beta_{\text{true}}=0$), type I error
+should be close to $1-$coverage, and average bias should be near zero.
+
+## Repeated-Simulation Check: `tx` Null Coverage in a Markov Model
+
+Finally, we keep the same inferential target (null calibration) but move from
+the intercept-only model to a simple proportional-odds transition model. The
+focus is nominal coverage for the treatment coefficient `tx` when the true
+effect is zero.
+
+This is a **coefficient-level** target ($\beta_{\text{tx}} = 0$); it is not a
+population-average treatment effect.
+
+### Simulation Settings
+
+```{r tx-coverage-settings}
+N_PATIENTS_TX <- 100
+FU_TX <- 30
+N_SIM_TX <- 500
+N_DRAWS_TX <- 1000
+ALPHA_TX <- 0.05
+SIM_WORKERS_TX <- 6
+BETA_TX_TRUE <- 0
+```
+
+### One-Step Score-Bootstrap Draws for Coefficients
+
+```{r tx-coverage-helper}
+draw_score_boot_coefs <- function(model, n_draws) {
+  required <- c("coefficients", "bread", "scores", "cluster", "n")
+  missing_required <- required[vapply(
+    required,
+    function(x) is.null(model[[x]]),
+    logical(1)
+  )]
+  if (length(missing_required) > 0) {
+    stop(
+      "robcov_vglm model is missing required components: ",
+      paste(missing_required, collapse = ", ")
+    )
+  }
+
+  beta_hat <- model$coefficients
+  bread <- model$bread
+  scores <- model$scores
+  cluster <- model$cluster
+  n_obs <- model$n
+
+  if (!is.matrix(scores)) {
+    stop("`scores` must be a matrix.")
+  }
+
+  cluster_chr <- as.character(cluster)
+  cluster_ids <- unique(cluster_chr)
+  cluster_fac <- factor(cluster_chr, levels = cluster_ids)
+  scores_clustered <- rowsum(scores, cluster_fac, reorder = FALSE)
+
+  n_clusters <- nrow(scores_clustered)
+  p <- length(beta_hat)
+
+  beta_draws <- matrix(NA_real_, nrow = n_draws, ncol = p)
+  colnames(beta_draws) <- names(beta_hat)
+
+  for (i in seq_len(n_draws)) {
+    u_cluster <- rexp(n_clusters, rate = 1) - 1
+    U_star <- as.vector(crossprod(u_cluster, scores_clustered))
+    beta_draws[i, ] <- beta_hat + as.vector((bread %*% U_star) / n_obs)
+  }
+
+  beta_draws
+}
+
+run_one_tx_sim <- function(sim_id, n_patients, fu, n_draws, alpha) {
+  tryCatch(
+    {
+      raw_data <- sim_trajectories_brownian(
+        n_patients = n_patients,
+        follow_up_time = fu,
+        treatment_prob = 0.5,
+        absorbing_state = 6,
+        mu_treatment_effect = 0
+      )
+
+      age_lookup <- tibble(
+        id = sort(unique(raw_data$id)),
+        age = rnorm(dplyr::n_distinct(raw_data$id), mean = 65, sd = 12)
+      )
+      raw_data <- raw_data |>
+        left_join(age_lookup, by = "id")
+
+      data <- prepare_markov_data(raw_data)
+      time_spl <- rms::rcs(data$time, 4)
+      data <- data |>
+        mutate(
+          time_lin = as.vector(time_spl[, 1]),
+          time_nlin_1 = as.vector(time_spl[, 2]),
+          time_nlin_2 = as.vector(time_spl[, 3])
+        )
+
+      m_simple <- vglm(
+        ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) + tx + age + yprev + time_lin:yprev,
+        family = cumulative(reverse = TRUE, parallel = TRUE),
+        data = data
+      )
+      m_simple_rb <- robcov_vglm(m_simple, cluster = data$id)
+
+      beta_draws <- draw_score_boot_coefs(m_simple_rb, n_draws = n_draws)
+      if (!"tx" %in% colnames(beta_draws)) {
+        stop("Coefficient `tx` was not found in the fitted model.")
+      }
+
+      tx_hat <- as.numeric(m_simple_rb$coefficients["tx"])
+      tx_draws <- as.numeric(beta_draws[, "tx"])
+      if (!all(is.finite(tx_draws))) {
+        stop("Non-finite tx score-bootstrap draws.")
+      }
+
+      ci_low <- as.numeric(stats::quantile(tx_draws, alpha / 2))
+      ci_high <- as.numeric(stats::quantile(tx_draws, 1 - alpha / 2))
+      draw_mean <- mean(tx_draws)
+
+      tibble(
+        sim_id = sim_id,
+        success = TRUE,
+        error_msg = NA_character_,
+        tx_hat = tx_hat,
+        draw_mean = draw_mean,
+        draw_bias = draw_mean - BETA_TX_TRUE,
+        ci_low = ci_low,
+        ci_high = ci_high,
+        ci_width = ci_high - ci_low,
+        covered = (ci_low <= BETA_TX_TRUE) && (ci_high >= BETA_TX_TRUE),
+        reject_h0 = (ci_low > BETA_TX_TRUE) || (ci_high < BETA_TX_TRUE)
+      )
+    },
+    error = function(e) {
+      tibble(
+        sim_id = sim_id,
+        success = FALSE,
+        error_msg = conditionMessage(e),
+        tx_hat = NA_real_,
+        draw_mean = NA_real_,
+        draw_bias = NA_real_,
+        ci_low = NA_real_,
+        ci_high = NA_real_,
+        ci_width = NA_real_,
+        covered = NA,
+        reject_h0 = NA
+      )
+    }
+  )
+}
+```
+
+### Run Coverage Simulation
+
+```{r tx-coverage-run}
+run_tx_sim_map <- function() {
+  furrr::future_map_dfr(
+    seq_len(N_SIM_TX),
+    ~run_one_tx_sim(
+      sim_id = .x,
+      n_patients = N_PATIENTS_TX,
+      fu = FU_TX,
+      n_draws = N_DRAWS_TX,
+      alpha = ALPHA_TX
+    ),
+    .options = furrr::furrr_options(seed = TRUE),
+    .progress = TRUE
+  )
+}
+
+future::plan(future.callr::callr, workers = SIM_WORKERS_TX)
+
+set.seed(SEED + 876)
+t_tx <- system.time({
+  tx_results <- run_tx_sim_map()
+})["elapsed"]
+
+future::plan(future::sequential)
+```
+
+### Summary
+
+```{r tx-coverage-summary}
+tx_results_ok <- tx_results |>
+  filter(success)
+
+stopifnot(nrow(tx_results_ok) > 0)
+
+tx_summary <- tx_results_ok |>
+  summarise(
+    n_attempted = N_SIM_TX,
+    n_successful = n(),
+    failure_rate = 1 - (n() / N_SIM_TX),
+    mean_tx_hat = mean(tx_hat),
+    mean_draw_bias = mean(draw_bias),
+    coverage = mean(covered),
+    type1_error = mean(reject_h0),
+    avg_ci_width = mean(ci_width)
+  ) |>
+  mutate(
+    mcse_coverage = sqrt((coverage * (1 - coverage)) / n_successful),
+    mcse_type1 = sqrt((type1_error * (1 - type1_error)) / n_successful)
+  )
+
+tx_runtime <- tibble(
+  setting = paste0(
+    N_SIM_TX,
+    " simulations (",
+    N_DRAWS_TX,
+    " score-bootstrap draws per simulation)"
+  ),
+  n_attempted = N_SIM_TX,
+  n_successful = tx_summary$n_successful,
+  elapsed_seconds = as.numeric(t_tx)
+)
+
+knitr::kable(tx_summary, digits = 4, caption = "Null-coverage summary for the tx coefficient")
+knitr::kable(tx_runtime, digits = 3, caption = "Runtime for tx coverage simulation")
+```
+
+```{r tx-coverage-errors}
+# tx_failures <- tx_results |>
+#   filter(!success) |>
+#   count(error_msg, sort = TRUE) |>
+#   slice_head(n = 5)
+
+# if (nrow(tx_failures) > 0) {
+#   knitr::kable(tx_failures, caption = "Top simulation failure messages")
+# }
+```
+
+```{r tx-coverage-plot}
+tx_nominal_df <- tibble(
+  metric = c("Coverage", "Type I error"),
+  estimate = c(tx_summary$coverage, tx_summary$type1_error),
+  mcse = c(tx_summary$mcse_coverage, tx_summary$mcse_type1),
+  nominal = c(1 - ALPHA_TX, ALPHA_TX)
+) |>
+  mutate(
+    low = pmax(0, estimate - 1.96 * mcse),
+    high = pmin(1, estimate + 1.96 * mcse)
+  )
+
+ggplot(tx_nominal_df, aes(metric, estimate)) +
+  geom_col(width = 0.55, fill = "#2C3E50", alpha = 0.9) +
+  geom_errorbar(aes(ymin = low, ymax = high), width = 0.12) +
+  geom_point(aes(y = nominal), color = "#C0392B", size = 2.8) +
+  geom_segment(
+    aes(
+      x = as.numeric(factor(metric)) - 0.22,
+      xend = as.numeric(factor(metric)) + 0.22,
+      y = nominal,
+      yend = nominal
+    ),
+    linetype = "dashed",
+    color = "#C0392B"
+  ) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title = "Nominality Check for tx Coefficient (Estimate with MCSE)",
+    x = NULL,
+    y = "Probability"
+  ) +
+  theme_minimal()
+```

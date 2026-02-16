@@ -6,17 +6,22 @@
 \usage{
 inferences_simulation(
   object,
+  engine,
+  score_weight_dist,
   n_sim,
   vcov,
   conf_level,
   conf_type,
   workers,
-  return_draws,
-  resample_baseline
+  return_draws
 )
 }
 \arguments{
 \item{object}{A \code{markov_avg_sops} or \code{markov_sops} object.}
+
+\item{engine}{Simulation engine (\code{"mvn"} or \code{"score_bootstrap"}).}
+
+\item{score_weight_dist}{Cluster weight distribution for score bootstrap.}
 
 \item{n_sim}{Number of simulation draws.}
 
@@ -30,9 +35,6 @@ inferences_simulation(
 processing. If > 1, uses parallel processing.}
 
 \item{return_draws}{Store individual draws?}
-
-\item{resample_baseline}{For \code{markov_avg_sops} objects, resample baseline
-patients with replacement for each draw before marginalization?}
 }
 \value{
 The input object with added confidence intervals.

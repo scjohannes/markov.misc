@@ -35,8 +35,8 @@ library(ggdist)
 library(patchwork)
 
 N_PATIENTS <- 300
-R <- 100 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
-SEED <- 237567
+R <- 1000 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
+SEED <- 2375679
 FU <- 30
 M <- 5 # Number of tresholds
 
@@ -232,7 +232,7 @@ run_boot <- function(model, name) {
   ) |> 
      inferences(
       method = "bootstrap",
-      n_sim = R/20, 
+      n_sim = R, 
       workers = 6,
       conf_level = 0.95,
       return_draws = TRUE
@@ -246,16 +246,15 @@ bs_flex   <- run_boot(m_flex,   "Model C")
 ```
 
 
-### Simulation from MVN
+### Simulation Inference: MVN vs Score Bootstrap
 
-For MVN-based inference, `inferences(method = "simulation")` now supports
-optional baseline resampling via `resample_baseline = TRUE`. This adds
-uncertainty from the empirical baseline covariate distribution without refitting
-the model.
+1. `engine = "mvn"`: coefficient draws from a multivariate normal approximation.
+2. `engine = "score_bootstrap"`: one-step score perturbation with cluster-level
+   exponential weights (implemented for `robcov_vglm` models).
 
 ```{r}
-run_mvn <- function(model, name, resample_baseline = FALSE) {
-  cat(paste0("MVN Simulation - Model ", name, "...\n"))
+run_sim <- function(model, name, engine = "mvn") {
+  cat(paste0("Simulation (", engine, ") - ", name, "...\n"))
   avg_sops(
     robcov_vglm(model, cluster = data$id), #model needs to have cluster robust SEs
     newdata = data |> filter(time == 1), 
@@ -268,60 +267,60 @@ run_mvn <- function(model, name, resample_baseline = FALSE) {
   ) |> 
      inferences(
       method = "simulation",
+      engine = engine,
       n_sim = R, 
       conf_level = 0.95,
       workers = 1,
-      resample_baseline = resample_baseline,
       return_draws = TRUE
     )
 }
 
-run_mvn_set <- function(resample_baseline = FALSE) {
+run_sim_set <- function(engine = "mvn") {
   list(
-    simple = run_mvn(
+    simple = run_sim(
       m_simple,
-      if (resample_baseline) "Model A (resample)" else "Model A (default)",
-      resample_baseline = resample_baseline
+      "Model A",
+      engine = engine
     ),
-    inter = run_mvn(
+    inter = run_sim(
       m_inter,
-      if (resample_baseline) "Model B (resample)" else "Model B (default)",
-      resample_baseline = resample_baseline
+      "Model B",
+      engine = engine
     ),
-    flex = run_mvn(
+    flex = run_sim(
       m_flex,
-      if (resample_baseline) "Model C (resample)" else "Model C (default)",
-      resample_baseline = resample_baseline
+      "Model C",
+      engine = engine
     )
   )
 }
 
 set.seed(SEED)
 t1 <- Sys.time()
-res_mvn_default <- run_mvn_set(resample_baseline = FALSE)
+res_mvn <- run_sim_set(engine = "mvn")
 t2 <- Sys.time()
 
 t2 - t1
 
 set.seed(SEED)
-res_mvn_resample <- run_mvn_set(resample_baseline = TRUE)
+res_score <- run_sim_set(engine = "score_bootstrap")
 
-bs_simple_mvn <- res_mvn_default$simple
-bs_inter_mvn  <- res_mvn_default$inter
-bs_flex_mvn   <- res_mvn_default$flex
+bs_simple_mvn <- res_mvn$simple
+bs_inter_mvn  <- res_mvn$inter
+bs_flex_mvn   <- res_mvn$flex
 
-bs_simple_mvn_rs <- res_mvn_resample$simple
-bs_inter_mvn_rs  <- res_mvn_resample$inter
-bs_flex_mvn_rs   <- res_mvn_resample$flex
+bs_simple_score <- res_score$simple
+bs_inter_score  <- res_score$inter
+bs_flex_score   <- res_score$flex
 ```
 
 ```{r}
-# Compare average CI widths for model A with vs without baseline resampling
+# Compare average CI widths for model A: MVN vs score bootstrap
 bind_rows(
   bs_simple_mvn |>
-    mutate(setting = "MVN (default, no baseline resampling)"),
-  bs_simple_mvn_rs |>
-    mutate(setting = "MVN + baseline resampling")
+    mutate(setting = "MVN"),
+  bs_simple_score |>
+    mutate(setting = "Score bootstrap")
 ) |>
   group_by(setting, tx, state) |>
   summarise(mean_ci_width = mean(conf.high - conf.low), .groups = "drop") |>
@@ -378,7 +377,7 @@ p3 <- ggplot(bs_flex, aes(x = time)) +
   patchwork::plot_annotation(title = "Nonparametric Bootstrap")
 ```
 
-Compare to Sim from MVN
+Compare MVN vs Score Bootstrap
 
 ```{r}
 p1_mvn <- ggplot(bs_simple_mvn, aes(x = time)) +
@@ -420,11 +419,11 @@ p3_mvn <- ggplot(bs_flex_mvn, aes(x = time)) +
 # Combine using patchwork
 (p1_mvn | p2_mvn | p3_mvn) +
   plot_layout(guides = "collect") +
-  patchwork::plot_annotation(title = "MVN (Default: no baseline resampling)")
+  patchwork::plot_annotation(title = "MVN Simulation")
 ```
 
 ```{r}
-p1_mvn_rs <- ggplot(bs_simple_mvn_rs, aes(x = time)) +
+p1_score <- ggplot(bs_simple_score, aes(x = time)) +
   geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
   geom_ribbon(aes(ymin = conf.low,
                   ymax = conf.high,
@@ -436,7 +435,7 @@ p1_mvn_rs <- ggplot(bs_simple_mvn_rs, aes(x = time)) +
   coord_cartesian(ylim = c(0, 1)) +
   labs(title = "Model A: PO")
 
-p2_mvn_rs <- ggplot(bs_inter_mvn_rs, aes(x = time)) +
+p2_score <- ggplot(bs_inter_score, aes(x = time)) +
   geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
   geom_ribbon(aes(ymin = conf.low,
                   ymax = conf.high,
@@ -448,7 +447,7 @@ p2_mvn_rs <- ggplot(bs_inter_mvn_rs, aes(x = time)) +
   coord_cartesian(ylim = c(0, 1)) +
   labs(title = "Model B: PO + Interaction")
 
-p3_mvn_rs <- ggplot(bs_flex_mvn_rs, aes(x = time)) +
+p3_score <- ggplot(bs_flex_score, aes(x = time)) +
   geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
   geom_ribbon(aes(ymin = conf.low,
                   ymax = conf.high,
@@ -460,9 +459,9 @@ p3_mvn_rs <- ggplot(bs_flex_mvn_rs, aes(x = time)) +
   coord_cartesian(ylim = c(0, 1)) +
   labs(title = "Model C: Partial PO + Interactions")
 
-(p1_mvn_rs | p2_mvn_rs | p3_mvn_rs) +
+(p1_score | p2_score | p3_score) +
   plot_layout(guides = "collect") +
-  patchwork::plot_annotation(title = "MVN + Baseline Resampling")
+  patchwork::plot_annotation(title = "Score Bootstrap Simulation")
 ```
 
 ### 2. Difference in Time Spent in State 1 (Home)
@@ -508,17 +507,17 @@ plot_diff_boot
 ```
 
 ```{r}
-# Combine results
+
 diff_res_mvn <- bind_rows(
   get_diff_dist(bs_simple_mvn, "Model A (Simple)"),
   get_diff_dist(bs_inter_mvn,  "Model B (Interact)"),
   get_diff_dist(bs_flex_mvn,   "Model C (Flexible)")
 )
 
-diff_res_mvn_rs <- bind_rows(
-  get_diff_dist(bs_simple_mvn_rs, "Model A (Simple)"),
-  get_diff_dist(bs_inter_mvn_rs,  "Model B (Interact)"),
-  get_diff_dist(bs_flex_mvn_rs,   "Model C (Flexible)")
+diff_res_score <- bind_rows(
+  get_diff_dist(bs_simple_score, "Model A (Simple)"),
+  get_diff_dist(bs_inter_score,  "Model B (Interact)"),
+  get_diff_dist(bs_flex_score,   "Model C (Flexible)")
 )
 
 # Plot
@@ -537,14 +536,14 @@ plot_diff_mvn <- ggplot(diff_res_mvn |> filter(state == 1), aes(x = delta, y = m
   theme(legend.position = "none") +
   coord_cartesian(xlim = c(-2.5, 2.5))
 
-plot_diff_mvn_rs <- ggplot(diff_res_mvn_rs |> filter(state == 1), aes(x = delta, y = model, fill = model)) +
+plot_diff_score <- ggplot(diff_res_score |> filter(state == 1), aes(x = delta, y = model, fill = model)) +
   stat_dots(side = "bottom", scale = 0.4, color = NA) +
   stat_halfeye(alpha = 0.6, scale = 0.4) +
   geom_vline(xintercept = 0, linetype = "dashed") +
   scale_fill_brewer(palette = "Dark2") +
   labs(
     title = "Difference in Time Spent in State 1 (Home)",
-    subtitle = "MVN + baseline resampling",
+    subtitle = "Score bootstrap",
     x = "Difference (Days)",
     y = NULL
   ) +
@@ -552,15 +551,16 @@ plot_diff_mvn_rs <- ggplot(diff_res_mvn_rs |> filter(state == 1), aes(x = delta,
   theme(legend.position = "none") +
   coord_cartesian(xlim = c(-2.5, 2.5))
 
-plot_diff_mvn / plot_diff_mvn_rs
+plot_diff_boot / plot_diff_mvn / plot_diff_score
 ```
 
 ### Summary of Estimates
 
 ```{r}
 bind_rows(
-  diff_res_mvn |> mutate(setting = "MVN (default)"),
-  diff_res_mvn_rs |> mutate(setting = "MVN + baseline resampling")
+  diff_res |> mutate(setting = "Bootstrap"),
+  diff_res_mvn |> mutate(setting = "MVN"),
+  diff_res_score |> mutate(setting = "Score bootstrap")
 ) |>
   group_by(setting, model, state) |>
   summarise(
@@ -572,6 +572,7 @@ bind_rows(
     CI_width = Upper_97.5 - Lower_2.5,
     .groups = "drop"
   ) |>
+  arrange(model) |> 
   filter(state == 1) |> 
   knitr::kable(digits = 2)
 ```

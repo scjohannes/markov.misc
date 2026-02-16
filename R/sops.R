@@ -1163,20 +1163,27 @@ avg_sops <- function(
 
 #' Inference for State Occupation Probabilities
 #'
-#' Adds confidence intervals to SOP objects using simulation-based (MVN) or
-#' bootstrap methods. The default method is simulation, which draws coefficient
-#' vectors from a multivariate normal distribution centered at the point
-#' estimates.
+#' Adds confidence intervals to SOP objects using simulation-based or bootstrap
+#' methods. The default method is simulation.
 #'
 #' @param object A `markov_avg_sops` object from `avg_sops()` or a
 #'   `markov_sops` object from `sops()`.
 #' @param method Character. Inference method:
 #'   \itemize{
-#'     \item `"simulation"` (default): Draws from MVN(beta_hat, Sigma). Fast,
-#'       does not refit models. Works for both individual and averaged SOPs.
+#'     \item `"simulation"` (default): Uses simulation engines that do not
+#'       refit models. Works for both individual and averaged SOPs.
 #'     \item `"bootstrap"`: Resamples patients with replacement, refits model.
 #'  Only works for `markov_avg_sops` objects.
 #'   }
+#' @param engine Character. Simulation engine used when `method = "simulation"`:
+#'   \itemize{
+#'     \item `"mvn"` (default): Draws coefficients from MVN(beta_hat, Sigma).
+#'     \item `"score_bootstrap"`: Uses one-step score perturbation with
+#'       cluster-level exponential multipliers. Requires a `robcov_vglm` model
+#'       and `avg_sops()` objects.
+#'   }
+#' @param score_weight_dist Character. Cluster weight distribution for
+#'   `engine = "score_bootstrap"`. Currently only `"exponential"` is supported.
 #' @param n_sim Number of simulation draws (for simulation) or bootstrap
 #'   iterations (for bootstrap). Default is 1000.
 #' @param vcov Optional custom variance-covariance matrix. If provided,
@@ -1193,11 +1200,6 @@ avg_sops <- function(
 #'   }
 #' @param return_draws Logical. If TRUE, stores all individual simulation/bootstrap
 #'   draws as an attribute. Extract with `get_draws()`. Default is TRUE
-#' @param resample_baseline Logical. For `method = "simulation"` with
-#'   `markov_avg_sops` objects, resample baseline patients with replacement for
-#'   each simulation draw when marginalizing (default FALSE). This adds uncertainty
-#'   from the empirical baseline covariate distribution. When FALSE, averages
-#'   over the original baseline sample in every draw.
 #' @param update_datadist Logical. Whether to update datadist for rms models
 #'   during bootstrap. Default is TRUE.
 #' @param use_coefstart Logical. Use original coefficients as starting values
@@ -1218,13 +1220,19 @@ avg_sops <- function(
 #'
 #' The simulation method works as follows:
 #' 1. Extract coefficient vector beta_hat and (robust) variance-covariance Sigma
-#' 2. Draw n_sim coefficient vectors from MVN(beta_hat, Sigma)
+#' 2. Generate n_sim coefficient vectors via the selected engine:
+#'    \itemize{
+#'      \item `engine = "mvn"`: MVN draws from `N(beta_hat, Sigma)`.
+#'      \item `engine = "score_bootstrap"`: one-step score perturbation with
+#'        cluster-level exponential multipliers.
+#'    }
 #' 3. For each draw, replace model coefficients and compute SOPs
-#' 4. For `avg_sops()` objects, optionally resample baseline patients with
-#'    replacement before marginalization (`resample_baseline = TRUE`)
-#' 5. Compute confidence intervals from the empirical distribution
+#' 4. Compute confidence intervals from the empirical distribution
 #'
 #' - Works for both individual-level (`sops()`) and averaged (`avg_sops()`) SOPs
+#'   for `engine = "mvn"`
+#' - `engine = "score_bootstrap"` currently supports `avg_sops()` with
+#'   `robcov_vglm` models only
 #'
 #' ## Bootstrap Method
 #'
@@ -1263,6 +1271,18 @@ avg_sops <- function(
 #'   id_var = "id"
 #' ) |>
 #'   inferences(method = "simulation", n_sim = 1000)
+#'
+#' # Step 2a-bis: Score bootstrap simulation (requires robcov_vglm)
+#' result_score <- avg_sops(
+#'   model = fit_robust,
+#'   newdata = baseline_data,
+#'   variables = list(tx = c(0, 1)),
+#'   times = 1:60,
+#'   ylevels = factor(1:6),
+#'   absorb = "6",
+#'   id_var = "id"
+#' ) |>
+#'   inferences(method = "simulation", engine = "score_bootstrap", n_sim = 1000)
 #'
 #' # Step 2b: Bootstrap inference (must use full data)
 #' result_boot <- avg_sops(
@@ -1306,13 +1326,14 @@ avg_sops <- function(
 inferences <- function(
   object,
   method = "simulation",
+  engine = "mvn",
+  score_weight_dist = "exponential",
   n_sim = 1000,
   vcov = NULL,
   workers = NULL,
   conf_level = 0.95,
   conf_type = "perc",
   return_draws = TRUE,
-  resample_baseline = FALSE,
   update_datadist = TRUE,
   use_coefstart = FALSE,
   ...
@@ -1327,23 +1348,24 @@ inferences <- function(
   }
 
   method <- match.arg(method, choices = c("simulation", "bootstrap"))
+  engine <- match.arg(engine, choices = c("mvn", "score_bootstrap"))
 
-  # # Handle backward compatibility: n_boot overrides n_sim for bootstrap
-  # if (!is.null(n_boot) && method == "bootstrap") {
-  #   n_sim <- n_boot
-  # }
+  if (method == "bootstrap" && engine != "mvn") {
+    stop("`engine` is only used when `method = \"simulation\"`.")
+  }
 
   # --- Dispatch to Method-Specific Implementation ---
   if (method == "simulation") {
     inferences_simulation(
       object = object,
+      engine = engine,
+      score_weight_dist = score_weight_dist,
       n_sim = n_sim,
       vcov = vcov,
       conf_level = conf_level,
       conf_type = conf_type,
       workers = workers,
-      return_draws = return_draws,
-      resample_baseline = resample_baseline
+      return_draws = return_draws
     )
   } else if (method == "bootstrap") {
     inferences_bootstrap(
@@ -1370,6 +1392,8 @@ inferences <- function(
 #' at the point estimates with the (robust) variance-covariance matrix.
 #'
 #' @param object A `markov_avg_sops` or `markov_sops` object.
+#' @param engine Simulation engine (`"mvn"` or `"score_bootstrap"`).
+#' @param score_weight_dist Cluster weight distribution for score bootstrap.
 #' @param n_sim Number of simulation draws.
 #' @param vcov Custom variance-covariance matrix (optional, overrides model vcov).
 #' @param conf_level Confidence level.
@@ -1377,30 +1401,21 @@ inferences <- function(
 #' @param workers Number of parallel workers. If NULL or 1, uses sequential
 #'   processing. If > 1, uses parallel processing.
 #' @param return_draws Store individual draws?
-#' @param resample_baseline For `markov_avg_sops` objects, resample baseline
-#'   patients with replacement for each draw before marginalization?
 #'
 #' @return The input object with added confidence intervals.
 #'
 #' @keywords internal
 inferences_simulation <- function(
   object,
+  engine,
+  score_weight_dist,
   n_sim,
   vcov,
   conf_level,
   conf_type,
   workers,
-  return_draws,
-  resample_baseline
+  return_draws
 ) {
-  # Check for mvtnorm package
-  if (!requireNamespace("mvtnorm", quietly = TRUE)) {
-    stop(
-      "Package 'mvtnorm' is required for simulation-based inference.\n",
-      "Install with: install.packages('mvtnorm')"
-    )
-  }
-
   # --- 1. Extract Stored Attributes ---
   model <- attr(object, "model")
   newdata_orig <- attr(object, "newdata_orig")
@@ -1415,11 +1430,6 @@ inferences_simulation <- function(
 
   # For avg_sops objects
   is_avg <- inherits(object, "markov_avg_sops")
-
-  if (!is.logical(resample_baseline) || length(resample_baseline) != 1 ||
-      is.na(resample_baseline)) {
-    stop("`resample_baseline` must be a single TRUE/FALSE value.")
-  }
 
   if (is_avg) {
     variables <- avg_args$variables
@@ -1438,41 +1448,7 @@ inferences_simulation <- function(
     stop("Model not stored in object. Cannot perform simulation inference.")
   }
 
-  # --- 2. Get Coefficients and VCov from Model ---
-  # The vcov is extracted directly from the model object:
-  # - For robcov_vglm: uses the stored cluster-robust vcov
-  # - For orm with rms::robcov(): uses the stored robust vcov
-  # - For plain vglm/orm: uses model-based vcov
-  # Users who want cluster-robust SEs should wrap their model with
-  # robcov_vglm() or rms::robcov() BEFORE passing to sops()/avg_sops().
-  beta_hat <- get_coef(model)
-
-  if (!is.null(vcov) && is.matrix(vcov)) {
-    # User-provided custom vcov matrix (for sensitivity analyses)
-    Sigma <- vcov
-  } else {
-    # Extract vcov from model (robust if model was wrapped with robcov_vglm)
-    Sigma <- get_vcov_robust(model)
-  }
-
-  # Validate dimensions
-  if (length(beta_hat) != nrow(Sigma) || length(beta_hat) != ncol(Sigma)) {
-    stop(
-      "Dimension mismatch: coefficients (",
-      length(beta_hat),
-      ") vs ",
-      "vcov matrix (",
-      nrow(Sigma),
-      " x ",
-      ncol(Sigma),
-      ")"
-    )
-  }
-
-  # --- 3. Draw n_sim Coefficient Vectors from MVN ---
-  beta_draws <- mvtnorm::rmvnorm(n_sim, mean = beta_hat, sigma = Sigma)
-
-  # --- 4. Prepare Prediction Data (COMPUTED ONCE!) ---
+  # --- 2. Prepare Prediction Data (COMPUTED ONCE) ---
   if (is_avg) {
     # For avg_sops: create counterfactual datasets
     baseline_data <- newdata_orig[!duplicated(newdata_orig[[id_var]]), ]
@@ -1488,10 +1464,74 @@ inferences_simulation <- function(
     n_each <- nrow(newdata_pred)
   }
 
+  # --- 3. Generate Coefficient Draws ---
+  baseline_weights_draws <- NULL
+  if (engine == "mvn") {
+    # Check for mvtnorm package
+    if (!requireNamespace("mvtnorm", quietly = TRUE)) {
+      stop(
+        "Package 'mvtnorm' is required for MVN simulation inference.\n",
+        "Install with: install.packages('mvtnorm')"
+      )
+    }
+
+    # The vcov is extracted directly from the model object:
+    # - For robcov_vglm: uses the stored cluster-robust vcov
+    # - For orm with rms::robcov(): uses the stored robust vcov
+    # - For plain vglm/orm: uses model-based vcov
+    beta_hat <- get_coef(model)
+
+    if (!is.null(vcov) && is.matrix(vcov)) {
+      Sigma <- vcov
+    } else {
+      Sigma <- get_vcov_robust(model)
+    }
+
+    if (length(beta_hat) != nrow(Sigma) || length(beta_hat) != ncol(Sigma)) {
+      stop(
+        "Dimension mismatch: coefficients (",
+        length(beta_hat),
+        ") vs ",
+        "vcov matrix (",
+        nrow(Sigma),
+        " x ",
+        ncol(Sigma),
+        ")"
+      )
+    }
+
+    beta_draws <- mvtnorm::rmvnorm(n_sim, mean = beta_hat, sigma = Sigma)
+  } else if (engine == "score_bootstrap") {
+    if (!is_avg) {
+      stop(
+        "`engine = \"score_bootstrap\"` currently supports only ",
+        "'markov_avg_sops' objects."
+      )
+    }
+    if (!is.null(vcov)) {
+      stop(
+        "`vcov` cannot be supplied when `engine = \"score_bootstrap\"` because ",
+        "draws are generated from score perturbations."
+      )
+    }
+
+    score_draws <- generate_score_bootstrap_draws(
+      model = model,
+      baseline_data = baseline_data,
+      id_var = id_var,
+      n_sim = n_sim,
+      score_weight_dist = score_weight_dist
+    )
+    beta_draws <- score_draws$beta_draws
+    baseline_weights_draws <- score_draws$baseline_weights
+  } else {
+    stop("Unknown simulation engine: ", engine)
+  }
+
   n_times <- length(times)
   n_states <- length(ylevels)
 
-  # --- 5. Detect Fast Path Eligibility ---
+  # --- 4. Detect Fast Path Eligibility ---
   # The fast path uses pre-computed design matrix decompositions for VGLM models
   model_chk <- if (inherits(model, "robcov_vglm")) model$vglm_fit else model
   use_fast_path <- inherits(model_chk, "vglm")
@@ -1522,9 +1562,8 @@ inferences_simulation <- function(
       # Define fast analysis function
       analysis_fn <- function(i) {
         baseline_weights <- NULL
-        if (is_avg && resample_baseline) {
-          idx <- sample.int(n_each, size = n_each, replace = TRUE)
-          baseline_weights <- tabulate(idx, nbins = n_each) / n_each
+        if (is_avg && !is.null(baseline_weights_draws)) {
+          baseline_weights <- baseline_weights_draws[i, ]
         }
 
         # Compute effective coefficients from beta draw
@@ -1578,9 +1617,8 @@ inferences_simulation <- function(
     # --- SLOW PATH: Use soprob_markov with coefficient replacement ---
     analysis_fn <- function(i) {
       baseline_weights <- NULL
-      if (is_avg && resample_baseline) {
-        idx <- sample.int(n_each, size = n_each, replace = TRUE)
-        baseline_weights <- tabulate(idx, nbins = n_each) / n_each
+      if (is_avg && !is.null(baseline_weights_draws)) {
+        baseline_weights <- baseline_weights_draws[i, ]
       }
 
       # Replace coefficients
@@ -1615,12 +1653,12 @@ inferences_simulation <- function(
           grid = grid,
           times = times,
           ylevels = ylevels,
-            variables = variables,
-            n_cf = n_cf,
-            n_each = n_each,
-            weights = baseline_weights
-          )
-        } else {
+          variables = variables,
+          n_cf = n_cf,
+          n_each = n_each,
+          weights = baseline_weights
+        )
+      } else {
         # Individual-level: convert array to data frame
         result <- array_to_df_individual(
           sops_array,
@@ -1663,7 +1701,7 @@ inferences_simulation <- function(
       "variables",
       "n_cf",
       "n_each",
-      "resample_baseline",
+      "baseline_weights_draws",
       "use_fast_path",
       "by"
     )
@@ -1685,7 +1723,7 @@ inferences_simulation <- function(
     sim_results <- lapply(seq_len(n_sim), analysis_fn)
   }
 
-  # --- 7. Combine Results ---
+  # --- 6. Combine Results ---
   sim_results <- Filter(Negate(is.null), sim_results)
 
   if (length(sim_results) == 0) {
@@ -1698,7 +1736,7 @@ inferences_simulation <- function(
   }
   draws_df <- dplyr::bind_rows(sim_results)
 
-  # --- 8. Compute Confidence Intervals ---
+  # --- 7. Compute Confidence Intervals ---
   if (is_avg) {
     group_cols <- c("time", "state", names(variables))
     if (!is.null(by)) {
@@ -1720,7 +1758,7 @@ inferences_simulation <- function(
     conf_type = conf_type
   )
 
-  # --- 9. Merge with Original Object ---
+  # --- 8. Merge with Original Object ---
   final_result <- merge(object, summary_stats, by = group_cols, all.x = TRUE)
 
   # Restore attributes
@@ -1736,14 +1774,191 @@ inferences_simulation <- function(
   attr(final_result, "n_successful") <- length(sim_results)
   attr(final_result, "conf_level") <- conf_level
   attr(final_result, "conf_type") <- conf_type
-  attr(final_result, "resample_baseline") <- is_avg && resample_baseline
   attr(final_result, "method") <- "simulation"
+  attr(final_result, "engine") <- engine
+  if (engine == "score_bootstrap") {
+    attr(final_result, "score_weight_dist") <- score_weight_dist
+  }
 
   if (return_draws) {
     attr(final_result, "simulation_draws") <- draws_df
   }
 
   final_result
+}
+
+#' Generate One-Step Score-Bootstrap Draws for `robcov_vglm` Models
+#'
+#' Computes simulation draws using cluster-level score perturbations and a
+#' one-step Newton approximation. Also returns patient-level averaging weights
+#' (shared with score perturbations) for `avg_sops` marginalization.
+#'
+#' @param model A `robcov_vglm` object with stored `scores`, `bread`, and
+#'   `cluster` components.
+#' @param baseline_data Baseline data (one row per patient).
+#' @param id_var Name of patient ID variable in `baseline_data`.
+#' @param n_sim Number of simulation draws.
+#' @param score_weight_dist Cluster weight distribution. Currently only
+#'   `"exponential"` is supported.
+#'
+#' @return A list with:
+#'   \itemize{
+#'     \item `beta_draws`: Matrix `[n_sim x p]` of perturbed coefficients.
+#'     \item `baseline_weights`: Matrix `[n_sim x n_patients]` of normalized
+#'       patient averaging weights.
+#'   }
+#'
+#' @keywords internal
+generate_score_bootstrap_draws <- function(
+  model,
+  baseline_data,
+  id_var,
+  n_sim,
+  score_weight_dist = "exponential"
+) {
+  if (!inherits(model, "robcov_vglm")) {
+    stop(
+      "`engine = \"score_bootstrap\"` requires a 'robcov_vglm' model. ",
+      "Wrap your vglm fit with robcov_vglm(fit, cluster = <id>)."
+    )
+  }
+
+  score_weight_dist <- match.arg(score_weight_dist, choices = "exponential")
+
+  required <- c("coefficients", "bread", "scores", "cluster", "n")
+  missing_required <- required[vapply(
+    required,
+    function(x) is.null(model[[x]]),
+    logical(1)
+  )]
+  if (length(missing_required) > 0) {
+    stop(
+      "The supplied robcov_vglm model is missing required components for ",
+      "score bootstrap: ",
+      paste(missing_required, collapse = ", "),
+      ". Refit with robcov_vglm()."
+    )
+  }
+
+  if (!id_var %in% names(baseline_data)) {
+    stop("ID variable '", id_var, "' not found in baseline data.")
+  }
+
+  beta_hat <- model$coefficients
+  bread <- model$bread
+  scores <- model$scores
+  cluster <- model$cluster
+  n_obs <- model$n
+
+  if (!is.matrix(scores)) {
+    stop("`model$scores` must be a matrix for score bootstrap.")
+  }
+  if (!is.matrix(bread)) {
+    stop("`model$bread` must be a matrix for score bootstrap.")
+  }
+  if (length(cluster) != nrow(scores)) {
+    stop(
+      "Length of `model$cluster` (",
+      length(cluster),
+      ") does not match ",
+      "the number of score rows (",
+      nrow(scores),
+      ")."
+    )
+  }
+  if (length(beta_hat) != ncol(scores)) {
+    stop(
+      "Coefficient length (",
+      length(beta_hat),
+      ") does not match ",
+      "score columns (",
+      ncol(scores),
+      ")."
+    )
+  }
+
+  # Fix cluster ordering to first occurrence and aggregate score contributions.
+  cluster_chr <- as.character(cluster)
+  cluster_ids <- unique(cluster_chr)
+  cluster_fac <- factor(cluster_chr, levels = cluster_ids)
+  scores_clustered <- rowsum(scores, cluster_fac, reorder = FALSE)
+
+  baseline_ids <- as.character(baseline_data[[id_var]])
+  cluster_idx <- match(baseline_ids, cluster_ids)
+  if (anyNA(cluster_idx)) {
+    missing_ids <- unique(baseline_ids[is.na(cluster_idx)])
+    stop(
+      "Some baseline IDs used in avg_sops() were not found in the cluster ",
+      "variable stored in robcov_vglm: ",
+      paste(head(missing_ids, 5), collapse = ", "),
+      if (length(missing_ids) > 5) " ..." else "",
+      ". Ensure avg_sops(id_var = ...) matches the clustering used in ",
+      "robcov_vglm(cluster = ...)."
+    )
+  }
+
+  n_clusters <- length(cluster_ids)
+  n_pat <- length(baseline_ids)
+  p <- length(beta_hat)
+
+  beta_draws <- matrix(NA_real_, nrow = n_sim, ncol = p)
+  colnames(beta_draws) <- names(beta_hat)
+  baseline_weights <- matrix(NA_real_, nrow = n_sim, ncol = n_pat)
+
+  for (i in seq_len(n_sim)) {
+    # Exponential multipliers are centered at 1; centered form drives score perturbation.
+    w_cluster <- stats::rexp(n_clusters, rate = 1)
+    u_cluster <- w_cluster - 1
+
+    # multiple each centered patient weight by the patient-level score
+    # contribution, then sum across patients to get the overall score
+    # perturbation for the draw.
+
+    # Before applying the weights, colSums of the scores would be (by
+    # definition) zero (because we're looking at the first derivative at the MLE
+    #).
+
+    # U_star is the perturbed total score vector for this draw. U_start
+    # represents what the total score (first derivative of the log-likelihood)
+    # would be if had resampled patients
+    U_star <- as.vector(crossprod(u_cluster, scores_clustered))
+
+    # One-Step Newton-Raphson Update:
+    # If we ignore covariance: if var(beta_x) very low, then even if U_star is
+    # large, then the update will be small.
+    #
+    # Reminder to self bread %*% U_start is equivanelt to sum(bread[i, ] *
+    # U_star) for each row of bread.
+
+    # We can use Newton-Raphson to find root of the score equation, which gives
+    # us the new MLE estimates for this draw.
+    # We want to find where $f(x) = 0$ (our score)
+    # $x_{new} = x_{old} - \frac{f(x_{old})}{f'(x_{old})}$
+    # $x$ is is beta
+    # $f(x)$ is the score equation, which is zero at the MLE
+    # $f'(x)$ is the Hessian
+    # $$\beta_{new} = \beta_{old} - \frac{U(\beta_{old})}{H(\beta_{old})}$$
+
+    # Dividing by a matrix is the same as multiplying by the inverse, so we can
+    # write:
+    # $\beta_{new} = \beta_{old} - H^{-1} \times U(\beta_{old})$
+    # vcov (V) is defined as the inverse of the negative Hessian ($V = (-H)^{-1}$), so we can rewrite:
+    # $\beta_{new} = \beta_{old} + V \times U(\beta_{old})$
+    # The new beta (x1) is where the tangent line at the old beta (x0) intersects the x-axis (where score = 0).
+
+    # The bread (vcov) is the inverse of the negative Hessian
+
+    beta_draws[i, ] <- beta_hat + as.vector((bread %*% U_star) / n_obs)
+
+    w_patient <- w_cluster[cluster_idx]
+    w_sum <- sum(w_patient)
+    if (!is.finite(w_sum) || w_sum <= 0) {
+      stop("Invalid baseline weights generated for score bootstrap.")
+    }
+    baseline_weights[i, ] <- w_patient / w_sum
+  }
+
+  list(beta_draws = beta_draws, baseline_weights = baseline_weights)
 }
 
 

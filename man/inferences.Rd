@@ -7,13 +7,14 @@
 inferences(
   object,
   method = "simulation",
+  engine = "mvn",
+  score_weight_dist = "exponential",
   n_sim = 1000,
   vcov = NULL,
   workers = NULL,
   conf_level = 0.95,
   conf_type = "perc",
   return_draws = TRUE,
-  resample_baseline = FALSE,
   update_datadist = TRUE,
   use_coefstart = FALSE,
   ...
@@ -25,11 +26,22 @@ inferences(
 
 \item{method}{Character. Inference method:
 \itemize{
-\item \code{"simulation"} (default): Draws from MVN(beta_hat, Sigma). Fast,
-does not refit models. Works for both individual and averaged SOPs.
+\item \code{"simulation"} (default): Uses simulation engines that do not
+refit models. Works for both individual and averaged SOPs.
 \item \code{"bootstrap"}: Resamples patients with replacement, refits model.
 Only works for \code{markov_avg_sops} objects.
 }}
+
+\item{engine}{Character. Simulation engine used when \code{method = "simulation"}:
+\itemize{
+\item \code{"mvn"} (default): Draws coefficients from MVN(beta_hat, Sigma).
+\item \code{"score_bootstrap"}: Uses one-step score perturbation with
+cluster-level exponential multipliers. Requires a \code{robcov_vglm} model
+and \code{avg_sops()} objects.
+}}
+
+\item{score_weight_dist}{Character. Cluster weight distribution for
+\code{engine = "score_bootstrap"}. Currently only \code{"exponential"} is supported.}
 
 \item{n_sim}{Number of simulation draws (for simulation) or bootstrap
 iterations (for bootstrap). Default is 1000.}
@@ -53,12 +65,6 @@ distribution.
 \item{return_draws}{Logical. If TRUE, stores all individual simulation/bootstrap
 draws as an attribute. Extract with \code{get_draws()}. Default is TRUE}
 
-\item{resample_baseline}{Logical. For \code{method = "simulation"} with
-\code{markov_avg_sops} objects, resample baseline patients with replacement for
-each simulation draw when marginalizing (default FALSE). This adds uncertainty
-from the empirical baseline covariate distribution. When FALSE, averages
-over the original baseline sample in every draw.}
-
 \item{update_datadist}{Logical. Whether to update datadist for rms models
 during bootstrap. Default is TRUE.}
 
@@ -78,10 +84,8 @@ If \code{return_draws = TRUE}, the object also has a \code{"simulation_draws"} o
 with \code{get_draws()}.
 }
 \description{
-Adds confidence intervals to SOP objects using simulation-based (MVN) or
-bootstrap methods. The default method is simulation, which draws coefficient
-vectors from a multivariate normal distribution centered at the point
-estimates.
+Adds confidence intervals to SOP objects using simulation-based or bootstrap
+methods. The default method is simulation.
 }
 \details{
 \subsection{Simulation Method}{
@@ -89,14 +93,20 @@ estimates.
 The simulation method works as follows:
 \enumerate{
 \item Extract coefficient vector beta_hat and (robust) variance-covariance Sigma
-\item Draw n_sim coefficient vectors from MVN(beta_hat, Sigma)
+\item Generate n_sim coefficient vectors via the selected engine:
+\itemize{
+\item \code{engine = "mvn"}: MVN draws from \code{N(beta_hat, Sigma)}.
+\item \code{engine = "score_bootstrap"}: one-step score perturbation with
+cluster-level exponential multipliers.
+}
 \item For each draw, replace model coefficients and compute SOPs
-\item For \code{avg_sops()} objects, optionally resample baseline patients with
-replacement before marginalization (\code{resample_baseline = TRUE})
 \item Compute confidence intervals from the empirical distribution
 }
 \itemize{
 \item Works for both individual-level (\code{sops()}) and averaged (\code{avg_sops()}) SOPs
+for \code{engine = "mvn"}
+\item \code{engine = "score_bootstrap"} currently supports \code{avg_sops()} with
+\code{robcov_vglm} models only
 }
 }
 
@@ -136,6 +146,18 @@ result_sim <- avg_sops(
   id_var = "id"
 ) |>
   inferences(method = "simulation", n_sim = 1000)
+
+# Step 2a-bis: Score bootstrap simulation (requires robcov_vglm)
+result_score <- avg_sops(
+  model = fit_robust,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = 1:60,
+  ylevels = factor(1:6),
+  absorb = "6",
+  id_var = "id"
+) |>
+  inferences(method = "simulation", engine = "score_bootstrap", n_sim = 1000)
 
 # Step 2b: Bootstrap inference (must use full data)
 result_boot <- avg_sops(

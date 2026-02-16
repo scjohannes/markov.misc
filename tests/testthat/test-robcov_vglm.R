@@ -41,7 +41,10 @@ describe("robcov_vglm()", {
     expect_s3_class(result, "robcov_vglm")
 
     # Check variance and SE components
-    expect_contains(names(result), c("var", "se", "scores", "bread", "meat"))
+    expect_contains(
+      names(result),
+      c("var", "se", "scores", "influence_beta_obs", "bread", "meat")
+    )
 
     # Check new components
     expect_contains(
@@ -63,6 +66,7 @@ describe("robcov_vglm()", {
     expect_length(result$z, p)
     expect_length(result$pvalues, p)
     expect_equal(dim(result$scores), c(n, p))
+    expect_equal(dim(result$influence_beta_obs), c(n, p))
     expect_equal(dim(result$bread), c(p, p))
     expect_equal(dim(result$meat), c(p, p))
 
@@ -78,6 +82,32 @@ describe("robcov_vglm()", {
 
     # Check n matches
     expect_equal(result$n, n)
+  })
+
+  it("stores VGAM influence contributions consistent with scores", {
+    skip_if_not_installed("VGAM")
+
+    withr::local_seed(111)
+    n <- 180
+    test_data <- data.frame(
+      y = ordered(sample(1:4, n, replace = TRUE)),
+      x = rnorm(n)
+    )
+
+    m <- VGAM::vglm(
+      y ~ x,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = test_data
+    )
+
+    result <- robcov_vglm(m)
+    expected_if <- result$scores %*% vcov(m)
+
+    expect_equal(
+      unname(result$influence_beta_obs),
+      unname(expected_if),
+      tolerance = 1e-10
+    )
   })
 
   it("computes z-statistics and p-values correctly", {

@@ -50,6 +50,8 @@
 #'
 #'   **Sandwich components:**
 #'   \item{scores}{Matrix of observation-level score contributions (n x p)}
+#'   \item{influence_beta_obs}{Matrix of observation-level influence
+#'     contributions for \eqn{\beta} (n x p), computed via `VGAM::Influence()`}
 #'   \item{bread}{The "bread" matrix (scaled inverse Hessian)}
 #'   \item{meat}{The "meat" matrix}
 #'
@@ -139,6 +141,7 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = FALSE) {
 
   # --- 2. Compute observation-level score contributions ---
   scores <- compute_scores_vglm(fit)
+  influence_beta_obs <- VGAM::Influence(fit)
 
   # Validate scores dimensions
 
@@ -147,6 +150,22 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = FALSE) {
   }
   if (ncol(scores) != p) {
     stop("Number of score columns does not match number of parameters")
+  }
+  if (!is.matrix(influence_beta_obs)) {
+    stop("VGAM::Influence(fit) did not return a matrix.")
+  }
+  if (nrow(influence_beta_obs) != n || ncol(influence_beta_obs) != p) {
+    stop(
+      "Influence matrix dimensions do not match expected [n x p]: got [",
+      nrow(influence_beta_obs),
+      " x ",
+      ncol(influence_beta_obs),
+      "], expected [",
+      n,
+      " x ",
+      p,
+      "]."
+    )
   }
 
   # --- 3. Compute the meat matrix ---
@@ -214,6 +233,7 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = FALSE) {
 
     # Sandwich components
     scores = scores,
+    influence_beta_obs = influence_beta_obs,
     bread = bread,
     meat = meat,
 
