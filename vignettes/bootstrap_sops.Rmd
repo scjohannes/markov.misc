@@ -34,9 +34,9 @@ library(ggplot2)
 library(ggdist)
 library(patchwork)
 
-N_PATIENTS <- 50
-R <- 2000 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
-SEED <- 237567
+N_PATIENTS <- 300
+R <- 1000 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
+SEED <- 2375679
 FU <- 30
 M <- 5 # Number of tresholds
 
