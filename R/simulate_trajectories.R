@@ -434,10 +434,10 @@ sim_trajectories_brownian <- function(
   if (!is.null(allowed_start_state)) {
     if (!is.integer(allowed_start_state)) {
       stop("allowed_start_state must be NULL or an integer")
-      }
+    }
     if (!all(allowed_start_state %in% 1:n_states)) {
       stop("All allowed_start_state must be between 1 and n_states")
-      }
+    }
   }
 
   if (!is.null(absorbing_state)) {
@@ -714,4 +714,463 @@ sim_trajectories_deterministic <- function(
     dplyr::arrange(id, time)
 
   return(tibble::tibble(result))
+}
+
+
+#' Generate recurrent event times for individuals (helper for latent TTE DGM)
+#'
+#' Simulate recurrent event times in long format for a set of individuals.
+#' For each individual the waiting times between events are drawn from
+#' exponential distributions with state-specific rates and then cumulated to
+#' event times. Event times that exceed the administrative follow-up are
+#' censored (removed).
+#'
+#' @param id Optional numeric vector of subject identifiers. If supplied, these
+#'   identifiers are repeated `max_events` times internally (one block of
+#'   rates per subject). If missing, identifiers 1:n are generated where
+#'   `n` is provided or inferred.
+#' @param n Optional integer. Number of participants to simulate. If missing,
+#'   `n` is set to `length(id)`. If both `id` and `n` are provided their
+#'   lengths must match.
+#' @param dist Character. Name of the waiting-time distribution. Currently only
+#'   "Exponential" is supported (default).
+#' @param param Numeric. Parameter vector for the waiting-time distribution.
+#'   The first element is taken as the baseline rate \u03bb (lambda) used to
+#'   construct the per-event rates. Only `param[1]` is used by the current
+#'   implementation.
+#' @param b Numeric scalar. Increment added to the rate for every subsequent
+#'   event (autoregressive Poisson / accelerating rates). Rate for event j is
+#'   lambda + b * (j - 1). Default `0` (constant rates).
+#' @param follow_up Numeric scalar. Administrative follow-up time. Event times
+#'   \code{>= follow_up} are censored and not returned. Default `60`.
+#' @param max_events Optional integer. Maximum number of events to generate per
+#'   individual. If NULL (default) the function chooses a suitable `max_events`
+#'   between 3 and 20 so that the probability of observing all events within
+#'   `follow_up` is very small (threshold 1e-4). When provided, the function
+#'   uses the given value.
+#'
+#' @return A two-column numeric matrix / data.frame with columns
+#'   - \code{id}: subject identifier (numeric)
+#'   - \code{event_time}: event time (numeric) for events strictly less than \code{follow_up}
+#'
+#' @details
+#' Algorithm summary:
+#' 1. Construct a vector of per-event rates of length \code{max_events}:
+#'    \eqn{rate_j = lambda + b * (j - 1)}.
+#' 2. If \code{max_events} is not supplied, choose the smallest value in
+#'    3:20 for which the probability of experiencing all \code{max_events}
+#'    within \code{follow_up} is < 1e-4. When rates are constant the gamma
+#'    distribution (pgamma) is used; otherwise \code{sdprisk::phypoexp} is used.
+#' 3. Simulate waiting times with \code{rexp(n * max_events, rate = rates)}.
+#'    Rates are recycled to length \code{n * max_events} so that each subject
+#'    receives the block of per-event rates in order.
+#' 4. For each subject compute the cumulative sums of waiting times to obtain
+#'    event times, and retain only those event times < \code{follow_up}.
+#'
+#' Notes and caveats:
+#' - Event times exactly equal to \code{follow_up} are excluded (strict <).
+#'
+#' @examples
+#' # small example
+#' recurr_event(id = 1:3, param = 0.1, b = 0, follow_up = 10, max_events = 5)
+#'
+#' # let function choose max_events automatically
+#' recurr_event(id = 1:10, param = 0.05, b = 0.01, follow_up = 30)
+#'
+#' @seealso \code{\link[sdprisk]{phypoexp}} for hypoexponential CDF used internally
+#' @keywords recurr_event
+#' @importFrom sdprisk phypoexp
+#' @export
+
+recurr_event <- function(
+  id,
+  dist = "Exponential",
+  param,
+  b = 0,
+  follow_up = 60,
+  max_events = NULL
+) {
+  # prepare variables
+  n <- length(id)
+
+  lambda_i <- param
+
+  #______________________________________________________________________________#
+  #____Find max_events and corresponding rates___________________________________#
+  #______________________________________________________________________________#
+  # Find max_events so that the probability of experiencing all events within
+  # the study interval is very small (here set to 0.0001, can be changed below)
+  if (is.null(max_events)) {
+    for (max_events in 3:20) {
+      rates <- numeric(max_events)
+
+      if (length(param) == 1) {
+        for (j in 1:max_events) {
+          rates[j] <- lambda_i + b * (j - 1)
+        }
+      } else {
+        if (length(param) == max_events) {
+          rates <- param
+        } else {
+          stop("Length of param must be one or equal to max_events.")
+        }
+      }
+
+      if (length(unique(rates)) == 1) {
+        p <- pgamma(follow_up, shape = length(rates), rate = unique(rates))
+      } else {
+        p <- phypoexp(follow_up, rate = rates)
+      }
+
+      if (p < 0.0001) {
+        break()
+      }
+
+      if (max_events == 20) {
+        warning(paste0(
+          "max_events = 20, but propability of experiencing all events within time ",
+          follow_up,
+          " is still ",
+          p,
+          ". To lower this probability, try different follow-up-time or lambda_i or override max_events."
+        ))
+      }
+    }
+  } else {
+    # define rates for waiting time prior to event i
+    rates <- numeric(max_events)
+    for (i in 1:max_events) {
+      rates[i] <- lambda_i + b * (i - 1)
+    }
+  }
+
+  #______________________________________________________________________________#
+  #____ Model waiting times between events and store as vector   ________________#
+  #______________________________________________________________________________#
+  # Assign patient ID for later dataframe
+  if (missing(id)) {
+    id <- rep(1:n, each = max_events)
+  } else {
+    id <- rep(id, each = max_events)
+  }
+
+  # generate the waiting times between events for each individual
+  rates_rep <- rep(rates, times = n)
+  waiting_times_orig <- rexp(n * max_events, rate = rates_rep)
+
+  # vector of cumulative sums of individuals, i.e., time points of state change
+  event_times <- ave(waiting_times_orig, id, FUN = cumsum)
+  names(event_times) <- id
+
+  #   - censor intervals which exceed the follow-up (administrative censoring)
+  censored_event_times <- event_times[event_times < follow_up]
+
+  return(cbind(
+    id = as.numeric(names(censored_event_times)),
+    event_time = censored_event_times
+  ))
+}
+
+
+#' Simulate Patient Trajectories Using Latent Time-to-Event Model
+#'
+#' Generates individual patient trajectories using a latent time-to-event mechanism
+#' with recurrent events. Each patient transitions through ordered states based on
+#' state-specific event rates, with support for treatment effects via hazard ratios.
+#'
+#' @param baseline_data A data frame containing baseline patient characteristics.
+#'   Must include columns: `id`, `tx` (treatment indicator), and `state` (initial state).
+#'   Default is `NULL` (user must provide). Each row represents one patient.
+#' @param baseline_states Integer vector. States that patients can start in at time 0.
+#'   Default is NULL, which allows starting in any state. If provided, only these
+#'   states will be assigned at baseline.
+#' @param prob Probabilities for each baseline_state.
+#' @param states Integer vector. Ordered states in the model (default: 1:6).
+#'   States should be numbered consecutively.
+#' @param absorbing_states Integer vector. States that are absorbing (once entered,
+#'   patients cannot leave). Default is 6 (typically death).
+#' @param follow_up_time Integer. Number of days to simulate per patient (default: 60).
+#' @param param Numeric vector. Baseline event rates (hazards) for each state.
+#'   Length must equal `length(states)`. These represent the rate parameter λ for
+#'   exponential waiting times in the control group.
+#' @param hazard_ratios List of numeric vectors. Treatment effects as multiplicative
+#'   factors on the baseline rates for each treatment arm.
+#'   Each list element corresponds to a treatment arm (excluding control, which is 1.0).
+#'   Length of each vector must equal `length(states)`.
+#'   Default is `list(c(1, 1, 1, 1, 1, 1))` (no treatment effect).
+#' @param b Numeric. Autoregressive coefficient for recurrent events within a state
+#'   (default: 0). The rate for event j in a given state is:
+#'   rate_j = param + b * (j - 1). Positive b means events become more likely over time
+#'   (Poisson process acceleration); b = 0 means independent events.
+#' @param seed Integer. Random seed for reproducibility (default: NULL).
+#'
+#' @return A data frame (tibble) with columns:
+#'   - id: patient identifier
+#'   - tx: treatment assignment (0 = control, 1 = treatment)
+#'   - time: time/day (1 to follow_up_time)
+#'   - y: observed state at time
+#'   - yprev: state at previous time point
+#'
+#' @details
+#' This function implements a latent time-to-event data generating mechanism:
+#' 1. For each patient, state, and treatment arm, waiting times to recurrent events
+#'    are generated from exponential distributions with state-specific rates.
+#' 2. Rates are adjusted by the corresponding hazard ratio (treatment effect).
+#' 3. Event times are cumulated to determine when state transitions occur.
+#' 4. Events occurring after follow-up are censored (administrative censoring).
+#' 5. Each patient's trajectory is expanded to include all days 1 to follow_up_time,
+#'    with states carried forward between event times (last observation carried forward, LOCF).
+#' 6. Once an absorbing state is entered, no further transitions occur.
+#'
+#' Patients in absorbing states at baseline are handled by advancing their first
+#' absorbing event to day 1.
+#'
+#' @examples
+#' \dontrun{
+#' # Basic example with control parameters
+#' baseline <- data.frame(
+#'   id = 1:100,
+#'   tx = rbinom(100, 1, 0.5),
+#'   state = sample(2:5, 100, replace = TRUE)
+#' )
+#'
+#' trajectories <- sim_trajectories_tte(
+#'   baseline_data = baseline,
+#'   param = c(0.05, 0.0035, 0.0025, 0.002, 0.002, 0.005),
+#'   hazard_ratios = list(c(0.8, 1, 1, 1, 1, 1)),
+#'   follow_up_time = 30,
+#'   seed = 12345
+#' )
+#'
+#' # Generate baseline_data within the function
+#' test_traj <- sim_trajectories_tte(
+#'   baseline_data = NULL,
+#' states = 1:6,
+#'   baseline_states = c(2:5),
+#'   prob = c(0.55, 0.2, 0.15, 0.1),
+#'   n = 10000,
+#'   absorbing_states = 6,
+#'   follow_up_time = 60,
+#'   param = c(0.05, 0.003, 0.001, 0.001, 0.001, 0.0015),
+#'   hazard_ratios = list(c(1.145, 1, 1, 1, 1, 1)),
+#'   b = 0,
+#'   seed = NULL
+#' )
+#' plot_sops(test_traj)
+#' calc_time_in_state_diff(test_traj)
+#'
+#' # With multiple treatment arms
+#' trajectories_multi <- sim_trajectories_tte(
+#'   baseline_data = baseline,
+#'   param = c(0.05, 0.0035, 0.0025, 0.002, 0.002, 0.005),
+#'   hazard_ratios = list(
+#'     c(0.8, 1, 1, 1, 1, 1),  # Treatment arm 1
+#'     c(0.9, 1, 1, 1, 1, 1)   # Treatment arm 2
+#'   ),
+#'   follow_up_time = 30,
+#'   seed = 12345
+#' )
+#' }
+#'
+#' @seealso
+#' \code{\link{recurr_event}} for the underlying recurrent event generation
+#'
+#' @importFrom tidyr tibble
+#' @importFrom stats rnorm
+#'
+#' @export
+
+sim_trajectories_tte <- function(
+  baseline_data,
+  baseline_states = NULL,
+  prob = c(0.55, 0.2, 0.15, 0.1),
+  n = 1000,
+  states = 1:6,
+  absorbing_states = 6,
+  follow_up_time = 60,
+  param = c(0.05, 0.0035, 0.0025, 0.002, 0.002, 0.005),
+  hazard_ratios = list(c(1, 1, 1, 1, 1, 1)),
+  b = 0,
+  seed = NULL
+) {
+  # Input validation
+  if (!is.null(baseline_data) && !is.data.frame(baseline_data)) {
+    stop("baseline_data must be a data frame or NULL")
+  }
+
+  if (is.null(baseline_data)) {
+    baseline_data <- data.frame(
+      id = 1:n,
+      event_time = 0,
+      tx = sample(c(0, 1), n, replace = TRUE),
+      state = sample(
+        if (!is.null(baseline_states)) baseline_states else states,
+        n,
+        replace = TRUE,
+        prob = prob
+      )
+    )
+  }
+
+  required_cols <- c("id", "tx", "state", "event_time")
+  missing_cols <- setdiff(required_cols, names(baseline_data))
+  if (length(missing_cols) > 0) {
+    stop(
+      "baseline_data must contain columns: ",
+      paste(missing_cols, collapse = ", ")
+    )
+  }
+
+  if (!is.numeric(param) || length(param) != length(states)) {
+    stop("param length must equal length(states)")
+  }
+
+  if (!is.list(hazard_ratios)) {
+    stop("hazard_ratios must be a list of numeric vectors")
+  }
+
+  if (
+    !all(vapply(
+      hazard_ratios,
+      function(x) {
+        is.numeric(x) && length(x) == length(states)
+      },
+      logical(1)
+    ))
+  ) {
+    stop(
+      "Each element of hazard_ratios must have length equal to length(states)"
+    )
+  }
+
+  if (any(baseline_data$state %in% absorbing_states)) {
+    warning(
+      "Some individuals are in absorbing state at baseline. ",
+      "Consider changing the baseline distribution."
+    )
+  }
+
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
+
+  # Expand param to include control arm
+  param_list <- list(ctrl = param)
+  for (j in seq_along(hazard_ratios)) {
+    param_list[[j + 1]] <- param * hazard_ratios[[j]]
+  }
+
+  # Generate recurrent events for each treatment arm × state combination
+  state_changes <- list()
+  m <- 1
+  tx_levels <- sort(unique(baseline_data$tx))
+
+  for (j in seq_along(tx_levels)) {
+    tx_val <- tx_levels[j]
+    ids_tx <- baseline_data$id[baseline_data$tx == tx_val]
+
+    for (i in states) {
+      state_changes[[m]] <- recurr_event(
+        id = ids_tx,
+        param = param_list[[j]][i],
+        b = b,
+        follow_up = follow_up_time,
+        max_events = NULL
+      )
+      state_changes[[m]] <- cbind(state_changes[[m]], state = i, tx = tx_val)
+      m <- m + 1
+    }
+  }
+
+  # Combine event times, add baseline, and order
+  state_changes_long <- rbind(
+    do.call(rbind, state_changes),
+    baseline_data
+  )
+
+  state_changes_long <- state_changes_long[
+    order(state_changes_long[, "id"], state_changes_long[, "event_time"]),
+  ]
+  state_changes_long[, "time"] <- floor(state_changes_long[, "event_time"])
+
+  # Split by patient ID
+  split_state_changes_long <- split(
+    as.data.frame(state_changes_long),
+    state_changes_long[, "id"]
+  )
+
+  # LOCF helper function
+  locf <- function(v) {
+    ind <- which(!is.na(v))
+    if (length(ind) == 0L) {
+      return(v)
+    }
+    fi <- findInterval(seq_along(v), ind)
+    res <- v[ind][pmax(fi, 1L)]
+    res[fi == 0L] <- NA
+    res
+  }
+
+  # Process each patient: remove post-absorbing events, handle duplicates, expand days, and LOCF
+  state_changes_list <- lapply(split_state_changes_long, function(x) {
+    this_id <- unique(x$id[!is.na(x$id)])
+    if (length(this_id) != 1L) {
+      this_id <- this_id[1L]
+    }
+
+    this_tx <- unique(x$tx[!is.na(x$tx)])
+    if (length(this_tx) != 1L) {
+      this_tx <- this_tx[1L]
+    }
+
+    # Absorbing state at baseline: set to day 1 (observed next day)
+    if (any(x$time == 0 & x$state %in% absorbing_states)) {
+      x$time[x$time == 0 & x$state %in% absorbing_states] <- 1
+    }
+
+    # Remove events after absorbing state
+    absorbing_selector <- ave(
+      x[, "state"] %in% absorbing_states,
+      x[, "id"],
+      FUN = cumsum
+    )
+    absorbing_selector <- c(0, absorbing_selector[-length(absorbing_selector)])
+    x <- x[absorbing_selector == 0, , drop = FALSE]
+
+    # Keep last event of each day
+    x <- x[!duplicated(x$time, fromLast = TRUE), , drop = FALSE]
+
+    # Expand to all days (0:follow_up_time)
+    complete_times <- 0:follow_up_time
+    x <- merge(
+      data.frame(time = complete_times),
+      x,
+      by = "time",
+      all.x = TRUE
+    )
+
+    # Restore id and tx
+    x$id <- this_id
+    x$tx <- this_tx
+
+    # Convert state to numeric and apply LOCF
+    if (is.factor(x$state)) {
+      x$state <- as.integer(as.character(x$state))
+    }
+    x$y <- locf(x$state)
+
+    # Generate yprev
+    x$yprev <- c(NA, x$y[-nrow(x)])
+
+    # Drop day 0 (keep only days 1 to follow_up_time)
+    x <- x[x$time > 0, , drop = FALSE]
+
+    # Select relevant columns
+    x[, c("id", "tx", "time", "y", "yprev"), drop = FALSE]
+  })
+
+  state_changes_long <- do.call(rbind, state_changes_list)
+  rownames(state_changes_long) <- NULL
+
+  tibble::tibble(state_changes_long)
 }
