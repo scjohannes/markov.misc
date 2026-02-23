@@ -1086,7 +1086,8 @@ recurr_event <- function(
 #' @param b Numeric. Autoregressive coefficient for recurrent events within a state
 #'   (default: 0). The rate for event j in a given state is:
 #'   rate_j = param + b * (j - 1). Positive b means events become more likely over time
-#'   (Poisson process acceleration); b = 0 means independent events.
+#'   (Poisson process acceleration); b = 0 means independent events. If a vector is given, 
+#'   it must be the same length as the states vector (event-type-specific acceleration). 
 #' @param seed Integer. Random seed for reproducibility (default: NULL).
 #'
 #' @return A data frame (tibble) with columns:
@@ -1245,6 +1246,19 @@ sim_trajectories_tte <- function(
     param_list[[j + 1]] <- param * hazard_ratios[[j]]
   }
 
+  # Expand b vector for each event type 
+  if (length(b) == 1) {
+    # Fixed acceleration
+    b <- rep(b, times = length(states))
+    } else {
+    # Event-type-specific acceleration: check input
+    if (length(b) != length(states)) {
+      stop(
+      "Autoregressive parameter b must have length one or equal to length(states)"
+    )
+      }
+    }
+
   # Generate recurrent events for each treatment arm × state combination
   state_changes <- list()
   m <- 1
@@ -1258,7 +1272,7 @@ sim_trajectories_tte <- function(
       state_changes[[m]] <- recurr_event(
         id = ids_tx,
         param = param_list[[j]][i],
-        b = b,
+        b = b[i],
         follow_up = follow_up_time,
         max_events = NULL
       )
