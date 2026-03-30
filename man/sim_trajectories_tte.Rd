@@ -50,7 +50,8 @@ Default is \code{list(c(1, 1, 1, 1, 1, 1))} (no treatment effect).}
 \item{b}{Numeric. Autoregressive coefficient for recurrent events within a state
 (default: 0). The rate for event j in a given state is:
 rate_j = param + b * (j - 1). Positive b means events become more likely over time
-(Poisson process acceleration); b = 0 means independent events.}
+(Poisson process acceleration); b = 0 means independent events. If a vector is given,
+it must be the same length as the states vector (event-type-specific acceleration).}
 
 \item{seed}{Integer. Random seed for reproducibility (default: NULL).}
 }
