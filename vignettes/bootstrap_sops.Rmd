@@ -1,8 +1,8 @@
 ---
-title: "Bootstrap Marginal State Occupation Probabilities"
+title: "Bootstrap Marginal State Occupancy Probabilities"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Bootstrap Marginal State Occupation Probabilities}
+  %\VignetteIndexEntry{Bootstrap Marginal State Occupancy Probabilities}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -34,8 +34,8 @@ library(ggplot2)
 library(ggdist)
 library(patchwork)
 
-N_PATIENTS <- 300
-R <- 1000 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
+N_PATIENTS <- 800
+R <- 50 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
 SEED <- 2375679
 FU <- 30
 M <- 5 # Number of tresholds
@@ -57,7 +57,7 @@ we include it in the fitted models to illustrate standardization over an
 additional baseline covariate.
 
 ```{r superpop}
-markov_data <- sim_trajectories_brownian(
+markov_data <- sim_trajectories_brownian_gap(
   n_patients = N_PATIENTS,
   follow_up_time = FU,
   treatment_prob = 0.5,
@@ -78,7 +78,7 @@ markov_data <- markov_data |>
 plot_sops(markov_data, geom = "line", linetype_var = "tx", facet_var = NULL) + 
   scale_color_brewer(palette = "Dark2") +
   coord_cartesian(ylim = c(0, 1.0)) +
-  labs(title = "Empirical State Occupation Probabilities")
+  labs(title = "Empirical State Occupancy Probabilities")
 ```
 
 ```{r}
@@ -113,7 +113,7 @@ t_covs <-  data |>
 
 ## Step 3: Model Specification
 
-We will fit three models with increasing degrees of flexibility to showcase how model choice impacts the estimated state occupation probabilities.
+We will fit three models with increasing degrees of flexibility to showcase how model choice impacts the estimated state Occupancy probabilities.
 
 1.  **Model A (Simple PO):** Proportional Odds for all terms.
 
@@ -213,7 +213,7 @@ m_flex@call$constraints <- cons_flexible
 
 ## Step 4: Bootstrap Marginalized SOPs
 
-We compute the standardized (marginalized) State Occupation Probabilities using bootstrapping. We standardize over the observed distribution of baseline covariates (like `yprev`) to get the population-average effect of treatment.
+We compute the standardized (marginalized) State Occupancy Probabilities using bootstrapping. We standardize over the observed distribution of baseline covariates (like `yprev`) to get the population-average effect of treatment.
 
 *Note: We pass `t_covs` to ensure transformations of the time variable are also updated.*
 
@@ -330,7 +330,7 @@ bind_rows(
 
 ## Step 5: Visualization
 
-### 1. State Occupation Probabilities
+### 1. State Occupancy Probabilities
 
 We plot the SOPs with 95% confidence bands for all three models.
 
