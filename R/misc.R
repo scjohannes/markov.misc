@@ -689,6 +689,8 @@ calc_time_in_state_diff <- function(data, target_state = 1) {
   sops <- data |>
     dplyr::group_by(y, tx, time) |>
     dplyr::summarise(count = n(), .groups = "drop") |>
+    # add count = 0 for missing combinations of y, tx, time
+    tidyr::complete(y, tx, time, fill = list(count = 0)) |>
     dplyr::group_by(tx, time) |>
     dplyr::mutate(sop = count / sum(count)) |>
     dplyr::ungroup()
