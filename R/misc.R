@@ -632,109 +632,252 @@ states_to_tte <- function(
 #'
 #' Computes the true treatment effect as the difference in time spent in a
 #' target state (typically "home" or "alive and out of hospital") between
-#' treatment and control groups in simulated Markov trajectory data.
+#' treatment groups in simulated Markov trajectory data.
 #'
 #' @param data A data frame containing trajectory data with columns: `id`,
-#'   `y` (state), `tx` (treatment), and `time`.
-#' @param target_state Integer. The state representing the outcome of interest
-#'   (default: 1, typically representing Home/Discharged/Alive and Out of Hospital).
+#'   `y` (state), a treatment column, and a time column.
+#' @param target_state Optional vector of state values to summarize. If `NULL`
+#'   (default), all observed states in `y` are included.
+#' @param tvarname Character string giving the name of the time column.
+#'   Default is `"time"`.
+#' @param txvarname Character string giving the name of the treatment
+#'   column. Default is `"tx"`.
+#' @param reference_level Optional reference treatment level. Differences are
+#'   calculated for every other treatment level relative to this value. If
+#'   `NULL` (default), the first factor level is used for factor treatments;
+#'   otherwise the smallest observed treatment value is used.
 #'
-#' @return A tibble with the following columns:
-#'   - `true_effect`: Difference in state occupation probability (tx=1 minus tx=0)
-#'     summed across all time points
-#'   - `tx0_mean_time`: Mean time spent in target state for control group
-#'   - `tx0_sd_time`: Standard deviation of time in target state for control group
-#'   - `tx1_mean_time`: Mean time spent in target state for treatment group
-#'   - `tx1_sd_time`: Standard deviation of time in target state for treatment group
+#' @return A data frame with the following columns:
+#'   - `state`: State being summarized
+#'   - `reference_level`: Reference treatment level
+#'   - `treatment_level`: Non-reference treatment level being compared to the
+#'     reference
+#'   - `true_effect`: Difference in state occupation probability summed across
+#'     all time points
+#'   - `reference_mean_time`: Mean time spent in target state for the reference
+#'     treatment
+#'   - `reference_sd_time`: Standard deviation of time spent in target state
+#'     for the reference treatment
+#'   - `treatment_mean_time`: Mean time spent in target state for the
+#'     comparison treatment
+#'   - `treatment_sd_time`: Standard deviation of time spent in target state
+#'     for the comparison treatment
 #'
 #' @details
 #' This function calculates the true treatment effect in two ways:
 #'
 #' 1. **State Occupation Probability Method**: Calculates the proportion of
-#'    patients in the target state at each time point for each treatment group,
-#'    then sums the difference across all time points.
+#'    patients in each selected state at each time point for each treatment
+#'    group, then sums the difference across all time points relative to the
+#'    reference treatment level.
 #'
 #' 2. **Individual Time in State**: For each patient, counts the total number
-#'    of time periods spent in the target state, then computes group-level
-#'    means and standard deviations.
+#'    of time periods spent in each selected state, then computes group-level
+#'    means and standard deviations for each treatment level.
 #'
 #' The `true_effect` represents the area between the state occupation curves
 #' and can be interpreted as the expected difference in total days spent in
-#' the target state over the follow-up period.
+#' each state over the follow-up period.
 #'
 #' @examples
 #' \dontrun{
-#' # Calculate true effect from simulated data
+#' # Calculate effects for all observed states
 #' trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
-#' effect_summary <- calc_time_in_state_diff(trajectories, target_state = 1)
+#' effect_summary <- calc_time_in_state_diff(trajectories)
+#'
+#' # Use custom time and treatment columns
+#' effect_summary <- calc_time_in_state_diff(
+#'   trajectories,
+#'   target_state = 1,
+#'   tvarname = "visit_day",
+#'   txvarname = "arm",
+#'   reference_level = "control"
+#' )
 #'
 #' # View results
 #' print(effect_summary)
 #' }
 #'
-#' @importFrom dplyr group_by summarise filter select mutate ungroup pull
-#' @importFrom tidyr pivot_wider
-#' @importFrom stats sd
+#' @importFrom stats aggregate sd
 #'
 #' @export
-calc_time_in_state_diff <- function(data, target_state = 1) {
+calc_time_in_state_diff <- function(
+  data,
+  target_state = NULL,
+  tvarname = "time",
+  txvarname = "tx",
+  reference_level = NULL
+) {
   # Input validation
-  required_cols <- c("id", "y", "tx", "time")
+  required_cols <- c("id", "y", txvarname, tvarname)
   missing_cols <- setdiff(required_cols, names(data))
   if (length(missing_cols) > 0) {
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  # Calculate state occupation probabilities
-  sops <- data |>
-    dplyr::group_by(y, tx, time) |>
-    dplyr::summarise(count = n(), .groups = "drop") |>
-    # add count = 0 for missing combinations of y, tx, time
-    tidyr::complete(y, tx, time, fill = list(count = 0)) |>
-    dplyr::group_by(tx, time) |>
-    dplyr::mutate(sop = count / sum(count)) |>
-    dplyr::ungroup()
+  data_standardized <- data.frame(
+    id = data[["id"]],
+    y = if (is.factor(data[["y"]])) {
+      as.character(data[["y"]])
+    } else {
+      data[["y"]]
+    },
+    .time = data[[tvarname]],
+    .treatment = if (is.factor(data[[txvarname]])) {
+      as.character(data[[txvarname]])
+    } else {
+      data[[txvarname]]
+    },
+    stringsAsFactors = FALSE
+  )
 
-  # Calculate estimand (difference in probability of being in target state)
-  estimand <- sops |>
-    dplyr::filter(y %in% target_state) |>
-    dplyr::group_by(tx, time) |>
-    dplyr::summarise(sop = sum(sop), .groups = "drop") |>
-    tidyr::pivot_wider(
-      names_from = tx,
-      values_from = sop,
-      names_prefix = "tx_"
-    ) |>
-    dplyr::summarise(true_effect = sum(tx_1) - sum(tx_0)) |>
-    dplyr::pull(true_effect)
+  observed_states <- sort(unique(data_standardized[["y"]]))
 
-  # Calculate time spent in target state for each group
-  time_in_state <- data |>
-    dplyr::group_by(id, tx) |>
-    dplyr::summarise(
-      time_in_state = sum(y %in% target_state),
-      .groups = "drop"
-    ) |>
-    dplyr::group_by(tx) |>
-    dplyr::summarise(
-      mean_time = mean(time_in_state),
-      sd_time = sd(time_in_state),
-      .groups = "drop"
+  if (is.null(target_state)) {
+    target_state <- observed_states
+  }
+
+  target_state <- if (is.factor(target_state)) {
+    as.character(target_state)
+  } else {
+    target_state
+  }
+
+  missing_states <- setdiff(target_state, observed_states)
+  if (length(missing_states) > 0) {
+    stop(
+      "target_state must be drawn from observed y values: ",
+      paste(observed_states, collapse = ", ")
+    )
+  }
+
+  treatment_levels <- sort(unique(data_standardized[[".treatment"]]))
+
+  if (length(treatment_levels) < 2) {
+    stop("txvarname must contain at least 2 observed treatment levels")
+  }
+
+  if (is.null(reference_level)) {
+    reference_level <- treatment_levels[[1]]
+  }
+
+  if (is.factor(reference_level)) {
+    reference_level <- as.character(reference_level)
+  }
+
+  if (!reference_level %in% treatment_levels) {
+    stop("reference_level must be one of: ", paste(treatment_levels, collapse = ", "))
+  }
+
+  state_results <- lapply(target_state, function(state_value) {
+    state_indicator <- data_standardized[["y"]] %in% state_value
+    unique_times <- sort(unique(data_standardized[[".time"]]))
+
+    sops <- stats::aggregate(
+      state_indicator,
+      by = list(
+        .treatment = data_standardized[[".treatment"]],
+        .time = data_standardized[[".time"]]
+      ),
+      FUN = mean
+    )
+    names(sops)[names(sops) == "x"] <- "sop"
+
+    sops_complete <- merge(
+      expand.grid(
+        .treatment = treatment_levels,
+        .time = unique_times,
+        KEEP.OUT.ATTRS = FALSE,
+        stringsAsFactors = FALSE
+      ),
+      sops,
+      by = c(".treatment", ".time"),
+      all.x = TRUE,
+      sort = FALSE
+    )
+    sops_complete[["sop"]][is.na(sops_complete[["sop"]])] <- 0
+
+    reference_sops <- sops_complete[sops_complete[[".treatment"]] == reference_level, ]
+    reference_sops <- reference_sops[, c(".time", "sop"), drop = FALSE]
+    names(reference_sops)[names(reference_sops) == "sop"] <- "reference_sop"
+
+    comparison_sops <- sops_complete[sops_complete[[".treatment"]] != reference_level, ]
+    comparison_sops <- comparison_sops[, c(".treatment", ".time", "sop"), drop = FALSE]
+    names(comparison_sops) <- c("treatment_level", ".time", "treatment_sop")
+
+    estimand_data <- merge(
+      comparison_sops,
+      reference_sops,
+      by = ".time",
+      all.x = TRUE,
+      sort = FALSE
+    )
+    estimand_data[["reference_sop"]][is.na(estimand_data[["reference_sop"]])] <- 0
+    estimand_data[["effect"]] <- estimand_data[["treatment_sop"]] -
+      estimand_data[["reference_sop"]]
+
+    estimand <- stats::aggregate(
+      effect ~ treatment_level,
+      data = estimand_data,
+      FUN = sum
+    )
+    names(estimand)[names(estimand) == "effect"] <- "true_effect"
+
+    patient_time <- stats::aggregate(
+      state_indicator,
+      by = list(
+        id = data_standardized[["id"]],
+        .treatment = data_standardized[[".treatment"]]
+      ),
+      FUN = sum
+    )
+    names(patient_time)[names(patient_time) == "x"] <- "time_in_state"
+
+    mean_summary <- stats::aggregate(
+      time_in_state ~ .treatment,
+      data = patient_time,
+      FUN = mean
+    )
+    sd_summary <- stats::aggregate(
+      time_in_state ~ .treatment,
+      data = patient_time,
+      FUN = stats::sd
+    )
+    time_summary <- merge(
+      mean_summary,
+      sd_summary,
+      by = ".treatment",
+      suffixes = c("_mean", "_sd"),
+      sort = FALSE
+    )
+    names(time_summary) <- c(".treatment", "mean_time", "sd_time")
+
+    reference_summary <- time_summary[time_summary[[".treatment"]] == reference_level, ]
+    comparison_summary <- time_summary[time_summary[[".treatment"]] != reference_level, ]
+
+    result <- merge(
+      comparison_summary,
+      estimand,
+      by.x = ".treatment",
+      by.y = "treatment_level",
+      all.x = TRUE,
+      sort = FALSE
     )
 
-  # Extract values for each treatment group
-  tx0_mean <- time_in_state |> dplyr::filter(tx == 0) |> dplyr::pull(mean_time)
-  tx0_sd <- time_in_state |> dplyr::filter(tx == 0) |> dplyr::pull(sd_time)
-  tx1_mean <- time_in_state |> dplyr::filter(tx == 1) |> dplyr::pull(mean_time)
-  tx1_sd <- time_in_state |> dplyr::filter(tx == 1) |> dplyr::pull(sd_time)
+    data.frame(
+      state = rep(state_value, nrow(result)),
+      reference_level = rep(reference_level, nrow(result)),
+      treatment_level = result[[".treatment"]],
+      true_effect = result[["true_effect"]],
+      reference_mean_time = rep(reference_summary[["mean_time"]], nrow(result)),
+      reference_sd_time = rep(reference_summary[["sd_time"]], nrow(result)),
+      treatment_mean_time = result[["mean_time"]],
+      treatment_sd_time = result[["sd_time"]],
+      stringsAsFactors = FALSE
+    )
+  })
 
-  return(tibble::tibble(
-    true_effect = estimand,
-    tx0_mean_time = tx0_mean,
-    tx0_sd_time = tx0_sd,
-    tx1_mean_time = tx1_mean,
-    tx1_sd_time = tx1_sd
-  ))
+  do.call(rbind, state_results)
 }
 
 

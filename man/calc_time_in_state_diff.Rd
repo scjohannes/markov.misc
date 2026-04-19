@@ -4,51 +4,86 @@
 \alias{calc_time_in_state_diff}
 \title{Calculate Difference in Time Alive and Out Of Hospital}
 \usage{
-calc_time_in_state_diff(data, target_state = 1)
+calc_time_in_state_diff(
+  data,
+  target_state = NULL,
+  tvarname = "time",
+  txvarname = "tx",
+  reference_level = NULL
+)
 }
 \arguments{
 \item{data}{A data frame containing trajectory data with columns: \code{id},
-\code{y} (state), \code{tx} (treatment), and \code{time}.}
+\code{y} (state), a treatment column, and a time column.}
 
-\item{target_state}{Integer. The state representing the outcome of interest
-(default: 1, typically representing Home/Discharged/Alive and Out of Hospital).}
+\item{target_state}{Optional vector of state values to summarize. If \code{NULL}
+(default), all observed states in \code{y} are included.}
+
+\item{tvarname}{Character string giving the name of the time column.
+Default is \code{"time"}.}
+
+\item{txvarname}{Character string giving the name of the treatment
+column. Default is \code{"tx"}.}
+
+\item{reference_level}{Optional reference treatment level. Differences are
+calculated for every other treatment level relative to this value. If
+\code{NULL} (default), the first factor level is used for factor treatments;
+otherwise the smallest observed treatment value is used.}
 }
 \value{
-A tibble with the following columns:
+A data frame with the following columns:
 \itemize{
-\item \code{true_effect}: Difference in state occupation probability (tx=1 minus tx=0)
-summed across all time points
-\item \code{tx0_mean_time}: Mean time spent in target state for control group
-\item \code{tx0_sd_time}: Standard deviation of time in target state for control group
-\item \code{tx1_mean_time}: Mean time spent in target state for treatment group
-\item \code{tx1_sd_time}: Standard deviation of time in target state for treatment group
+\item \code{state}: State being summarized
+\item \code{reference_level}: Reference treatment level
+\item \code{treatment_level}: Non-reference treatment level being compared to the
+reference
+\item \code{true_effect}: Difference in state occupation probability summed across
+all time points
+\item \code{reference_mean_time}: Mean time spent in target state for the reference
+treatment
+\item \code{reference_sd_time}: Standard deviation of time spent in target state
+for the reference treatment
+\item \code{treatment_mean_time}: Mean time spent in target state for the
+comparison treatment
+\item \code{treatment_sd_time}: Standard deviation of time spent in target state
+for the comparison treatment
 }
 }
 \description{
 Computes the true treatment effect as the difference in time spent in a
 target state (typically "home" or "alive and out of hospital") between
-treatment and control groups in simulated Markov trajectory data.
+treatment groups in simulated Markov trajectory data.
 }
 \details{
 This function calculates the true treatment effect in two ways:
 \enumerate{
 \item \strong{State Occupation Probability Method}: Calculates the proportion of
-patients in the target state at each time point for each treatment group,
-then sums the difference across all time points.
+patients in each selected state at each time point for each treatment
+group, then sums the difference across all time points relative to the
+reference treatment level.
 \item \strong{Individual Time in State}: For each patient, counts the total number
-of time periods spent in the target state, then computes group-level
-means and standard deviations.
+of time periods spent in each selected state, then computes group-level
+means and standard deviations for each treatment level.
 }
 
 The \code{true_effect} represents the area between the state occupation curves
 and can be interpreted as the expected difference in total days spent in
-the target state over the follow-up period.
+each state over the follow-up period.
 }
 \examples{
 \dontrun{
-# Calculate true effect from simulated data
+# Calculate effects for all observed states
 trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
-effect_summary <- calc_time_in_state_diff(trajectories, target_state = 1)
+effect_summary <- calc_time_in_state_diff(trajectories)
+
+# Use custom time and treatment columns
+effect_summary <- calc_time_in_state_diff(
+  trajectories,
+  target_state = 1,
+  tvarname = "visit_day",
+  txvarname = "arm",
+  reference_level = "control"
+)
 
 # View results
 print(effect_summary)
