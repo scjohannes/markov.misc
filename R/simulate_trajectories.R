@@ -311,6 +311,11 @@ sim_trajectories_markov <- function(
 #' @param thresholds Numeric vector of K-1 cutpoints for the ordered model
 #'   (default: c(-3.5, 0, 1, 3, 4.5) for 6 states). Higher values
 #'   represent more severe states.
+#' @param threshold_drift_deviations Numeric vector of length `n_states - 1`
+#'   giving threshold-specific deviations from the shared time effect
+#'   (default: NULL). When NULL, all thresholds share the same time effect as
+#'   before. When supplied, deviations accumulate over time, allowing the
+#'   thresholds to move at different rates.
 #' @param treatment_prob Numeric. Probability of assignment to treatment group
 #'   (default: 0.5).
 #' @param allowed_start_state Integer vector or NULL. Defines one or more states allowed at
@@ -337,6 +342,11 @@ sim_trajectories_markov <- function(
 #'   - x: latent continuous severity (NA after entering absorbing state)
 #'
 #' @details
+#' With the default `threshold_drift_deviations = NULL`, the time effect is
+#' shared across all thresholds through the latent Brownian drift. Supplying a
+#' deviation vector adds threshold-specific cumulative deviations to the fixed
+#' cutpoints, producing non-parallel time effects while leaving the latent
+#' random walk unchanged.
 #' This function implements a latent variable model where:
 #' 1. Each patient has an unobserved continuous "severity" X(t) that evolves
 #'    as a Gaussian random walk: X(t) = X(t-1) + μ(t) + ε, where ε ~ N(0, σ²)
@@ -375,6 +385,12 @@ sim_trajectories_markov <- function(
 #'   mu_quad2 = 0,          # no second-order curvature
 #'   drift_change_times = c(60, 61)  # disable piecewise decline
 #' )
+#'
+#' # Threshold-specific time deviations
+#' traj_nonparallel <- sim_trajectories_brownian(
+#'   n_patients = 1000,
+#'   threshold_drift_deviations = c(0.03, 0.015, 0, -0.015, -0.03)
+#' )
 #' }
 #'
 #' @importFrom stats rnorm plogis pnorm
@@ -394,6 +410,7 @@ sim_trajectories_brownian <- function(
   sigma_rw = 0.12,
   x0_sd = 1.0,
   thresholds = c(-3.5, 0, 1, 3, 4.5),
+  threshold_drift_deviations = NULL,
   treatment_prob = 0.5,
   allowed_start_state = 2:5,
   absorbing_state = 6,
@@ -425,6 +442,23 @@ sim_trajectories_brownian <- function(
 
   if (!is.numeric(thresholds) || !all(diff(thresholds) > 0)) {
     stop("thresholds must be a strictly increasing numeric vector")
+  }
+
+  if (!is.null(threshold_drift_deviations)) {
+    if (!is.numeric(threshold_drift_deviations) || anyNA(threshold_drift_deviations)) {
+      stop("threshold_drift_deviations must be a numeric vector without NA values")
+    }
+
+    if (length(threshold_drift_deviations) != (n_states - 1)) {
+      stop(
+        "threshold_drift_deviations must have length n_states - 1 (",
+        n_states - 1,
+        "), but has length ",
+        length(threshold_drift_deviations)
+      )
+    }
+  } else {
+    threshold_drift_deviations <- rep(0, n_states - 1)
   }
 
   if (treatment_prob < 0 || treatment_prob > 1) {
@@ -472,6 +506,46 @@ sim_trajectories_brownian <- function(
     set.seed(seed)
   }
 
+  calc_piecewise_factor <- function(day) {
+    if (is.null(drift_change_times) || day <= drift_change_times[1]) {
+      return(1)
+    }
+
+    if (day <= drift_change_times[2]) {
+      return(
+        (drift_change_times[2] - day) /
+          (drift_change_times[2] - drift_change_times[1])
+      )
+    }
+
+    0
+  }
+
+  calc_shared_drift <- function(day, tx) {
+    mu_base <- mu_drift + mu_quad * day + mu_quad2 * day^2
+    (mu_base + tx * mu_treatment_effect) * calc_piecewise_factor(day)
+  }
+
+  # Threshold-specific deviations create time-varying cutpoints while keeping
+  # the latent random walk unchanged. Zero deviations recover the original
+  # shared time effect exactly.
+  threshold_scale <- c(
+    0,
+    cumsum(vapply(seq_len(follow_up_time), calc_piecewise_factor, numeric(1)))
+  )
+  threshold_matrix <- matrix(
+    thresholds,
+    nrow = follow_up_time + 1,
+    ncol = n_states - 1,
+    byrow = TRUE
+  ) + outer(threshold_scale, threshold_drift_deviations)
+
+  if (any(apply(threshold_matrix, 1, \(x) any(diff(x) <= 0)))) {
+    stop(
+      "threshold_drift_deviations produce non-increasing thresholds over follow-up"
+    )
+  }
+
   # Randomly assign treatment
   treatment <- sample(
     c(0, 1),
@@ -491,7 +565,7 @@ sim_trajectories_brownian <- function(
     X[i, 1] <- rnorm(1, 0, x0_sd)
 
     # Generate observation at day 0 using selected CDF
-    pcat <- diff(c(0, cdf_fun(thresholds - X[i, 1]), 1))
+    pcat <- diff(c(0, cdf_fun(threshold_matrix[1, ] - X[i, 1]), 1))
     if (!is.null(allowed_start_state)) {
       pcat[-allowed_start_state] <- 0 # states nobody should start in
     }
@@ -504,33 +578,15 @@ sim_trajectories_brownian <- function(
         Y[i, t] <- absorbing_state
         X[i, t] <- NA_real_ # Latent variable no longer evolves
       } else {
-        # Calculate time-varying base drift with quadratic terms
-        # Note: t here is 1-indexed (t=2 means day 1), so we use (t-1) for actual day
+        # Note: t here is 1-indexed (t = 2 means day 1), so use (t - 1).
         day <- t - 1
-        mu_base <- mu_drift + mu_quad * day + mu_quad2 * day^2
-
-        # Add treatment effect to base drift (so it also gets scaled by piecewise factor)
-        mu_i <- mu_base + treatment[i] * mu_treatment_effect
-
-        # Apply piecewise time-varying factor (for backward compatibility)
-        if (is.null(drift_change_times)) {
-          mu_t <- mu_i
-        } else if (day <= drift_change_times[1]) {
-          mu_t <- mu_i
-        } else if (day <= drift_change_times[2]) {
-          # Linear decline from mu_i to 0
-          mu_t <- mu_i *
-            (drift_change_times[2] - day) /
-            (drift_change_times[2] - drift_change_times[1])
-        } else {
-          mu_t <- 0
-        }
+        mu_t <- calc_shared_drift(day, treatment[i])
 
         # Update latent severity (random walk with drift)
         X[i, t] <- rnorm(1, mean = X[i, t - 1] + mu_t, sd = sigma_rw)
 
         # Generate observation using selected CDF
-        pcat <- diff(c(0, cdf_fun(thresholds - X[i, t]), 1))
+        pcat <- diff(c(0, cdf_fun(threshold_matrix[t, ] - X[i, t]), 1))
         Y[i, t] <- sample.int(n_states, 1, prob = pcat)
       }
     }
