@@ -9,6 +9,7 @@ sim_trajectories_brownian_gap(
   follow_up_time = 60,
   n_states = 6,
   mu_drift = -0.26,
+  mu_drift_sd = 0,
   mu_quad = 0.006,
   mu_quad2 = 0,
   mu_treatment_effect = -0.04,
@@ -33,6 +34,10 @@ sim_trajectories_brownian_gap(
 
 \item{mu_drift}{Numeric. Baseline (constant) drift per day for control group
 (default: -0.26). Negative values indicate improvement.}
+
+\item{mu_drift_sd}{Numeric. Standard deviation of a patient-specific random
+drift component added to \code{mu_drift} (default: 0). This induces persistent
+heterogeneity in individual improvement or worsening rates over follow-up.}
 
 \item{mu_quad}{Numeric. Quadratic coefficient for time-varying drift
 (default: 0.006).}
