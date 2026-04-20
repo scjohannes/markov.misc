@@ -15,7 +15,6 @@ sim_trajectories_brownian(
   sigma_rw = 0.12,
   x0_sd = 1,
   thresholds = c(-3.5, 0, 1, 3, 4.5),
-  threshold_drift_deviations = NULL,
   treatment_prob = 0.5,
   allowed_start_state = 2:5,
   absorbing_state = 6,
@@ -55,12 +54,6 @@ initially increases then decreases.}
 \item{thresholds}{Numeric vector of K-1 cutpoints for the ordered model
 (default: c(-3.5, 0, 1, 3, 4.5) for 6 states). Higher values
 represent more severe states.}
-
-\item{threshold_drift_deviations}{Numeric vector of length \code{n_states - 1}
-giving threshold-specific deviations from the shared time effect
-(default: NULL). When NULL, all thresholds share the same time effect as
-before. When supplied, deviations accumulate over time, allowing the
-thresholds to move at different rates.}
 
 \item{treatment_prob}{Numeric. Probability of assignment to treatment group
 (default: 0.5).}
@@ -102,11 +95,6 @@ Observed states are determined by thresholding the latent variable using an
 ordered logistic or ordered probit model.
 }
 \details{
-With the default \code{threshold_drift_deviations = NULL}, the time effect is
-shared across all thresholds through the latent Brownian drift. Supplying a
-deviation vector adds threshold-specific cumulative deviations to the fixed
-cutpoints, producing non-parallel time effects while leaving the latent
-random walk unchanged.
 This function implements a latent variable model where:
 \enumerate{
 \item Each patient has an unobserved continuous "severity" X(t) that evolves
@@ -146,12 +134,6 @@ traj_nonlinear <- sim_trajectories_brownian(
   mu_quad = -0.002,      # drift becomes more negative over time
   mu_quad2 = 0,          # no second-order curvature
   drift_change_times = c(60, 61)  # disable piecewise decline
-)
-
-# Threshold-specific time deviations
-traj_nonparallel <- sim_trajectories_brownian(
-  n_patients = 1000,
-  threshold_drift_deviations = c(0.03, 0.015, 0, -0.015, -0.03)
 )
 }
 
