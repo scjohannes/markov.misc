@@ -122,8 +122,8 @@ test_that("sim_trajectories_brownian_gap keeps the absorbing state", {
   }
 })
 
-test_that("sim_trajectories_actt2 returns ACTT-2-shaped output", {
-  traj <- sim_trajectories_actt2(n_patients = 60, seed = 42)
+test_that("sim_actt2_brownian returns ACTT-2-shaped output", {
+  traj <- sim_actt2_brownian(n_patients = 60, seed = 42)
 
   expect_named(traj, c("id", "tx", "time", "y", "yprev", "x"))
   expect_equal(min(traj$time), 1)
@@ -131,9 +131,9 @@ test_that("sim_trajectories_actt2 returns ACTT-2-shaped output", {
   expect_true(all(traj$yprev[traj$time == 1] %in% 4:7))
 })
 
-test_that("sim_trajectories_actt2 uses a null treatment effect by default", {
-  traj_default <- sim_trajectories_actt2(n_patients = 40, seed = 99)
-  traj_null <- sim_trajectories_actt2(
+test_that("sim_actt2_brownian uses a null treatment effect by default", {
+  traj_default <- sim_actt2_brownian(n_patients = 40, seed = 99)
+  traj_null <- sim_actt2_brownian(
     n_patients = 40,
     mu_treatment_effect = 0,
     seed = 99

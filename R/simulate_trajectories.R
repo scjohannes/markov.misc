@@ -329,7 +329,7 @@ sim_trajectories_markov <- function(
 #'   the standard normal CDF (pnorm).
 #' @param seed Integer. Random seed for reproducibility (default: NULL).
 #'
-#' @return A data frame (tibble) with columns:
+#' @return A data frame with columns:
 #'   - id: patient identifier
 #'   - time: time/day (1 to follow_up_time)
 #'   - tx: treatment assignment (0 = control, 1 = treatment)
@@ -670,9 +670,6 @@ sim_trajectories_brownian <- function(
 #' }
 #'
 #' @importFrom stats rnorm plogis pnorm rexp runif
-#' @importFrom tibble tibble
-#' @importFrom dplyr mutate left_join select arrange group_by ungroup filter
-#' @importFrom tidyr pivot_longer
 #'
 #' @export
 sim_trajectories_brownian_gap <- function(
@@ -873,46 +870,16 @@ sim_trajectories_brownian_gap <- function(
     }
   }
 
-  dat_latent <- as.data.frame(X)
-  colnames(dat_latent) <- as.character(0:follow_up_time)
-  dat_latent <- dat_latent |>
-    dplyr::mutate(
-      id = seq_len(n_patients),
-      tx = treatment
-    ) |>
-    tidyr::pivot_longer(
-      cols = -c(id, tx),
-      names_to = "time",
-      values_to = "x"
-    ) |>
-    dplyr::mutate(time = as.integer(time))
+  result <- data.frame(
+    id = rep(seq_len(n_patients), each = follow_up_time),
+    tx = rep(treatment, each = follow_up_time),
+    time = rep(seq_len(follow_up_time), times = n_patients),
+    y = as.integer(as.vector(t(Y[, -1, drop = FALSE]))),
+    yprev = as.integer(as.vector(t(Y[, -ncol(Y), drop = FALSE]))),
+    x = as.vector(t(X[, -1, drop = FALSE]))
+  )
 
-  dat_observed <- as.data.frame(Y)
-  colnames(dat_observed) <- as.character(0:follow_up_time)
-  dat_observed <- dat_observed |>
-    dplyr::mutate(
-      id = seq_len(n_patients),
-      tx = treatment
-    ) |>
-    tidyr::pivot_longer(
-      cols = -c(id, tx),
-      names_to = "time",
-      values_to = "y"
-    ) |>
-    dplyr::mutate(time = as.integer(time)) |>
-    dplyr::group_by(id) |>
-    dplyr::mutate(yprev = dplyr::lag(y, 1)) |>
-    dplyr::ungroup() |>
-    dplyr::filter(time > 0)
-
-  result <- dat_observed |>
-    dplyr::left_join(
-      dat_latent |> dplyr::select(id, time, x),
-      by = c("id", "time")
-    ) |>
-    dplyr::arrange(id, time)
-
-  return(tibble::tibble(result))
+  return(result)
 }
 
 

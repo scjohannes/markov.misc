@@ -79,7 +79,7 @@ the standard normal CDF (pnorm).}
 \item{seed}{Integer. Random seed for reproducibility (default: NULL).}
 }
 \value{
-A data frame (tibble) with columns:
+A data frame with columns:
 \itemize{
 \item id: patient identifier
 \item time: time/day (1 to follow_up_time)
