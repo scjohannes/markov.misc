@@ -710,4 +710,129 @@ describe("avg_sops() and inferences() pipeline", {
     expect_s3_class(out, "markov_avg_sops")
     expect_true(all(is.finite(out$estimate)))
   })
+
+  test_that("vglm_split_rcs constrained PPO matches explicit spline basis", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+
+    raw_data <- markov.misc::sim_trajectories_brownian_gap(
+      n_patients = 200,
+      follow_up_time = 12,
+      treatment_prob = 0.5,
+      absorbing_state = 6,
+      seed = 2375679,
+      mu_treatment_effect = 0
+    )
+    data <- markov.misc::prepare_markov_data(raw_data, absorbing_state = 6)
+    data <- add_patient_age(data)
+    data <- add_time_basis(data)
+
+    explicit_basis <- unname(as.matrix(data[, c("time_lin", "time_nlin_1", "time_nlin_2")]))
+    inline_basis_raw <- rms::rcs(data$time, 4)
+    inline_basis <- matrix(
+      as.numeric(inline_basis_raw),
+      nrow = nrow(inline_basis_raw),
+      ncol = ncol(inline_basis_raw)
+    )
+    expect_equal(inline_basis, explicit_basis, tolerance = 1e-14)
+
+    baseline <- data[data$time == 1, , drop = FALSE]
+    t_covs <- get_time_covariates(data)
+    ylevels <- 1:6
+    n_thresholds <- length(ylevels) - 1
+
+    explicit_constraints <- list(
+      "(Intercept)" = diag(n_thresholds),
+      time_lin = cbind(
+        PO_effect = rep(1, n_thresholds),
+        linear_deviation = seq_len(n_thresholds) - 1
+      ),
+      time_nlin_1 = cbind(PO_effect = rep(1, n_thresholds)),
+      time_nlin_2 = cbind(PO_effect = rep(1, n_thresholds)),
+      tx = cbind(PO_effect = rep(1, n_thresholds)),
+      age = cbind(PO_effect = rep(1, n_thresholds)),
+      yprev = cbind(PO_effect = rep(1, n_thresholds))
+    )
+
+    explicit_fit <- suppressWarnings(
+      VGAM::vglm(
+        ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + age + yprev,
+        family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
+        data = data,
+        constraints = explicit_constraints
+      )
+    )
+    explicit_fit@call$constraints <- explicit_constraints
+
+    inline_form <- ordered(y) ~ rms::rcs(time, 4) + tx + age + yprev
+    inline_po <- suppressWarnings(
+      markov.misc::vglm_split_rcs(
+        inline_form,
+        family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+        data = data
+      )
+    )
+
+    inline_constraints <- inline_po@constraints
+    inline_time_terms <- grep("^rms::rcs\\(time, 4\\)", names(inline_constraints), value = TRUE)
+    expect_length(inline_time_terms, 3)
+    inline_linear_time_term <- inline_time_terms[[1]]
+    expect_match(inline_linear_time_term, "time$")
+    yprev_terms <- grep("^yprev", names(inline_constraints), value = TRUE)
+    inline_constraints[yprev_terms] <- NULL
+    inline_constraints[["yprev"]] <- cbind(PO_effect = rep(1, n_thresholds))
+    inline_constraints[[inline_linear_time_term]] <- cbind(
+      PO_effect = rep(1, n_thresholds),
+      linear_deviation = seq_len(n_thresholds) - 1
+    )
+
+    inline_fit <- suppressWarnings(
+      markov.misc::vglm_split_rcs(
+        inline_form,
+        family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
+        data = data,
+        constraints = inline_constraints
+      )
+    )
+    inline_fit@call$constraints <- inline_constraints
+
+    explicit_fitted <- stats::predict(explicit_fit, type = "response")
+    inline_fitted <- markov.misc:::predict_vglm_response_markov(inline_fit, data)
+    expect_equal(dim(inline_fitted), dim(explicit_fitted))
+    expect_equal(unname(inline_fitted), unname(explicit_fitted), tolerance = 1e-10)
+
+    explicit_sops <- markov.misc::avg_sops(
+      explicit_fit,
+      newdata = baseline,
+      variables = "tx",
+      times = 1:12,
+      ylevels = ylevels,
+      absorb = "6",
+      tvarname = "time_lin",
+      pvarname = "yprev",
+      t_covs = t_covs,
+      id_var = "id"
+    )
+    inline_sops <- markov.misc::avg_sops(
+      inline_fit,
+      newdata = baseline,
+      variables = "tx",
+      times = 1:12,
+      ylevels = ylevels,
+      absorb = "6",
+      pvarname = "yprev",
+      id_var = "id"
+    )
+
+    order_sops <- function(x) {
+      x[order(x$tx, x$time, as.integer(as.character(x$state))), , drop = FALSE]
+    }
+    explicit_sops <- order_sops(explicit_sops)
+    inline_sops <- order_sops(inline_sops)
+
+    expect_equal(inline_sops$tx, explicit_sops$tx)
+    expect_equal(inline_sops$time, explicit_sops$time)
+    expect_equal(inline_sops$state, explicit_sops$state)
+    expect_equal(inline_sops$estimate, explicit_sops$estimate, tolerance = 1e-10)
+  })
 })
