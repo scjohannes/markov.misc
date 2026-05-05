@@ -101,14 +101,16 @@ validate_markov_model <- function(object) {
 #'   used in the model formula. Defaults to \code{"yprev"}.
 #' @param gap (Optional) A character string specifying the name of the variable representing
 #'   the time gap (delta time) between observations, if used in the model. Defaults to \code{NULL}.
-#' @param t_covs (Optional) A data frame used for non-linear time handling (e.g., splines
-#'   or basis functions).
+#' @param t_covs (Optional) A data frame used for explicit time-basis columns
+#'   or other time-varying covariates.
 #'   \itemize{
 #'     \item **Structure:** The number of rows in \code{t_covs} must exactly match the length of \code{times}.
 #'     \item **Columns:** Column names must match the specific basis variables used in the model formula (e.g., \code{t1}, \code{t2}).
 #'     \item **Usage:** At step \code{i}, the values from the \code{i}-th row of \code{t_covs} are injected into the prediction data.
 #'   }
-#'   This allows for `vglm` models where basis functions are supplied as separate columns rather than calculated on the fly.
+#'   Inline model terms such as \code{rms::rcs(time, 4)} do not require
+#'   \code{t_covs}; prediction reuses the fitted model's stored transform
+#'   metadata.
 #'
 #' @details
 #'
@@ -720,8 +722,9 @@ time_in_state <- function(sops, target_states = 1) {
 #' @param tvarname Name of the time variable in the model.
 #' @param pvarname Name of the previous state variable in the model.
 #' @param gap Name of the time gap variable (if used).
-#' @param t_covs Optional time-varying covariate lookup table, e.g., spline
-#' basis functions.
+#' @param t_covs Optional time-varying covariate lookup table for explicit
+#' basis columns. Inline terms such as `rms::rcs(time, 4)` can be used without
+#' supplying `t_covs`.
 #' @param by Optional character vector of variable names to stratify by. When
 #'   provided, the function aggregates (averages) SOPs within each stratum
 #'   defined by combinations of these variables. E.g., `by = "ecog"` aggregates
@@ -961,7 +964,9 @@ sops <- function(
 #' @param id_var Name of the patient ID variable (default "id"). Required for
 #'   bootstrap inference.
 #' @param ... Additional arguments passed to `sops()` (e.g., `ylevels`, `absorb`,
-#'   `tvarname`, `pvarname`, `t_covs`).
+#'   `tvarname`, `pvarname`, `t_covs`). `t_covs` is only needed for explicit
+#'   precomputed time-basis columns; inline terms such as `rms::rcs(time, 4)`
+#'   can be used without it.
 #'
 #' @return A data frame of class `markov_avg_sops` with columns:
 #'   \item{time}{Time point}
@@ -1534,7 +1539,9 @@ inferences_simulation <- function(
         model = model_chk,
         data = newdata_pred,
         t_covs = t_covs,
+        times = times,
         ylevels = ylevels,
+        tvarname = tvarname,
         pvarname = pvarname
       ),
       error = function(e) {
@@ -2636,19 +2643,21 @@ get_draws <- function(object) {
 # FAST PATH HELPER FUNCTIONS
 # =============================================================================
 # These internal functions provide the fast path for simulation-based inference
-# on VGLM models by pre-computing design matrix decompositions and bypassing
-# VGAM's predict() function.
+# on VGLM models by pre-computing design matrices and bypassing VGAM's
+# predict() function.
 
 #' Build Fast Markov Simulation Components (Internal)
 #'
-#' Pre-calculates design matrices and interaction structures for fast Markov
-#' simulation. This is the "heavy lifting" step that should be done ONCE before
-#' running thousands of simulation draws.
+#' Pre-calculates design matrices for fast Markov simulation. This is the
+#' "heavy lifting" step that should be done ONCE before running thousands of
+#' simulation draws.
 #'
 #' @param model Fitted vglm model
 #' @param data Baseline data frame (one row per patient)
 #' @param t_covs Time-dependent covariate lookup (optional)
+#' @param times Time points to predict
 #' @param ylevels State labels
+#' @param tvarname Name of time variable
 #' @param pvarname Name of previous state variable
 #' @param ... Ignored
 #'
@@ -2659,13 +2668,29 @@ markov_msm_build <- function(
   model,
   data,
   t_covs = NULL,
+  times = NULL,
   ylevels = 1:6,
+  tvarname = "time",
   pvarname = "yprev",
   ...
 ) {
   n_pat <- nrow(data)
   n_states <- length(ylevels)
   M <- n_states - 1
+
+  if (is.null(times)) {
+    times <- if (!is.null(t_covs)) {
+      seq_len(nrow(t_covs))
+    } else if (tvarname %in% names(data)) {
+      sort(unique(data[[tvarname]]))
+    } else {
+      1
+    }
+  }
+
+  if (!is.null(t_covs) && nrow(t_covs) != length(times)) {
+    stop("`t_covs` must have one row per requested time point.")
+  }
 
   # Need Gamma structure to know which columns to keep
   Gamma_template <- get_effective_coefs(model)
@@ -2675,16 +2700,17 @@ markov_msm_build <- function(
   if (!pvarname %in% names(data)) {
     data[[pvarname]] <- factor(ylevels[1], levels = ylevels)
   }
-  tvar <- "time"
-  if (!tvar %in% names(data)) {
-    data[[tvar]] <- 0
+  if (!tvarname %in% names(data)) {
+    data[[tvarname]] <- times[1]
   }
 
   # Terms object
   tt <- stats::terms(model)
   tt <- stats::delete.response(tt)
 
-  # Helper to get Design Matrix (X) only
+  # Helper to get design matrix columns used by the effective coefficient
+  # matrix. For inline transforms such as rms::rcs(), model.matrix() uses the
+  # fitted terms object's predvars, including stored knot locations.
   get_X <- function(d) {
     X <- stats::model.matrix(tt, data = d)
     common <- intersect(colnames(X), common_cols)
@@ -2694,90 +2720,57 @@ markov_msm_build <- function(
     X[, common, drop = FALSE]
   }
 
-  # A. X_0 (Base: Time=0, Prev=Ref)
-  d_0 <- data
-  if (!is.null(t_covs)) {
-    for (n in names(t_covs)) {
-      d_0[[n]] <- 0
-    }
-  }
-
-  # if we don't want to treat yprev as factor, this becomes a problem
-  d_0[[pvarname]] <- factor(ylevels[1], levels = ylevels)
-  X_0 <- get_X(d_0)
-
-  # B. Time Slopes
-  X_slopes <- list()
-  time_vars <- if (!is.null(t_covs)) names(t_covs) else character(0)
-
-  for (tv in time_vars) {
-    d_tv <- d_0
-    d_tv[[tv]] <- 1
-    X_tv <- get_X(d_tv)
-
-    if (!is.null(X_tv) && !is.null(X_0)) {
-      X_diff <- X_tv - X_0
-      X_slopes[[tv]] <- X_diff
-    }
-  }
-
-  # C. Prev Main Effects
-  X_prev <- list()
-  for (k in 1:n_states) {
-    d_k <- d_0
-    d_k[[pvarname]] <- factor(ylevels[k], levels = ylevels)
-    X_k <- get_X(d_k)
-
-    if (!is.null(X_k) && !is.null(X_0)) {
-      X_prev[[k]] <- X_k - X_0
-    }
-  }
-
-  # D. Interactions (Prev x Time)
-  X_interactions <- list()
-
-  for (k in 1:n_states) {
-    X_interactions[[k]] <- list()
-
-    d_k_base <- d_0
-    d_k_base[[pvarname]] <- factor(ylevels[k], levels = ylevels)
-    X_k <- X_prev[[k]]
-
-    for (tv in time_vars) {
-      d_tv_k <- d_k_base
-      d_tv_k[[tv]] <- 1
-      X_tv_k <- get_X(d_tv_k)
-      X_slope <- X_slopes[[tv]]
-
-      if (
-        !is.null(X_tv_k) && !is.null(X_0) && !is.null(X_slope) && !is.null(X_k)
-      ) {
-        X_int <- (X_tv_k - X_0) - X_slope - X_k
-        if (max(abs(X_int)) > 1e-10) {
-          X_interactions[[k]][[tv]] <- X_int
-        } else {
-          X_interactions[[k]][[tv]] <- NULL
-        }
+  set_time <- function(d, time_idx) {
+    d[[tvarname]] <- times[time_idx]
+    if (!is.null(t_covs)) {
+      for (nm in names(t_covs)) {
+        d[[nm]] <- t_covs[time_idx, nm]
       }
     }
+    d
   }
 
-  # Baseline Y indices (for T=1 setup)
-  y_base_fac <- factor(data[[pvarname]], levels = ylevels)
-  y_base_idx <- as.integer(y_base_fac)
+  # A. Baseline matrix for T=1 uses each patient's observed previous state.
+  d_init <- set_time(data, 1)
+  d_init[[pvarname]] <- factor(d_init[[pvarname]], levels = ylevels)
+  X_init <- get_X(d_init)
+  if (is.null(X_init)) {
+    stop("Could not construct a design matrix for the fitted model.")
+  }
+  col_names <- colnames(X_init)
+
+  align_X <- function(X) {
+    missing_cols <- setdiff(col_names, colnames(X))
+    if (length(missing_cols) > 0) {
+      stop(
+        "Design matrix columns missing during fast path build: ",
+        paste(missing_cols, collapse = ", ")
+      )
+    }
+    X[, col_names, drop = FALSE]
+  }
+
+  # B. Transition matrices: one matrix for each time and previous-state value.
+  X_transition <- vector("list", length(times))
+  for (time_idx in seq_along(times)) {
+    X_transition[[time_idx]] <- vector("list", n_states)
+    d_time <- set_time(data, time_idx)
+
+    for (k in seq_len(n_states)) {
+      d_k <- d_time
+      d_k[[pvarname]] <- factor(ylevels[k], levels = ylevels)
+      X_transition[[time_idx]][[k]] <- align_X(get_X(d_k))
+    }
+  }
 
   list(
-    X_0 = X_0,
-    X_slopes = X_slopes,
-    X_prev = X_prev,
-    X_interactions = X_interactions,
-    y_base_idx = y_base_idx,
-    t_covs = t_covs,
+    X_init = align_X(X_init),
+    X_transition = X_transition,
     n_pat = n_pat,
     n_states = n_states,
     M = M,
     ylevels = ylevels,
-    col_names = common_cols
+    col_names = col_names
   )
 }
 
@@ -2797,12 +2790,8 @@ markov_msm_build <- function(
 #' @keywords internal
 markov_msm_run <- function(components, Gamma, times, absorb = NULL) {
   # Unpack
-  X_0 <- components$X_0
-  X_slopes <- components$X_slopes
-  X_prev <- components$X_prev
-  X_int <- components$X_interactions
-  y_base_idx <- components$y_base_idx
-  t_covs <- components$t_covs
+  X_init <- components$X_init
+  X_transition <- components$X_transition
   n_pat <- components$n_pat
   n_states <- components$n_states
   M <- components$M
@@ -2816,27 +2805,7 @@ markov_msm_run <- function(components, Gamma, times, absorb = NULL) {
 
   # Helper: X * Gamma_t -> LP [N x M]
   calc_lp <- function(X) {
-    if (is.null(X)) {
-      return(matrix(0, n_pat, M))
-    }
     X %*% Gamma_t
-  }
-
-  # Pre-calculate LPs
-  LP_0 <- calc_lp(X_0)
-  LP_slopes <- lapply(X_slopes, calc_lp)
-  LP_prev <- lapply(X_prev, calc_lp)
-
-  LP_int <- vector("list", n_states)
-  for (k in 1:n_states) {
-    LP_int[[k]] <- list()
-    if (!is.null(t_covs)) {
-      for (tv in names(t_covs)) {
-        if (!is.null(X_int[[k]][[tv]])) {
-          LP_int[[k]][[tv]] <- calc_lp(X_int[[k]][[tv]])
-        }
-      }
-    }
   }
 
   # Simulation
@@ -2849,71 +2818,31 @@ markov_msm_run <- function(components, Gamma, times, absorb = NULL) {
     integer(0)
   }
   non_absorb_idx <- setdiff(1:n_states, absorb_idx)
-  time_vars <- if (!is.null(t_covs)) names(t_covs) else character(0)
 
   # T=1
-  LP_t1 <- LP_0
-  for (tv in time_vars) {
-    val <- t_covs[1, tv]
-    if (val != 0) LP_t1 <- LP_t1 + (val * LP_slopes[[tv]])
-  }
-
-  Effect_prev_base <- matrix(0, nrow = n_pat, ncol = M)
-  for (k in 1:n_states) {
-    mask <- (y_base_idx == k)
-    if (any(mask)) Effect_prev_base[mask, ] <- LP_prev[[k]][mask, ]
-  }
-  LP_t1 <- LP_t1 + Effect_prev_base
-
-  for (tv in time_vars) {
-    val <- t_covs[1, tv]
-    if (val != 0) {
-      for (k in 1:n_states) {
-        lp_i <- LP_int[[k]][[tv]]
-        if (!is.null(lp_i)) {
-          mask <- (y_base_idx == k)
-          if (any(mask)) LP_t1[mask, ] <- LP_t1[mask, ] + (val * lp_i[mask, ])
-        }
-      }
-    }
-  }
-
-  P_out[, 1, ] <- lp_to_probs(LP_t1, M)
+  P_out[, 1, ] <- lp_to_probs(calc_lp(X_init), M)
 
   # Loop 2..T
-  for (t_idx in 2:n_times) {
-    LP_base_t <- LP_0
-    for (tv in time_vars) {
-      val <- t_covs[t_idx, tv]
-      if (val != 0) LP_base_t <- LP_base_t + (val * LP_slopes[[tv]])
-    }
+  if (n_times >= 2) {
+    for (t_idx in 2:n_times) {
+      p_current <- matrix(0, nrow = n_pat, ncol = n_states)
 
-    p_current <- matrix(0, nrow = n_pat, ncol = n_states)
-
-    for (k in non_absorb_idx) {
-      p_prev_k <- P_out[, t_idx - 1, k]
-      if (max(p_prev_k) < 1e-12) {
-        next
-      }
-
-      LP_k <- LP_base_t + LP_prev[[k]]
-
-      for (tv in time_vars) {
-        val <- t_covs[t_idx, tv]
-        if (val != 0) {
-          lp_i <- LP_int[[k]][[tv]]
-          if (!is.null(lp_i)) LP_k <- LP_k + (val * lp_i)
+      for (k in non_absorb_idx) {
+        p_prev_k <- P_out[, t_idx - 1, k]
+        if (max(p_prev_k) < 1e-12) {
+          next
         }
+
+        LP_k <- calc_lp(X_transition[[t_idx]][[k]])
+        trans_k <- lp_to_probs(LP_k, M)
+        p_current <- p_current + (trans_k * p_prev_k)
       }
 
-      trans_k <- lp_to_probs(LP_k, M)
-      p_current <- p_current + (trans_k * p_prev_k)
+      for (a in absorb_idx) {
+        p_current[, a] <- p_current[, a] + P_out[, t_idx - 1, a]
+      }
+      P_out[, t_idx, ] <- p_current
     }
-
-    for (a in absorb_idx) {
-      p_current[, a] <- p_current[, a] + P_out[, t_idx - 1, a]
-    }
-    P_out[, t_idx, ] <- p_current
   }
 
   P_out

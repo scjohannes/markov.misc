@@ -44,14 +44,16 @@ used in the model formula. Defaults to \code{"yprev"}.}
 \item{gap}{(Optional) A character string specifying the name of the variable representing
 the time gap (delta time) between observations, if used in the model. Defaults to \code{NULL}.}
 
-\item{t_covs}{(Optional) A data frame used for non-linear time handling (e.g., splines
-or basis functions).
+\item{t_covs}{(Optional) A data frame used for explicit time-basis columns
+or other time-varying covariates.
 \itemize{
 \item \strong{Structure:} The number of rows in \code{t_covs} must exactly match the length of \code{times}.
 \item \strong{Columns:} Column names must match the specific basis variables used in the model formula (e.g., \code{t1}, \code{t2}).
 \item \strong{Usage:} At step \code{i}, the values from the \code{i}-th row of \code{t_covs} are injected into the prediction data.
 }
-This allows for \code{vglm} models where basis functions are supplied as separate columns rather than calculated on the fly.}
+Inline model terms such as \code{rms::rcs(time, 4)} do not require
+\code{t_covs}; prediction reuses the fitted model's stored transform
+metadata.}
 }
 \value{
 An array of state probabilities.

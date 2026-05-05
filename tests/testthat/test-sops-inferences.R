@@ -58,6 +58,16 @@ describe("avg_sops() and inferences() pipeline", {
     )
   }
 
+  fit_inline_pipeline_model <- function(data) {
+    suppressWarnings(
+      VGAM::vglm(
+        ordered(y) ~ rms::rcs(time, 4) * tx + yprev + age,
+        family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+        data = data
+      )
+    )
+  }
+
   pipeline_signature <- function(result) {
     keep <- result$time %in% c(1, 3, 5, 8) &
       result$state %in% c(1, 3, 6)
@@ -294,7 +304,9 @@ describe("avg_sops() and inferences() pipeline", {
       model = model,
       data = baseline,
       t_covs = case$t_covs,
+      times = 1:8,
       ylevels = case$ylevels,
+      tvarname = "time_lin",
       pvarname = "yprev"
     )
     gamma <- markov.misc:::compute_Gamma(
@@ -321,6 +333,44 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(dim(fast), dim(slow))
     expect_equal(unname(fast), unname(slow), tolerance = 1e-10)
     expect_equal(rowSums(fast[, 8, , drop = FALSE][, 1, ]), rep(1, nrow(baseline)), tolerance = 1e-10)
+  })
+
+  test_that("fast Markov components support inline rcs() time terms", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+
+    case <- build_brownian_pipeline_case()
+    model <- fit_inline_pipeline_model(case$data)
+    baseline <- case$baseline[1:12, , drop = FALSE]
+
+    components <- markov.misc:::markov_msm_build(
+      model = model,
+      data = baseline,
+      times = 1:8,
+      ylevels = case$ylevels,
+      pvarname = "yprev"
+    )
+    gamma <- markov.misc:::compute_Gamma(
+      stats::coef(model),
+      VGAM::constraints(model)
+    )
+    fast <- markov.misc:::markov_msm_run(
+      components = components,
+      Gamma = gamma,
+      times = 1:8,
+      absorb = case$absorb
+    )
+    slow <- markov.misc::soprob_markov(
+      object = model,
+      data = baseline,
+      times = 1:8,
+      ylevels = case$ylevels,
+      absorb = case$absorb,
+      pvarname = "yprev"
+    )
+
+    expect_equal(dim(fast), dim(slow))
+    expect_equal(unname(fast), unname(slow), tolerance = 1e-10)
   })
 
   test_that("seeded Brownian avg_sops() and fast simulation inference remain stable", {
@@ -473,5 +523,124 @@ describe("avg_sops() and inferences() pipeline", {
       style = "json2",
       cran = TRUE
     )
+  })
+
+  test_that("inline rcs() and explicit basis agree for MVN simulation inference", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+    skip_if_not_installed("mvtnorm")
+
+    case <- build_brownian_pipeline_case()
+    explicit_model <- fit_pipeline_model(case$data)
+    inline_model <- fit_inline_pipeline_model(case$data)
+
+    explicit_avg <- markov.misc::avg_sops(
+      model = explicit_model,
+      newdata = case$baseline,
+      variables = "tx",
+      times = 1:8,
+      ylevels = case$ylevels,
+      absorb = case$absorb,
+      tvarname = "time_lin",
+      pvarname = "yprev",
+      t_covs = case$t_covs
+    )
+    inline_avg <- markov.misc::avg_sops(
+      model = inline_model,
+      newdata = case$baseline,
+      variables = "tx",
+      times = 1:8,
+      ylevels = case$ylevels,
+      absorb = case$absorb,
+      pvarname = "yprev"
+    )
+
+    expect_equal(inline_avg$estimate, explicit_avg$estimate, tolerance = 1e-10)
+
+    withr::local_seed(4411)
+    explicit_inferred <- markov.misc::inferences(
+      explicit_avg,
+      method = "simulation",
+      engine = "mvn",
+      n_sim = 3,
+      return_draws = TRUE
+    )
+    withr::local_seed(4411)
+    inline_inferred <- markov.misc::inferences(
+      inline_avg,
+      method = "simulation",
+      engine = "mvn",
+      n_sim = 3,
+      return_draws = TRUE
+    )
+
+    explicit_draws <- markov.misc::get_draws(explicit_inferred)
+    inline_draws <- markov.misc::get_draws(inline_inferred)
+
+    expect_equal(inline_inferred$estimate, explicit_inferred$estimate, tolerance = 1e-10)
+    expect_equal(inline_inferred$conf.low, explicit_inferred$conf.low, tolerance = 1e-10)
+    expect_equal(inline_inferred$conf.high, explicit_inferred$conf.high, tolerance = 1e-10)
+    expect_equal(inline_draws$draw, explicit_draws$draw, tolerance = 1e-10)
+  })
+
+  test_that("inline rcs() and explicit basis agree for score-bootstrap simulation inference", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+
+    case <- build_brownian_pipeline_case()
+    explicit_model <- fit_pipeline_model(case$data)
+    inline_model <- fit_inline_pipeline_model(case$data)
+    explicit_robust <- markov.misc::robcov_vglm(explicit_model, cluster = case$data$id)
+    inline_robust <- markov.misc::robcov_vglm(inline_model, cluster = case$data$id)
+
+    explicit_avg <- markov.misc::avg_sops(
+      model = explicit_robust,
+      newdata = case$baseline,
+      variables = "tx",
+      times = 1:8,
+      ylevels = case$ylevels,
+      absorb = case$absorb,
+      tvarname = "time_lin",
+      pvarname = "yprev",
+      t_covs = case$t_covs,
+      id_var = "id"
+    )
+    inline_avg <- markov.misc::avg_sops(
+      model = inline_robust,
+      newdata = case$baseline,
+      variables = "tx",
+      times = 1:8,
+      ylevels = case$ylevels,
+      absorb = case$absorb,
+      pvarname = "yprev",
+      id_var = "id"
+    )
+
+    expect_equal(inline_avg$estimate, explicit_avg$estimate, tolerance = 1e-10)
+
+    withr::local_seed(4412)
+    explicit_inferred <- markov.misc::inferences(
+      explicit_avg,
+      method = "simulation",
+      engine = "score_bootstrap",
+      n_sim = 3,
+      return_draws = TRUE
+    )
+    withr::local_seed(4412)
+    inline_inferred <- markov.misc::inferences(
+      inline_avg,
+      method = "simulation",
+      engine = "score_bootstrap",
+      n_sim = 3,
+      return_draws = TRUE
+    )
+
+    explicit_draws <- markov.misc::get_draws(explicit_inferred)
+    inline_draws <- markov.misc::get_draws(inline_inferred)
+
+    expect_equal(inline_inferred$estimate, explicit_inferred$estimate, tolerance = 1e-10)
+    expect_equal(inline_inferred$conf.low, explicit_inferred$conf.low, tolerance = 1e-10)
+    expect_equal(inline_inferred$conf.high, explicit_inferred$conf.high, tolerance = 1e-10)
+    expect_equal(inline_draws$draw, explicit_draws$draw, tolerance = 1e-10)
   })
 })

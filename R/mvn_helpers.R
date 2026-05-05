@@ -291,12 +291,43 @@ get_vcov_robust <- function(
       )
     }
 
+    model_nobs <- tryCatch(
+      if (inherits(model, c("vglm", "vgam"))) {
+        stats::nobs(model, type = "lm")
+      } else {
+        stats::nobs(model)
+      },
+      error = function(e) NULL
+    )
+
+    align_cluster <- function(cluster_values, source_data) {
+      if (is.null(model_nobs) || length(cluster_values) == model_nobs) {
+        return(cluster_values)
+      }
+
+      model_vars <- tryCatch(
+        all.vars(stats::formula(model)),
+        error = function(e) character(0)
+      )
+      model_vars <- intersect(model_vars, names(source_data))
+      if (length(model_vars) == 0) {
+        return(cluster_values)
+      }
+
+      keep <- stats::complete.cases(source_data[, model_vars, drop = FALSE])
+      if (sum(keep) == model_nobs) {
+        return(cluster_values[keep])
+      }
+
+      cluster_values
+    }
+
     # Check if we found the cluster variable in model's data
     if (!is.null(model_data) && cluster_var %in% names(model_data)) {
-      cluster <- model_data[[cluster_var]]
+      cluster <- align_cluster(model_data[[cluster_var]], model_data)
     } else if (!is.null(data) && cluster_var %in% names(data)) {
       # Fall back to user-provided data
-      cluster <- data[[cluster_var]]
+      cluster <- align_cluster(data[[cluster_var]], data)
     } else {
       stop(
         "Cluster variable '",

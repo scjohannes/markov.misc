@@ -289,20 +289,25 @@ test_that("markov_msm_build() covers default columns and missing design columns"
           ylevels = 1:2,
           pvarname = "yprev"
         ),
-        "subscript out of bounds"
+        "Could not construct a design matrix"
       )
     }
   )
 })
 
-test_that("markov_msm_run() covers null design matrix and no absorbing states", {
+test_that("markov_msm_run() covers no absorbing states", {
   components <- list(
-    X_0 = NULL,
-    X_slopes = list(),
-    X_prev = list(NULL, NULL),
-    X_interactions = list(list(), list()),
-    y_base_idx = c(1L, 2L),
-    t_covs = NULL,
+    X_init = matrix(0, nrow = 2, ncol = 1, dimnames = list(NULL, "x")),
+    X_transition = list(
+      list(
+        matrix(0, nrow = 2, ncol = 1, dimnames = list(NULL, "x")),
+        matrix(0, nrow = 2, ncol = 1, dimnames = list(NULL, "x"))
+      ),
+      list(
+        matrix(0, nrow = 2, ncol = 1, dimnames = list(NULL, "x")),
+        matrix(0, nrow = 2, ncol = 1, dimnames = list(NULL, "x"))
+      )
+    ),
     n_pat = 2L,
     n_states = 2L,
     M = 1L,

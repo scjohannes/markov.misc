@@ -24,10 +24,8 @@ knitr::opts_chunk$set(
 
 ```{r setup, message=FALSE, warning=FALSE}
 library(markov.misc)
-library(arrow)
 library(dplyr)
 library(tidyr)
-library(furrr)
 library(rms)
 library(VGAM)
 library(ggplot2)
@@ -38,14 +36,6 @@ N_PATIENTS <- 800
 R <- 50 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
 SEED <- 2375679
 FU <- 30
-M <- 5 # Number of tresholds
-
-DATA_PATH <- file.path(tempdir(), "sim_data")
-OUTPUT_PATH <- file.path(tempdir(), "sim_output")
-
-# Create directories
-if (!dir.exists(DATA_PATH)) dir.create(DATA_PATH)
-if (!dir.exists(OUTPUT_PATH)) dir.create(OUTPUT_PATH)
 ```
 
 ## Step 1: Simulate Trial Data
@@ -83,139 +73,59 @@ plot_sops(markov_data, geom = "line", linetype_var = "tx", facet_var = NULL) +
 
 ```{r}
 # Calculate True Effect: Difference in time in state 1 (Home)
-calc_time_in_state_diff(markov_data, target_state = 1)
+calc_time_in_state_diff(markov_data)
 ```
 
-## Step 2: Data Preparation & Spline Construction
+## Step 2: Prepare Markov Data
 
-To use VGAM for partial proportional odds (PPO) models, we need explicit control over our time variables. We construct restricted cubic splines manually so we can apply specific constraints to the linear vs. non-linear components later.
+`prepare_markov_data()` creates the transition-level data used by the ordinal
+Markov models. The models below use `rms::rcs(time, 4)` directly in the formula.
+The fitted VGAM model stores the spline knot locations, and the SOP routines
+reuse those locations when they build predictions over follow-up time.
 
 ```{r}
-# 1. Prepare base format
-data <- prepare_markov_data(markov_data)
-
-# 2. Generate manual spline basis
-# We use rcs() to get the basis, then extract columns
-time_spl_m <- rcs(data$time, 4)
-knots <- attr(time_spl_m, "parms")
-data$time_lin <- as.vector(time_spl_m[, 1])
-data$time_nlin_1 <- as.vector(time_spl_m[, 2])
-data$time_nlin_2 <- as.vector(time_spl_m[, 3])
-
-# 3. Create Time Covariate Look-up (t_covs)
-# This is crucial for sopprob_markov to know how non-linear 'time' evolves
-t_covs <-  data |> 
-  select(time_lin, time_nlin_1, time_nlin_2) |> 
-  distinct() |> 
-  arrange(time_lin) |> 
-  data.frame()
+data <- prepare_markov_data(markov_data, absorbing_state = 6)
+baseline_data <- data |> filter(time == 1)
 ```
 
 ## Step 3: Model Specification
 
-We will fit three models with increasing degrees of flexibility to showcase how model choice impacts the estimated state Occupancy probabilities.
+We fit three proportional-odds models with increasing flexibility in how
+transition probabilities can change over follow-up time. Each model keeps the
+time spline inline in the formula, so the same model object can be used for
+point estimates, nonparametric bootstrap inference, and simulation inference.
 
-1.  **Model A (Simple PO):** Proportional Odds for all terms.
+1.  **Model A (Simple PO):** a common spline-shaped time effect.
 
-2.  **Model B (Interaction):** PO, but allows treatment effect to vary over time (`tx * time`).
+2.  **Model B (Treatment-time interaction):** allows the treatment effect to vary over time.
 
-3.  **Model C (Flexible PPO):** Relaxed PO assumption for linear time, plus treatment interaction + time-varying effect of the previous state.
-
-### Define Constraint Matrices
-
-For Model C, we need a constraint matrix that allows the linear effect of time (time_lin) to vary across the M transition cutpoints (non-proportional), while keeping other variables proportional (parallel).
-
-```{r}
-# cons_flexible <- list(
-#   # Intercept need identity matrix
-#   "(Intercept)"     = diag(M),
-#   # linear time can have non-PO effect
-#   "time_lin" = cbind(
-#     time_lin_1 = 1,
-#     time_lin_5 = 0:(M-1)
-#   ),
-#   # PO effect for the rest
-#   "yprev"           = cbind(PO_effect = 1),
-#   "tx"              = cbind(PO_effect = 1),
-#   "time_nlin_1"     = cbind(PO_effect = 1),
-#   "time_nlin_2"     = cbind(PO_effect = 1),
-#   "time_lin:tx"     = cbind(PO_effect = 1),
-#   "time_nlin_1:tx"  = cbind(PO_effect = 1),
-#   "time_nlin_2:tx"  = cbind(PO_effect = 1),
-#   "time_lin:yprev"  = cbind(PO_effect = 1)
-# )
-
-# 1. Create the specific constraint matrix for tx
-# Column 1: Base PO effect (shared across all thresholds)
-# Column 2: Deviation specific to the 5th threshold
-# Note: This assumes M >= 5
-cm_tx <- matrix(0, nrow = M, ncol = 2)
-cm_tx[, 1] <- 1       
-cm_tx[5, 2] <- 1
-dimnames(cm_tx) <- list(NULL, c("PO_effect", "Dev_thresh5"))
-
-# 2. Define the constraint list
-cons_flexible <- list(
-  "(Intercept)"     = diag(M),
-  
-  # linear time: Intercept + linear trend across thresholds
-  "time_lin" = cbind(
-    time_lin_1 = 1,
-    time_lin_5 = 0:(M-1)
-  ),
-  
-  # Strict PO effect for the rest
-  "yprev"           = cbind(PO_effect = 1),
-  "age"             = cbind(PO_effect = 1),
-  "time_nlin_1"     = cbind(PO_effect = 1),
-  "time_nlin_2"     = cbind(PO_effect = 1),
-  "time_lin:tx"     = cbind(PO_effect = 1),
-  # "time_nlin_1:tx"  = cbind(PO_effect = 1),
-  # "time_nlin_2:tx"  = cbind(PO_effect = 1),
-  "time_lin:yprev"  = cbind(PO_effect = 1),
-    # tx: PO effect + Deviation at 5th threshold
-  "tx"              = cm_tx
-)
-```
+3.  **Model C (State-time interaction):** also allows the previous state's effect to vary over time.
 
 ### Fit the models
 
 ```{r}
-# Model A: Simple Proportional Odds
-# parallel = TRUE enforces PO for all terms
 m_simple <- vglm(
-  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) + tx + age + yprev,
+  ordered(y) ~ rcs(time, 4) + tx + age + yprev,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
 
-# Model B: Treatment-Time Interaction
-# parallel = TRUE, but formula allows tx effect to change over time
 m_inter <- vglm(
-  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + age + yprev,
+  ordered(y) ~ rcs(time, 4) * tx + age + yprev,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
 
-# Model C: Flexible (Partial PO + Interactions)
-# Uses constraints to relax PO for time_lin
-# For the formula, we need to use manually created spline terms
-m_flex <- vglm(
-  ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) + tx + age + yprev + yprev:time_lin + tx:time_lin,
-  family = cumulative(reverse = TRUE, parallel = FALSE ~ time_lin + tx), 
-  data = data, 
-  constraints = cons_flexible
+m_state_time <- vglm(
+  ordered(y) ~ rcs(time, 4) * tx + age + yprev + rcs(time, 4):yprev,
+  family = cumulative(reverse = TRUE, parallel = TRUE), 
+  data = data
 )
-# Ensure call includes constraints for downstream methods executed in parallel
-# I think not needed if you don't parallelize
-m_flex@call$constraints <- cons_flexible
 ```
 
 ## Step 4: Bootstrap Marginalized SOPs
 
 We compute the standardized (marginalized) State Occupancy Probabilities using bootstrapping. We standardize over the observed distribution of baseline covariates (like `yprev`) to get the population-average effect of treatment.
-
-*Note: We pass `t_covs` to ensure transformations of the time variable are also updated.*
 
 ```{r}
 run_boot <- function(model, name) {
@@ -227,8 +137,7 @@ run_boot <- function(model, name) {
     times = 1:FU,
     ylevels = 1:6,
     absorb = "6",
-    id_var = "id",
-    t_covs = t_covs
+    id_var = "id"
   ) |> 
      inferences(
       method = "bootstrap",
@@ -242,7 +151,7 @@ run_boot <- function(model, name) {
 set.seed(SEED)
 bs_simple <- run_boot(m_simple, "Model A")
 bs_inter  <- run_boot(m_inter,  "Model B")
-bs_flex   <- run_boot(m_flex,   "Model C")
+bs_state_time <- run_boot(m_state_time, "Model C")
 ```
 
 
@@ -257,13 +166,12 @@ run_sim <- function(model, name, engine = "mvn") {
   cat(paste0("Simulation (", engine, ") - ", name, "...\n"))
   avg_sops(
     robcov_vglm(model, cluster = data$id), #model needs to have cluster robust SEs
-    newdata = data |> filter(time == 1), 
+    newdata = baseline_data, 
     variables = "tx",  # Compare treatment vs control
     times = 1:FU,
     ylevels = 1:6,
     absorb = "6",
-    id_var = "id",
-    t_covs = t_covs
+    id_var = "id"
   ) |> 
      inferences(
       method = "simulation",
@@ -287,8 +195,8 @@ run_sim_set <- function(engine = "mvn") {
       "Model B",
       engine = engine
     ),
-    flex = run_sim(
-      m_flex,
+    state_time = run_sim(
+      m_state_time,
       "Model C",
       engine = engine
     )
@@ -307,11 +215,11 @@ res_score <- run_sim_set(engine = "score_bootstrap")
 
 bs_simple_mvn <- res_mvn$simple
 bs_inter_mvn  <- res_mvn$inter
-bs_flex_mvn   <- res_mvn$flex
+bs_state_time_mvn <- res_mvn$state_time
 
 bs_simple_score <- res_score$simple
 bs_inter_score  <- res_score$inter
-bs_flex_score   <- res_score$flex
+bs_state_time_score <- res_score$state_time
 ```
 
 ```{r}
@@ -335,41 +243,23 @@ bind_rows(
 We plot the SOPs with 95% confidence bands for all three models.
 
 ```{r}
-p1 <- ggplot(bs_simple, aes(x = time)) +
-  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
-  geom_ribbon(aes(ymin = conf.low, 
-                  ymax = conf.high, 
-                  fill = factor(state),            
-                  group = interaction(state, tx)), 
-              alpha = 0.2,                         
-              color = NA) +
-  scale_fill_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1)) +
-  labs(title = "Model A: PO")
+plot_sop_estimates <- function(x, title) {
+  ggplot(x, aes(x = time)) +
+    geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
+    geom_ribbon(aes(
+      ymin = conf.low,
+      ymax = conf.high,
+      fill = factor(state),
+      group = interaction(state, tx)
+    ), alpha = 0.2, color = NA) +
+    scale_fill_brewer(palette = "Dark2") +
+    coord_cartesian(ylim = c(0, 1)) +
+    labs(title = title)
+}
 
-p2 <- ggplot(bs_inter, aes(x = time)) +
-  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
-  geom_ribbon(aes(ymin = conf.low, 
-                  ymax = conf.high, 
-                  fill = factor(state),            
-                  group = interaction(state, tx)), 
-              alpha = 0.2,                         
-              color = NA) +
-  scale_fill_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1)) +
-  labs(title = "Model B: PO + Interaction")
-
-p3 <- ggplot(bs_flex, aes(x = time)) +
-  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
-  geom_ribbon(aes(ymin = conf.low, 
-                  ymax = conf.high, 
-                  fill = factor(state),            
-                  group = interaction(state, tx)), 
-              alpha = 0.2,                         
-              color = NA) +
-  scale_fill_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1)) +
-  labs(title = "Model C: Partial PO + Interactions")
+p1 <- plot_sop_estimates(bs_simple, "Model A: PO")
+p2 <- plot_sop_estimates(bs_inter, "Model B: PO + Interaction")
+p3 <- plot_sop_estimates(bs_state_time, "Model C: PO + State-Time Interaction")
 
 # Combine using patchwork
 (p1 | p2 | p3) +
@@ -377,44 +267,12 @@ p3 <- ggplot(bs_flex, aes(x = time)) +
   patchwork::plot_annotation(title = "Nonparametric Bootstrap")
 ```
 
-Compare MVN vs Score Bootstrap
+### 2. MVN and Score Bootstrap Simulation
 
 ```{r}
-p1_mvn <- ggplot(bs_simple_mvn, aes(x = time)) +
-  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
-  geom_ribbon(aes(ymin = conf.low, 
-                  ymax = conf.high, 
-                  fill = factor(state),            
-                  group = interaction(state, tx)), 
-              alpha = 0.2,                         
-              color = NA) +
-  scale_fill_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1)) +
-  labs(title = "Model A: PO")
-
-p2_mvn <- ggplot(bs_inter_mvn, aes(x = time)) +
-  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
-  geom_ribbon(aes(ymin = conf.low, 
-                  ymax = conf.high, 
-                  fill = factor(state),            
-                  group = interaction(state, tx)), 
-              alpha = 0.2,                         
-              color = NA) +
-  scale_fill_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1)) +
-  labs(title = "Model B: PO + Interaction")
-
-p3_mvn <- ggplot(bs_flex_mvn, aes(x = time)) +
-  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
-  geom_ribbon(aes(ymin = conf.low, 
-                  ymax = conf.high, 
-                  fill = factor(state),            
-                  group = interaction(state, tx)), 
-              alpha = 0.2,                         
-              color = NA) +
-  scale_fill_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1)) +
-  labs(title = "Model C: Partial PO + Interactions")
+p1_mvn <- plot_sop_estimates(bs_simple_mvn, "Model A: PO")
+p2_mvn <- plot_sop_estimates(bs_inter_mvn, "Model B: PO + Interaction")
+p3_mvn <- plot_sop_estimates(bs_state_time_mvn, "Model C: PO + State-Time Interaction")
 
 # Combine using patchwork
 (p1_mvn | p2_mvn | p3_mvn) +
@@ -423,50 +281,19 @@ p3_mvn <- ggplot(bs_flex_mvn, aes(x = time)) +
 ```
 
 ```{r}
-p1_score <- ggplot(bs_simple_score, aes(x = time)) +
-  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
-  geom_ribbon(aes(ymin = conf.low,
-                  ymax = conf.high,
-                  fill = factor(state),
-                  group = interaction(state, tx)),
-              alpha = 0.2,
-              color = NA) +
-  scale_fill_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1)) +
-  labs(title = "Model A: PO")
-
-p2_score <- ggplot(bs_inter_score, aes(x = time)) +
-  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
-  geom_ribbon(aes(ymin = conf.low,
-                  ymax = conf.high,
-                  fill = factor(state),
-                  group = interaction(state, tx)),
-              alpha = 0.2,
-              color = NA) +
-  scale_fill_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1)) +
-  labs(title = "Model B: PO + Interaction")
-
-p3_score <- ggplot(bs_flex_score, aes(x = time)) +
-  geom_line(aes(y = estimate, linetype = factor(tx), group = interaction(state, tx))) +
-  geom_ribbon(aes(ymin = conf.low,
-                  ymax = conf.high,
-                  fill = factor(state),
-                  group = interaction(state, tx)),
-              alpha = 0.2,
-              color = NA) +
-  scale_fill_brewer(palette = "Dark2") +
-  coord_cartesian(ylim = c(0, 1)) +
-  labs(title = "Model C: Partial PO + Interactions")
+p1_score <- plot_sop_estimates(bs_simple_score, "Model A: PO")
+p2_score <- plot_sop_estimates(bs_inter_score, "Model B: PO + Interaction")
+p3_score <- plot_sop_estimates(bs_state_time_score, "Model C: PO + State-Time Interaction")
 
 (p1_score | p2_score | p3_score) +
   plot_layout(guides = "collect") +
   patchwork::plot_annotation(title = "Score Bootstrap Simulation")
 ```
 
-### 2. Difference in Time Spent in State 1 (Home)
+### 3. Difference in Time Spent in State 1 (Home)
 
-We calculate the restricted mean time spent in State 1 (Home) up to 60 days and visualize the bootstrap distribution of the difference (Treatment - Control).
+We calculate the restricted mean time spent in State 1 (Home) over follow-up
+and visualize the distribution of the difference (Treatment - Control).
 
 ```{r fig.height=6, fig.width=4, out.width="70%"}
 # Helper to extract difference
@@ -484,7 +311,7 @@ get_diff_dist <- function(bs_obj, label) {
 diff_res <- bind_rows(
   get_diff_dist(bs_simple, "Model A (Simple)"),
   get_diff_dist(bs_inter,  "Model B (Interact)"),
-  get_diff_dist(bs_flex,   "Model C (Flexible)")
+  get_diff_dist(bs_state_time, "Model C (State-time)")
 )
 
 # Plot
@@ -511,13 +338,13 @@ plot_diff_boot
 diff_res_mvn <- bind_rows(
   get_diff_dist(bs_simple_mvn, "Model A (Simple)"),
   get_diff_dist(bs_inter_mvn,  "Model B (Interact)"),
-  get_diff_dist(bs_flex_mvn,   "Model C (Flexible)")
+  get_diff_dist(bs_state_time_mvn, "Model C (State-time)")
 )
 
 diff_res_score <- bind_rows(
   get_diff_dist(bs_simple_score, "Model A (Simple)"),
   get_diff_dist(bs_inter_score,  "Model B (Interact)"),
-  get_diff_dist(bs_flex_score,   "Model C (Flexible)")
+  get_diff_dist(bs_state_time_score, "Model C (State-time)")
 )
 
 # Plot
@@ -577,8 +404,3 @@ bind_rows(
   knitr::kable(digits = 2)
 ```
 
-```{r}
-# Clean up temporary files
-unlink(DATA_PATH, recursive = TRUE)
-unlink(OUTPUT_PATH, recursive = TRUE)
-```

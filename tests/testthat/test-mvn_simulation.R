@@ -199,6 +199,29 @@ describe("MVN Simulation-Based Inference for SOPs", {
       expect_equal(ncol(V_robust), length(coef(m_vglm)))
     })
 
+    it("aligns formula cluster data to rows used by vglm", {
+      skip_if_not_installed("VGAM")
+
+      data <- make_test_data(n_patients = 30, seed = 444, follow_up_time = 15)
+      data_with_extra <- rbind(
+        data,
+        data[seq_len(5), , drop = FALSE]
+      )
+      data_with_extra$y[(nrow(data) + 1):nrow(data_with_extra)] <- NA
+
+      m_vglm <- make_test_model(data_with_extra)
+
+      V_robust <- get_vcov_robust(
+        m_vglm,
+        cluster = ~id,
+        data = data_with_extra
+      )
+
+      expect_true(is.matrix(V_robust))
+      expect_equal(nrow(V_robust), length(coef(m_vglm)))
+      expect_equal(ncol(V_robust), length(coef(m_vglm)))
+    })
+
     it("extracts vcov from robcov_vglm object", {
       skip_if_not_installed("VGAM")
 
