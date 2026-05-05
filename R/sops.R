@@ -75,6 +75,39 @@ validate_markov_model <- function(object) {
   invisible(NULL)
 }
 
+predict_vglm_response_markov <- function(object, newdata) {
+  if (!isTRUE(attr(object, "markov_split_assign"))) {
+    return(VGAM::predict(object, newdata, type = "response"))
+  }
+
+  tt <- stats::delete.response(stats::terms(object))
+  X <- stats::model.matrix(
+    tt,
+    newdata,
+    contrasts.arg = if (length(object@contrasts)) object@contrasts else NULL,
+    xlev = object@xlevels
+  )
+  attr(X, "assign") <- object@assign
+
+  lm2vlm <- getFromNamespace("lm2vlm.model.matrix", "VGAM")
+  X_vlm <- lm2vlm(
+    X,
+    Hlist = object@constraints,
+    M = object@misc$M,
+    xij = object@control$xij,
+    Xm2 = NULL
+  )
+
+  eta <- matrix(
+    X_vlm %*% VGAM::coefvlm(object),
+    nrow = nrow(X),
+    ncol = object@misc$M,
+    byrow = TRUE
+  )
+
+  object@family@linkinv(eta = eta, extra = object@extra)
+}
+
 #' Calculate State Occupation Probabilities for First-Order Markov Models
 #'
 #' Estimates state occupation probabilities over time by iterating a transition
@@ -192,7 +225,7 @@ soprob_markov <- function(
   prd <- switch(
     ftype,
     rms = function(obj, d) stats::predict(obj, d, type = "fitted.ind"),
-    vgam = function(obj, d) VGAM::predict(obj, d, type = "response"),
+    vgam = function(obj, d) predict_vglm_response_markov(obj, d),
     rmsb = function(obj, d) {
       stats::predict(obj, d, type = "fitted.ind", posterior.summary = "all")
     },
@@ -203,7 +236,7 @@ soprob_markov <- function(
           "Please re-run robcov_vglm() with the latest version of the package."
         )
       }
-      VGAM::predict(obj$vglm_fit, d, type = "response")
+      predict_vglm_response_markov(obj$vglm_fit, d)
     }
   )
 

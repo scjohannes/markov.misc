@@ -643,4 +643,71 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(inline_inferred$conf.high, explicit_inferred$conf.high, tolerance = 1e-10)
     expect_equal(inline_draws$draw, explicit_draws$draw, tolerance = 1e-10)
   })
+
+  test_that("inline rcs model can use column-level PPO constraints", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+
+    raw_data <- markov.misc::sim_trajectories_brownian_gap(
+      n_patients = 200,
+      follow_up_time = 12,
+      treatment_prob = 0.5,
+      absorbing_state = 6,
+      seed = 2375679,
+      mu_treatment_effect = 0
+    )
+    data <- markov.misc::prepare_markov_data(raw_data, absorbing_state = 6)
+    data <- add_patient_age(data)
+    baseline <- data[data$time == 1, , drop = FALSE]
+    form <- ordered(y) ~ rms::rcs(time, 4) + tx + age + yprev
+
+    fit_po <- suppressWarnings(
+      markov.misc::vglm_split_rcs(
+        form,
+        family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+        data = data
+      )
+    )
+
+    cons <- fit_po@constraints
+    linear_time_term <- grep("^rms::rcs\\(time, 4\\).*time$", names(cons), value = TRUE)[[1]]
+    n_thresholds <- nrow(cons[[linear_time_term]])
+    yprev_terms <- grep("^yprev", names(cons), value = TRUE)
+    cons[yprev_terms] <- NULL
+    cons[["yprev"]] <- cbind(PO_effect = rep(1, n_thresholds))
+    cons[[linear_time_term]] <- cbind(
+      PO_effect = rep(1, n_thresholds),
+      linear_deviation = seq_len(n_thresholds) - 1
+    )
+
+    fit_ppo <- suppressWarnings(
+      markov.misc::vglm_split_rcs(
+        form,
+        family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
+        data = data,
+        constraints = cons
+      )
+    )
+    fit_ppo@call$constraints <- cons
+
+    withr::local_seed(42)
+    out <- markov.misc::avg_sops(
+      markov.misc::robcov_vglm(fit_ppo, cluster = data$id),
+      newdata = baseline,
+      variables = "tx",
+      times = 1:4,
+      ylevels = 1:6,
+      absorb = "6",
+      id_var = "id"
+    ) |>
+      markov.misc::inferences(
+        method = "simulation",
+        engine = "mvn",
+        n_sim = 2,
+        workers = 1
+      )
+
+    expect_s3_class(out, "markov_avg_sops")
+    expect_true(all(is.finite(out$estimate)))
+  })
 })

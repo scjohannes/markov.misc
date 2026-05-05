@@ -90,31 +90,59 @@ baseline_data <- data |> filter(time == 1)
 
 ## Step 3: Model Specification
 
-We fit three proportional-odds models with increasing flexibility in how
-transition probabilities can change over follow-up time. Each model keeps the
-time spline inline in the formula, so the same model object can be used for
-point estimates, nonparametric bootstrap inference, and simulation inference.
+We fit three models with increasing flexibility in how transition probabilities
+can change over follow-up time. Each model keeps the time spline inline in the
+formula, so the same model object can be used for point estimates,
+nonparametric bootstrap inference, and simulation inference.
 
 1.  **Model A (Simple PO):** a common spline-shaped time effect.
 
-2.  **Model B (Treatment-time interaction):** allows the treatment effect to vary over time.
+2.  **Model B (Linear-time PPO):** allows the first spline basis function, the
+    linear time component, to have a linear deviation from proportional odds
+    across cutpoints. We fit the full-PO version first, extract its
+    `@constraints`, and then modify only the first spline basis constraint.
 
-3.  **Model C (State-time interaction):** also allows the previous state's effect to vary over time.
+3.  **Model C (State-time interaction):** keeps full proportional odds, but
+    allows treatment and previous-state effects to vary over time.
 
 ### Fit the models
 
 ```{r}
+model_b_formula <- ordered(y) ~ rcs(time, 4) + tx + age + yprev
+
 m_simple <- vglm(
-  ordered(y) ~ rcs(time, 4) + tx + age + yprev,
+  model_b_formula,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
 
-m_inter <- vglm(
-  ordered(y) ~ rcs(time, 4) * tx + age + yprev,
+m_time_po <- vglm_split_rcs(
+  model_b_formula,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
+model_b_constraints <- m_time_po@constraints
+linear_time_term <- grep(
+  "^rcs\\(time, 4\\).*time$",
+  names(model_b_constraints),
+  value = TRUE
+)[[1]]
+n_thresholds <- nrow(model_b_constraints[[linear_time_term]])
+yprev_terms <- grep("^yprev", names(model_b_constraints), value = TRUE)
+model_b_constraints[yprev_terms] <- NULL
+model_b_constraints[["yprev"]] <- cbind(PO_effect = rep(1, n_thresholds))
+model_b_constraints[[linear_time_term]] <- cbind(
+  PO_effect = rep(1, n_thresholds),
+  linear_deviation = seq_len(n_thresholds) - 1
+)
+
+m_time_ppo <- vglm_split_rcs(
+  model_b_formula,
+  family = cumulative(reverse = TRUE, parallel = FALSE), 
+  data = data,
+  constraints = model_b_constraints
+)
+m_time_ppo@call$constraints <- model_b_constraints
 
 m_state_time <- vglm(
   ordered(y) ~ rcs(time, 4) * tx + age + yprev + rcs(time, 4):yprev,
@@ -150,7 +178,7 @@ run_boot <- function(model, name) {
 
 set.seed(SEED)
 bs_simple <- run_boot(m_simple, "Model A")
-bs_inter  <- run_boot(m_inter,  "Model B")
+bs_time_ppo <- run_boot(m_time_ppo, "Model B")
 bs_state_time <- run_boot(m_state_time, "Model C")
 ```
 
@@ -190,8 +218,8 @@ run_sim_set <- function(engine = "mvn") {
       "Model A",
       engine = engine
     ),
-    inter = run_sim(
-      m_inter,
+    time_ppo = run_sim(
+      m_time_ppo,
       "Model B",
       engine = engine
     ),
@@ -214,11 +242,11 @@ set.seed(SEED)
 res_score <- run_sim_set(engine = "score_bootstrap")
 
 bs_simple_mvn <- res_mvn$simple
-bs_inter_mvn  <- res_mvn$inter
+bs_time_ppo_mvn <- res_mvn$time_ppo
 bs_state_time_mvn <- res_mvn$state_time
 
 bs_simple_score <- res_score$simple
-bs_inter_score  <- res_score$inter
+bs_time_ppo_score <- res_score$time_ppo
 bs_state_time_score <- res_score$state_time
 ```
 
@@ -258,7 +286,7 @@ plot_sop_estimates <- function(x, title) {
 }
 
 p1 <- plot_sop_estimates(bs_simple, "Model A: PO")
-p2 <- plot_sop_estimates(bs_inter, "Model B: PO + Interaction")
+p2 <- plot_sop_estimates(bs_time_ppo, "Model B: Linear-Time PPO")
 p3 <- plot_sop_estimates(bs_state_time, "Model C: PO + State-Time Interaction")
 
 # Combine using patchwork
@@ -271,7 +299,7 @@ p3 <- plot_sop_estimates(bs_state_time, "Model C: PO + State-Time Interaction")
 
 ```{r}
 p1_mvn <- plot_sop_estimates(bs_simple_mvn, "Model A: PO")
-p2_mvn <- plot_sop_estimates(bs_inter_mvn, "Model B: PO + Interaction")
+p2_mvn <- plot_sop_estimates(bs_time_ppo_mvn, "Model B: Linear-Time PPO")
 p3_mvn <- plot_sop_estimates(bs_state_time_mvn, "Model C: PO + State-Time Interaction")
 
 # Combine using patchwork
@@ -282,7 +310,7 @@ p3_mvn <- plot_sop_estimates(bs_state_time_mvn, "Model C: PO + State-Time Intera
 
 ```{r}
 p1_score <- plot_sop_estimates(bs_simple_score, "Model A: PO")
-p2_score <- plot_sop_estimates(bs_inter_score, "Model B: PO + Interaction")
+p2_score <- plot_sop_estimates(bs_time_ppo_score, "Model B: Linear-Time PPO")
 p3_score <- plot_sop_estimates(bs_state_time_score, "Model C: PO + State-Time Interaction")
 
 (p1_score | p2_score | p3_score) +
@@ -310,7 +338,7 @@ get_diff_dist <- function(bs_obj, label) {
 # Combine results
 diff_res <- bind_rows(
   get_diff_dist(bs_simple, "Model A (Simple)"),
-  get_diff_dist(bs_inter,  "Model B (Interact)"),
+  get_diff_dist(bs_time_ppo, "Model B (Linear-time PPO)"),
   get_diff_dist(bs_state_time, "Model C (State-time)")
 )
 
@@ -337,13 +365,13 @@ plot_diff_boot
 
 diff_res_mvn <- bind_rows(
   get_diff_dist(bs_simple_mvn, "Model A (Simple)"),
-  get_diff_dist(bs_inter_mvn,  "Model B (Interact)"),
+  get_diff_dist(bs_time_ppo_mvn, "Model B (Linear-time PPO)"),
   get_diff_dist(bs_state_time_mvn, "Model C (State-time)")
 )
 
 diff_res_score <- bind_rows(
   get_diff_dist(bs_simple_score, "Model A (Simple)"),
-  get_diff_dist(bs_inter_score,  "Model B (Interact)"),
+  get_diff_dist(bs_time_ppo_score, "Model B (Linear-time PPO)"),
   get_diff_dist(bs_state_time_score, "Model C (State-time)")
 )
 
