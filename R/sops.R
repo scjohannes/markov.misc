@@ -92,7 +92,7 @@ predict_vglm_response_markov <- function(object, newdata) {
   )
   attr(X, "assign") <- object@assign
 
-  lm2vlm <- getFromNamespace("lm2vlm.model.matrix", "VGAM")
+  lm2vlm <- utils::getFromNamespace("lm2vlm.model.matrix", "VGAM")
   X_vlm <- lm2vlm(
     X,
     Hlist = object@constraints,
@@ -109,6 +109,59 @@ predict_vglm_response_markov <- function(object, newdata) {
   )
 
   object@family@linkinv(eta = eta, extra = object@extra)
+}
+
+as_state_labels <- function(x) {
+  as.character(x)
+}
+
+coerce_previous_state_values <- function(values, prototype, pvarname) {
+  labels <- as_state_labels(values)
+
+  if (is.factor(prototype)) {
+    return(factor(
+      labels,
+      levels = levels(prototype),
+      ordered = is.ordered(prototype)
+    ))
+  }
+
+  if (is.integer(prototype)) {
+    out <- suppressWarnings(as.integer(labels))
+    if (anyNA(out) && any(!is.na(labels))) {
+      stop(
+        "`ylevels` must be integer-compatible when `", pvarname,
+        "` is an integer previous-state variable."
+      )
+    }
+    return(out)
+  }
+
+  if (is.numeric(prototype)) {
+    out <- suppressWarnings(as.numeric(labels))
+    if (anyNA(out) && any(!is.na(labels))) {
+      stop(
+        "`ylevels` must be numeric-compatible when `", pvarname,
+        "` is a numeric previous-state variable."
+      )
+    }
+    return(out)
+  }
+
+  if (is.character(prototype)) {
+    return(labels)
+  }
+
+  labels
+}
+
+make_previous_state_column <- function(states, prototype, n, pvarname) {
+  values <- coerce_previous_state_values(states, prototype, pvarname)
+  rep(values, each = n)
+}
+
+normalize_previous_state_column <- function(values, prototype, pvarname) {
+  coerce_previous_state_values(values, prototype, pvarname)
 }
 
 #' Calculate State Occupation Probabilities for First-Order Markov Models
@@ -224,6 +277,10 @@ soprob_markov <- function(
   # Validate model is compatible with Markov simulation
   validate_markov_model(object)
 
+  if (!pvarname %in% names(data)) {
+    stop("Previous-state variable `", pvarname, "` not found in `data`.")
+  }
+
   # Define prediction function
   prd <- switch(
     ftype,
@@ -246,8 +303,10 @@ soprob_markov <- function(
   # Prepare dimensions
   n_pat <- nrow(data)
   n_times <- length(times)
-  n_states <- length(ylevels)
-  yna <- setdiff(ylevels, absorb) # Non-absorbing states
+  ylevel_names <- as_state_labels(ylevels)
+  absorb_names <- as_state_labels(absorb)
+  n_states <- length(ylevel_names)
+  yna <- ylevel_names[!ylevel_names %in% absorb_names] # Non-absorbing states
   n_yna <- length(yna)
 
   # Check Bayesian draws
@@ -259,13 +318,13 @@ soprob_markov <- function(
     P <- array(
       0,
       dim = c(n_pat, n_times, n_states),
-      dimnames = list(rownames(data), times, ylevels)
+      dimnames = list(rownames(data), times, ylevel_names)
     )
   } else {
     P <- array(
       0,
       dim = c(nd, n_pat, n_times, n_states),
-      dimnames = list(1:nd, rownames(data), times, ylevels)
+      dimnames = list(1:nd, rownames(data), times, ylevel_names)
     )
   }
 
@@ -302,16 +361,12 @@ soprob_markov <- function(
   # Assign the previous state variable
   # We repeat each state n_pat times
 
-  if (is.factor(data[[pvarname]])) {
-    # If the original variable is a factor, ensure the new column is also a factor
-    # with the same levels
-    edata_base[[pvarname]] <- factor(
-      rep(yna, each = n_pat),
-      levels = levels(data[[pvarname]])
-    )
-  } else {
-    edata_base[[pvarname]] <- rep(yna, each = n_pat)
-  }
+  edata_base[[pvarname]] <- make_previous_state_column(
+    states = yna,
+    prototype = data[[pvarname]],
+    n = n_pat,
+    pvarname = pvarname
+  )
 
   # --- 4. Iterate Through Time (Vectorized over Patients) ---
   for (it in 2:n_times) {
@@ -339,7 +394,7 @@ soprob_markov <- function(
     if (nd == 0) {
       # Initialize current time probabilities with 0
       p_current <- matrix(0, nrow = n_pat, ncol = n_states)
-      colnames(p_current) <- ylevels
+      colnames(p_current) <- ylevel_names
 
       # Add contribution from Non-Absorbing Previous States
       for (i in seq_along(yna)) {
@@ -375,6 +430,7 @@ soprob_markov <- function(
       # Iterate draws (hard to vectorize draws + patients + states simultaneously without memory issues)
       for (d in 1:nd) {
         p_current_d <- matrix(0, nrow = n_pat, ncol = n_states)
+        colnames(p_current_d) <- ylevel_names
 
         for (i in seq_along(yna)) {
           prev_state_name <- yna[i]
@@ -467,14 +523,8 @@ standardize_sops <- function(
     times <- 1:max(data[[tvar]], na.rm = TRUE)
   }
 
-  # Check factors
-  # We need to make this more sophisticated, e.g., checking levels match model
-  if (!is.factor(data[[pvar]])) {
-    # Enforce factor conversion for robustness
-    if (getOption("markov.misc.verbose", default = FALSE)) {
-      warning(paste(pvar, "should be a factor. Converting automatically."))
-    }
-    data[[pvar]] <- factor(data[[pvar]])
+  if (!pvar %in% names(data)) {
+    stop("Previous-state variable `", pvar, "` not found in `data`.")
   }
 
   # --- 2. Create Counterfactual Cohorts ---
@@ -1924,7 +1974,7 @@ generate_score_bootstrap_draws <- function(
     stop(
       "Some baseline IDs used in avg_sops() were not found in the cluster ",
       "variable stored in robcov_vglm: ",
-      paste(head(missing_ids, 5), collapse = ", "),
+      paste(utils::head(missing_ids, 5), collapse = ", "),
       if (length(missing_ids) > 5) " ..." else "",
       ". Ensure avg_sops(id_var = ...) matches the clustering used in ",
       "robcov_vglm(cluster = ...)."
@@ -2119,7 +2169,10 @@ inferences_bootstrap <- function(
     }
 
     # Get states present in original numbering (for mapping back later)
-    states_present <- setdiff(ylevels, as.numeric(missing_states))
+    ylevel_names <- as_state_labels(ylevels)
+    states_present <- ylevel_names[
+      !ylevel_names %in% as_state_labels(missing_states)
+    ]
 
     # B. Compute standardized SOPs using G-computation on bootstrap data
     # Extract baseline data (one row per patient)
@@ -2188,7 +2241,7 @@ inferences_bootstrap <- function(
         # Fill in states that were present
         for (i in seq_along(states_present)) {
           original_state <- states_present[i]
-          original_idx <- which(ylevels == original_state)
+          original_idx <- which(ylevel_names == as_state_labels(original_state))
           full_mat[, original_idx] <- avg_sops_mat[, i]
         }
 
@@ -2711,7 +2764,8 @@ markov_msm_build <- function(
   ...
 ) {
   n_pat <- nrow(data)
-  n_states <- length(ylevels)
+  ylevel_names <- as_state_labels(ylevels)
+  n_states <- length(ylevel_names)
   M <- n_states - 1
 
   if (is.null(times)) {
@@ -2734,7 +2788,7 @@ markov_msm_build <- function(
 
   # Prepare data
   if (!pvarname %in% names(data)) {
-    data[[pvarname]] <- factor(ylevels[1], levels = ylevels)
+    data[[pvarname]] <- factor(ylevel_names[1], levels = ylevel_names)
   }
   if (!tvarname %in% names(data)) {
     data[[tvarname]] <- times[1]
@@ -2743,12 +2797,23 @@ markov_msm_build <- function(
   # Terms object
   tt <- stats::terms(model)
   tt <- stats::delete.response(tt)
+  contrasts_arg <- if (inherits(model, "vglm") && length(model@contrasts)) {
+    model@contrasts
+  } else {
+    NULL
+  }
+  xlev_arg <- if (inherits(model, "vglm")) model@xlevels else NULL
 
   # Helper to get design matrix columns used by the effective coefficient
   # matrix. For inline transforms such as rms::rcs(), model.matrix() uses the
   # fitted terms object's predvars, including stored knot locations.
   get_X <- function(d) {
-    X <- stats::model.matrix(tt, data = d)
+    X <- stats::model.matrix(
+      tt,
+      data = d,
+      contrasts.arg = contrasts_arg,
+      xlev = xlev_arg
+    )
     common <- intersect(colnames(X), common_cols)
     if (length(common) == 0) {
       return(NULL)
@@ -2768,7 +2833,11 @@ markov_msm_build <- function(
 
   # A. Baseline matrix for T=1 uses each patient's observed previous state.
   d_init <- set_time(data, 1)
-  d_init[[pvarname]] <- factor(d_init[[pvarname]], levels = ylevels)
+  d_init[[pvarname]] <- normalize_previous_state_column(
+    d_init[[pvarname]],
+    data[[pvarname]],
+    pvarname
+  )
   X_init <- get_X(d_init)
   if (is.null(X_init)) {
     stop("Could not construct a design matrix for the fitted model.")
@@ -2794,7 +2863,12 @@ markov_msm_build <- function(
 
     for (k in seq_len(n_states)) {
       d_k <- d_time
-      d_k[[pvarname]] <- factor(ylevels[k], levels = ylevels)
+      d_k[[pvarname]] <- make_previous_state_column(
+        states = ylevel_names[k],
+        prototype = data[[pvarname]],
+        n = nrow(d_k),
+        pvarname = pvarname
+      )
       X_transition[[time_idx]][[k]] <- align_X(get_X(d_k))
     }
   }
@@ -2805,7 +2879,7 @@ markov_msm_build <- function(
     n_pat = n_pat,
     n_states = n_states,
     M = M,
-    ylevels = ylevels,
+    ylevels = ylevel_names,
     col_names = col_names
   )
 }

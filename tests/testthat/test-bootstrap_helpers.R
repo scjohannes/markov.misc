@@ -116,6 +116,32 @@ test_that("bootstrap_analysis_wrapper relevels data and refits models", {
   expect_equal(result$missing_states, "2")
 })
 
+test_that("relevel_factors_consecutive preserves numeric previous state", {
+  original_data <- data.frame(
+    y = ordered(c(1, 2, 3, 4)),
+    yprev = c(1, 2, 3, 4)
+  )
+  boot_data <- data.frame(
+    y = ordered(c(1, 3, 4), levels = 1:4),
+    yprev = c(1, 3, 4)
+  )
+
+  result <- relevel_factors_consecutive(
+    data = boot_data,
+    factor_cols = c("y", "yprev"),
+    original_data = original_data,
+    ylevels = 1:4,
+    absorb = 4
+  )
+
+  expect_s3_class(result$data$y, "ordered")
+  expect_type(result$data$yprev, "double")
+  expect_equal(result$data$yprev, c(1, 2, 3))
+  expect_equal(result$ylevels, 1:3)
+  expect_equal(unname(result$absorb), 3)
+  expect_equal(result$missing_levels, "2")
+})
+
 test_that("bootstrap_analysis_wrapper reports model fitting failures", {
   boot_data <- data.frame(y = factor(c(1, 2)), x = c(1, 2))
   model <- structure(list(), class = "not_updateable")

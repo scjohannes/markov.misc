@@ -72,7 +72,7 @@ The `soprob_markov` function (`R/sops.R`) is the workhorse for estimating probab
 -   **Logic**: It iterates a transition matrix forward in time using the Law of Total Probability.
     -   $P(S_t = k) = \sum_j P(S_{t-1} = j) \times P(S_t = k | S_{t-1} = j)$
 -   **Vectorization**: The implementation is highly vectorized. It constructs an "expanded" dataset containing all possible transitions for all patients at a given time step, allowing a single `predict()` call to generate the entire transition matrix.
--   **Fast Path**: For `vglm` models, `markov_msm_build` and `markov_msm_run` pre-compute design matrices by time point and previous state to bypass the slow `predict()` method during simulation-based inference. Inline transforms such as `rms::rcs(time, 4)` reuse the fitted model terms, while explicit precomputed basis columns can still be supplied via `t_covs`.
+-   **Fast Path**: For `vglm` models, `markov_msm_build` and `markov_msm_run` pre-compute design matrices by time point and previous state to bypass the slow `predict()` method during simulation-based inference. Inline transforms such as `rms::rcs(time, 4)` and `rms::rcs(yprev, 6)` reuse the fitted model terms, while explicit precomputed time-basis columns can still be supplied via `t_covs`. Previous-state expansion preserves the fitted column type, so `yprev` can be categorical, linear numeric, or spline numeric.
 
 ### 4. Marginalization & G-Computation
 

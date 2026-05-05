@@ -278,7 +278,8 @@ package-native Markov prediction. For inline restricted cubic spline terms
 such as \code{rcs(time, 4)} or \code{rms::rcs(time, 4)}, the internal VGAM assignment
 metadata is split by generated spline column. This makes it possible to give
 individual spline basis columns separate constraint matrices for partial
-proportional odds models.
+proportional odds models. Inline splines may be used for time or for numeric
+previous-state effects such as \code{rcs(yprev, 6)}.
 }
 \details{
 Non-spline terms, factor terms, and workflows that use explicit precomputed
@@ -295,6 +296,12 @@ fit_po <- vglm.markov(
   ordered(y) ~ rcs(time, 4) + tx + age + yprev,
   family = cumulative(reverse = TRUE, parallel = TRUE),
   data = data
+)
+
+fit_numeric_prev <- vglm.markov(
+  ordered(y) ~ rcs(time, 4) + tx + age + rcs(yprev, 6),
+  family = cumulative(reverse = TRUE, parallel = TRUE),
+  data = prepare_markov_data(data, factor_previous = FALSE)
 )
 
 constraints <- fit_po@constraints

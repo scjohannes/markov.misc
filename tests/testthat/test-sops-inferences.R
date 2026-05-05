@@ -48,6 +48,32 @@ describe("avg_sops() and inferences() pipeline", {
     )
   }
 
+  build_numeric_yprev_case <- function() {
+    raw_data <- markov.misc::sim_trajectories_brownian(
+      n_patients = 90,
+      follow_up_time = 7,
+      n_states = 10,
+      thresholds = seq(-3, 3, length.out = 9),
+      allowed_start_state = as.integer(2:9),
+      absorbing_state = 10,
+      x0_sd = 2,
+      sigma_rw = 0.25,
+      seed = 4042
+    )
+    data <- markov.misc::prepare_markov_data(
+      raw_data,
+      absorbing_state = 10,
+      factor_previous = FALSE
+    )
+
+    list(
+      data = data,
+      baseline = data[data$time == 1, , drop = FALSE],
+      ylevels = 1:10,
+      absorb = "10"
+    )
+  }
+
   fit_pipeline_model <- function(data) {
     suppressWarnings(
       VGAM::vglm(
@@ -62,6 +88,16 @@ describe("avg_sops() and inferences() pipeline", {
     suppressWarnings(
       markov.misc::vglm.markov(
         ordered(y) ~ rms::rcs(time, 4) * tx + yprev + age,
+        family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+        data = data
+      )
+    )
+  }
+
+  fit_numeric_yprev_model <- function(data) {
+    suppressWarnings(
+      markov.misc::vglm.markov(
+        ordered(y) ~ rms::rcs(time, 4) * tx + rms::rcs(yprev, 6),
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
         data = data
       )
@@ -373,6 +409,44 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(unname(fast), unname(slow), tolerance = 1e-10)
   })
 
+  test_that("fast Markov components support inline rcs() previous-state terms", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+
+    case <- build_numeric_yprev_case()
+    model <- fit_numeric_yprev_model(case$data)
+    baseline <- case$baseline[1:10, , drop = FALSE]
+
+    components <- markov.misc:::markov_msm_build(
+      model = model,
+      data = baseline,
+      times = 1:7,
+      ylevels = case$ylevels,
+      pvarname = "yprev"
+    )
+    gamma <- markov.misc:::compute_Gamma(
+      stats::coef(model),
+      VGAM::constraints(model)
+    )
+    fast <- markov.misc:::markov_msm_run(
+      components = components,
+      Gamma = gamma,
+      times = 1:7,
+      absorb = case$absorb
+    )
+    slow <- markov.misc::soprob_markov(
+      object = model,
+      data = baseline,
+      times = 1:7,
+      ylevels = case$ylevels,
+      absorb = case$absorb,
+      pvarname = "yprev"
+    )
+
+    expect_equal(dim(fast), dim(slow))
+    expect_equal(unname(fast), unname(slow), tolerance = 1e-10)
+  })
+
   test_that("seeded Brownian avg_sops() and fast simulation inference remain stable", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
@@ -423,6 +497,42 @@ describe("avg_sops() and inferences() pipeline", {
     )
   })
 
+  test_that("numeric previous-state spline supports fast MVN inference", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+    skip_if_not_installed("mvtnorm")
+
+    case <- build_numeric_yprev_case()
+    model <- fit_numeric_yprev_model(case$data)
+
+    avg <- markov.misc::avg_sops(
+      model = model,
+      newdata = case$baseline,
+      variables = "tx",
+      times = 1:7,
+      ylevels = case$ylevels,
+      absorb = case$absorb,
+      pvarname = "yprev",
+      id_var = "id"
+    )
+
+    withr::local_seed(4413)
+    inferred <- markov.misc::inferences(
+      avg,
+      method = "simulation",
+      engine = "mvn",
+      n_sim = 2,
+      return_draws = TRUE
+    )
+    draws <- markov.misc::get_draws(inferred)
+
+    expect_equal(attr(inferred, "method"), "simulation")
+    expect_equal(attr(inferred, "engine"), "mvn")
+    expect_equal(attr(inferred, "n_successful"), 2L)
+    expect_false(anyNA(inferred$conf.low))
+    expect_equal(sort(unique(draws$draw_id)), 1:2)
+  })
+
   test_that("Brownian avg_sops() supports bootstrap inference", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
@@ -470,6 +580,38 @@ describe("avg_sops() and inferences() pipeline", {
       style = "json2",
       cran = TRUE
     )
+  })
+
+  test_that("numeric previous-state spline supports bootstrap inference", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+
+    case <- build_numeric_yprev_case()
+    model <- fit_numeric_yprev_model(case$data)
+
+    avg <- markov.misc::avg_sops(
+      model = model,
+      newdata = case$data,
+      variables = "tx",
+      times = 1:7,
+      ylevels = case$ylevels,
+      absorb = case$absorb,
+      pvarname = "yprev",
+      id_var = "id"
+    )
+
+    withr::local_seed(4414)
+    inferred <- markov.misc::inferences(
+      avg,
+      method = "bootstrap",
+      n_sim = 1,
+      return_draws = TRUE
+    )
+
+    expect_equal(attr(inferred, "method"), "bootstrap")
+    expect_equal(attr(inferred, "n_successful"), 1L)
+    expect_false(anyNA(inferred$conf.low))
+    expect_false(anyNA(inferred$conf.high))
   })
 
   test_that("Brownian avg_sops() supports score-bootstrap simulation on the fast path", {
@@ -523,6 +665,41 @@ describe("avg_sops() and inferences() pipeline", {
       style = "json2",
       cran = TRUE
     )
+  })
+
+  test_that("numeric previous-state spline supports score-bootstrap fast path", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+
+    case <- build_numeric_yprev_case()
+    model <- fit_numeric_yprev_model(case$data)
+    robust_model <- markov.misc::robcov_vglm(model, cluster = case$data$id)
+
+    avg <- markov.misc::avg_sops(
+      model = robust_model,
+      newdata = case$baseline,
+      variables = "tx",
+      times = 1:7,
+      ylevels = case$ylevels,
+      absorb = case$absorb,
+      pvarname = "yprev",
+      id_var = "id"
+    )
+
+    withr::local_seed(4415)
+    inferred <- markov.misc::inferences(
+      avg,
+      method = "simulation",
+      engine = "score_bootstrap",
+      n_sim = 2,
+      return_draws = FALSE
+    )
+
+    expect_equal(attr(inferred, "method"), "simulation")
+    expect_equal(attr(inferred, "engine"), "score_bootstrap")
+    expect_equal(attr(inferred, "n_successful"), 2L)
+    expect_false(anyNA(inferred$conf.low))
+    expect_false(anyNA(inferred$conf.high))
   })
 
   test_that("inline rcs() and explicit basis agree for MVN simulation inference", {

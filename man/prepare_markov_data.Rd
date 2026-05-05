@@ -24,7 +24,9 @@ multiple absorbing states (e.g., c(1, 6) for both home discharge and death).}
 (default: TRUE). Required for clm and vglm, not required for orm.}
 
 \item{factor_previous}{Logical. Should \code{yprev} be converted to factor?
-(default: TRUE).}
+Defaults to TRUE for backward compatibility and categorical previous-state
+effects. Set to FALSE when modeling the previous state linearly or with
+nonlinear numeric terms such as \code{rms::rcs(yprev, 6)}.}
 }
 \value{
 A data frame with modified \code{y} and \code{yprev} columns and absorbing
@@ -41,7 +43,10 @@ proportional odds models on Markov data:
 \itemize{
 \item Removes rows where patients were in an absorbing state at the previous time
 \item Converts current state to ordered factor (for cumulative models)
-\item Converts previous state to factor (for including as predictor)
+\item Converts previous state to factor by default (for categorical transition
+effects)
+\item Can preserve previous state as numeric for linear or spline transition
+effects
 }
 
 \strong{Package compatibility}: This function prepares data for:
@@ -70,6 +75,18 @@ library(VGAM)
 fit <- vglm(y ~ tx + rcs(time, 4) + yprev,
             family = cumulative(parallel = TRUE, reverse = TRUE),
             data = model_data)
+
+# Keep yprev numeric to use one linear or nonlinear previous-state effect
+model_data <- prepare_markov_data(
+  trajectories,
+  absorbing_state = 6,
+  factor_previous = FALSE
+)
+fit <- vglm.markov(
+  ordered(y) ~ tx + rcs(time, 4) + rcs(yprev, 6),
+  family = cumulative(parallel = TRUE, reverse = TRUE),
+  data = model_data
+)
 
 # Fit with rms (supports robust SEs via robcov)
 library(rms)

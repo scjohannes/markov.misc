@@ -358,7 +358,8 @@ sim_trajectories_markov <- function(
 #' )
 #'
 #' # Probit model which approximates viral respiratory trajectories okay-ishly
-#' # Because standard normal is narrower than logistic, thresholds need to be closer together, drift smaller, varaince lower etc.
+#' # Because standard normal is narrower than logistic, use closer thresholds,
+#' # smaller drift, and lower variance.
 #' traj_norm <- sim_trajectories_brownian(n_patients = 1000,
 #'   latent_dist = "normal",
 #'   thresholds = c(-3, -1.0, 0.5, 2, 3),
@@ -1285,13 +1286,10 @@ sim_trajectories_deterministic <- function(
 #'   identifiers are repeated `max_events` times internally (one block of
 #'   rates per subject). If missing, identifiers 1:n are generated where
 #'   `n` is provided or inferred.
-#' @param n Optional integer. Number of participants to simulate. If missing,
-#'   `n` is set to `length(id)`. If both `id` and `n` are provided their
-#'   lengths must match.
 #' @param dist Character. Name of the waiting-time distribution. Currently only
 #'   "Exponential" is supported (default).
 #' @param param Numeric. Parameter vector for the waiting-time distribution.
-#'   The first element is taken as the baseline rate \u03bb (lambda) used to
+#'   The first element is taken as the baseline rate lambda used to
 #'   construct the per-event rates. Only `param[1]` is used by the current
 #'   implementation.
 #' @param b Numeric scalar. Increment added to the rate for every subsequent
@@ -1373,7 +1371,7 @@ recurr_event <- function(
       }
 
       if (length(unique(rates)) == 1) {
-        p <- pgamma(follow_up, shape = length(rates), rate = unique(rates))
+        p <- stats::pgamma(follow_up, shape = length(rates), rate = unique(rates))
       } else {
         p <- phypoexp(follow_up, rate = rates)
       }
@@ -1441,6 +1439,8 @@ recurr_event <- function(
 #'   Default is NULL, which allows starting in any state. If provided, only these
 #'   states will be assigned at baseline.
 #' @param prob Probabilities for each baseline_state.
+#' @param n Integer. Number of patients to simulate when `baseline_data` is
+#'   `NULL`. Ignored when `baseline_data` is supplied.
 #' @param states Integer vector. Ordered states in the model (default: 1:6).
 #'   States should be numbered consecutively.
 #' @param absorbing_states Integer vector. States that are absorbing (once entered,

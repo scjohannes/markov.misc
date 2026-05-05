@@ -1,6 +1,6 @@
 Package: markov.misc
 Title: Markov Miscellaneous
-Version: 0.0.1.0000
+Version: 0.0.2.0000
 Authors@R: c(
     person("Johannes", "Schwenke", , "johannes.schwenke@gmail.com", role = c("aut", "cre")),
     person("Felix", "Herkner", , "felix.herkner@meduniwien.ac.at", role = "aut"))
@@ -22,17 +22,19 @@ Imports:
     mvtnorm,
     rlang,
     rms,
-    VGAM,
+    sdprisk,
     stats,
     tibble,
     tidyr,
-    purrr
+    purrr,
+    VGAM
 Depends: 
     R (>= 4.1.0)
 LazyData: true
 Suggests: 
     knitr,
     rmarkdown,
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    withr
 Config/testthat/edition: 3
 VignetteBuilder: knitr

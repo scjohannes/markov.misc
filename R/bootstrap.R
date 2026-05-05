@@ -59,8 +59,9 @@
 #' The returned tibble can be used to compute confidence intervals using
 #' quantile-based methods (percentile or BCa intervals).
 #'
-#' \strong{Important:} Factor variables (like \code{yprev}) should be factors
-#' before fitting the model for proper handling of factor levels.
+#' \strong{Previous-state type:} \code{yprev} may be a factor for categorical
+#' previous-state effects or numeric for linear/spline effects. Bootstrap
+#' releveling preserves the column type used to fit the original model.
 #'
 #' @keywords bootstrap coefficients confidence intervals
 #'
@@ -135,16 +136,10 @@ bootstrap_model_coefs <- function(
     stop("id_var '", id_var, "' not found in data")
   }
 
-  # Check for yprev variable and warn if not a factor
-  if ("yprev" %in% names(data) && !is.factor(data$yprev)) {
-    warning(
-      "Variable 'yprev' should be a factor but is not. Converting to factor."
-    )
-    data$yprev <- factor(data$yprev)
-  }
-
-  # Identify factor columns
-  factor_cols <- names(data)[sapply(data, is.factor)]
+  # Identify state columns that may need releveling in bootstrap samples.
+  # Numeric yprev is preserved for linear/spline previous-state models.
+  factor_cols <- unique(c(names(data)[sapply(data, is.factor)], "yprev"))
+  factor_cols <- intersect(factor_cols, names(data))
 
   # Generate bootstrap ID samples using fast helper (memory-efficient JIT approach)
   boot_ids <- fast_group_bootstrap(
@@ -427,7 +422,10 @@ bootstrap_standardized_sops <- function(
     }
 
     # Get states present in original numbering (for mapping back later)
-    states_present <- setdiff(ylevels, as.numeric(missing_states))
+    ylevel_names <- as_state_labels(ylevels)
+    states_present <- ylevel_names[
+      !ylevel_names %in% as_state_labels(missing_states)
+    ]
 
     # Compute standardized SOPs on releveled states
     sop_result <- tryCatch(

@@ -70,7 +70,7 @@ test_that("bootstrap_model_coefs orchestrates bootstrap coefficient extraction",
   expect_equal(result$tx, c(-0.1, -0.3))
 })
 
-test_that("bootstrap_model_coefs converts non-factor yprev before bootstrapping", {
+test_that("bootstrap_model_coefs preserves numeric yprev before bootstrapping", {
   model <- structure(
     list(coefficients = c("(Intercept)" = 1, tx = -0.2)),
     class = "vglm"
@@ -90,14 +90,11 @@ test_that("bootstrap_model_coefs converts non-factor yprev before bootstrapping"
     },
     apply_to_bootstrap = function(...) list(list(tx = 1)),
     {
-      expect_warning(
-        result <- bootstrap_model_coefs(model, data = data, n_boot = 1),
-        "Variable 'yprev' should be a factor"
-      )
+      result <- bootstrap_model_coefs(model, data = data, n_boot = 1)
     }
   )
 
-  expect_true(observed_is_factor)
+  expect_false(observed_is_factor)
   expect_equal(result$tx, 1)
 })
 

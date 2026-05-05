@@ -137,6 +137,66 @@ test_that("soprob_markov works with rcs() and precomputed spline basis", {
   }
 })
 
+test_that("soprob_markov supports inline splines of numeric previous state", {
+  skip_if_not_installed("VGAM")
+  skip_if_not_installed("rms")
+
+  raw_data <- sim_trajectories_brownian(
+    n_patients = 120,
+    follow_up_time = 7,
+    n_states = 10,
+    thresholds = seq(-3, 3, length.out = 9),
+    allowed_start_state = as.integer(2:9),
+    absorbing_state = 10,
+    x0_sd = 2,
+    sigma_rw = 0.25,
+    seed = 4242
+  )
+  data <- prepare_markov_data(
+    raw_data,
+    absorbing_state = 10,
+    factor_previous = FALSE
+  )
+  baseline <- data[data$time == 1, , drop = FALSE]
+
+  model <- vglm.markov(
+    ordered(y) ~ rms::rcs(time, 4) + tx + rms::rcs(yprev, 6),
+    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+    data = data
+  )
+
+  slow <- soprob_markov(
+    object = model,
+    data = baseline[1:8, , drop = FALSE],
+    times = 1:7,
+    ylevels = 1:10,
+    absorb = "10",
+    pvarname = "yprev"
+  )
+  components <- markov.misc:::markov_msm_build(
+    model = model,
+    data = baseline[1:8, , drop = FALSE],
+    times = 1:7,
+    ylevels = 1:10,
+    pvarname = "yprev"
+  )
+  gamma <- markov.misc:::compute_Gamma(
+    stats::coef(model),
+    VGAM::constraints(model)
+  )
+  fast <- markov.misc:::markov_msm_run(
+    components = components,
+    Gamma = gamma,
+    times = 1:7,
+    absorb = "10"
+  )
+
+  expect_type(data$yprev, "double")
+  expect_equal(dim(slow), c(8L, 7L, 10L))
+  expect_equal(unname(fast), unname(slow), tolerance = 1e-10)
+  expect_equal(rowSums(fast[, 7, ]), rep(1, 8), tolerance = 1e-10)
+})
+
 test_that("soprob_markov handles partial proportional odds models", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")

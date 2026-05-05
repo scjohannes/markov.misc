@@ -118,7 +118,8 @@ traj_logit <- sim_trajectories_brownian(
 )
 
 # Probit model which approximates viral respiratory trajectories okay-ishly
-# Because standard normal is narrower than logistic, thresholds need to be closer together, drift smaller, varaince lower etc.
+# Because standard normal is narrower than logistic, use closer thresholds,
+# smaller drift, and lower variance.
 traj_norm <- sim_trajectories_brownian(n_patients = 1000,
   latent_dist = "normal",
   thresholds = c(-3, -1.0, 0.5, 2, 3),

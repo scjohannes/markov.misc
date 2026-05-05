@@ -15,8 +15,9 @@ relevel_factors_consecutive(
 \arguments{
 \item{data}{A data frame containing the data to relevel.}
 
-\item{factor_cols}{Character vector of column names to relevel. Only columns
-that are factors with numeric-coercible levels will be releveled.}
+\item{factor_cols}{Character vector of column names to relevel. Despite the
+historical name, these may be factor or numeric state columns. Numeric
+columns stay numeric after releveling.}
 
 \item{original_data}{Optional data frame containing the original data before
 subsetting. Used to determine which levels are present in the full dataset.}
@@ -37,17 +38,18 @@ A list with components:
 }
 }
 \description{
-Handles missing factor levels in data by releveling ordered factors to
-consecutive integers. This is useful when bootstrap samples or subsets
-are missing certain levels, which can cause model fitting failures.
+Handles missing state levels in data by releveling state columns to
+consecutive integers. This is useful when bootstrap samples or subsets are
+missing certain levels, which can cause model fitting failures.
 }
 \details{
-When certain factor levels are absent from a dataset (e.g., in bootstrap
+When certain state levels are absent from a dataset (e.g., in bootstrap
 samples), this function:
 \enumerate{
 \item Identifies which levels are present
 \item Creates a mapping from old to new consecutive integers
-\item Relevels the specified factor columns
+\item Relevels the specified state columns while preserving factor vs numeric
+type
 \item Updates ylevels and absorb parameters if provided
 }
 

@@ -13,7 +13,9 @@
 #' @param ordered_response Logical. Should `y` be converted to ordered factor?
 #'   (default: TRUE). Required for clm and vglm, not required for orm.
 #' @param factor_previous Logical. Should `yprev` be converted to factor?
-#'   (default: TRUE).
+#'   Defaults to TRUE for backward compatibility and categorical previous-state
+#'   effects. Set to FALSE when modeling the previous state linearly or with
+#'   nonlinear numeric terms such as `rms::rcs(yprev, 6)`.
 #'
 #' @return A data frame with modified `y` and `yprev` columns and absorbing
 #'   states removed.
@@ -23,7 +25,10 @@
 #' proportional odds models on Markov data:
 #' - Removes rows where patients were in an absorbing state at the previous time
 #' - Converts current state to ordered factor (for cumulative models)
-#' - Converts previous state to factor (for including as predictor)
+#' - Converts previous state to factor by default (for categorical transition
+#'   effects)
+#' - Can preserve previous state as numeric for linear or spline transition
+#'   effects
 #'
 #' **Package compatibility**: This function prepares data for:
 #' - **VGAM::vglm**: Use `cumulative(parallel = TRUE, reverse = TRUE)` default
@@ -49,6 +54,18 @@
 #' fit <- vglm(y ~ tx + rcs(time, 4) + yprev,
 #'             family = cumulative(parallel = TRUE, reverse = TRUE),
 #'             data = model_data)
+#'
+#' # Keep yprev numeric to use one linear or nonlinear previous-state effect
+#' model_data <- prepare_markov_data(
+#'   trajectories,
+#'   absorbing_state = 6,
+#'   factor_previous = FALSE
+#' )
+#' fit <- vglm.markov(
+#'   ordered(y) ~ tx + rcs(time, 4) + rcs(yprev, 6),
+#'   family = cumulative(parallel = TRUE, reverse = TRUE),
+#'   data = model_data
+#' )
 #'
 #' # Fit with rms (supports robust SEs via robcov)
 #' library(rms)
@@ -95,13 +112,14 @@ prepare_markov_data <- function(
 
 #' Relevel Factors to Consecutive Integers
 #'
-#' Handles missing factor levels in data by releveling ordered factors to
-#' consecutive integers. This is useful when bootstrap samples or subsets
-#' are missing certain levels, which can cause model fitting failures.
+#' Handles missing state levels in data by releveling state columns to
+#' consecutive integers. This is useful when bootstrap samples or subsets are
+#' missing certain levels, which can cause model fitting failures.
 #'
 #' @param data A data frame containing the data to relevel.
-#' @param factor_cols Character vector of column names to relevel. Only columns
-#'   that are factors with numeric-coercible levels will be releveled.
+#' @param factor_cols Character vector of column names to relevel. Despite the
+#'   historical name, these may be factor or numeric state columns. Numeric
+#'   columns stay numeric after releveling.
 #' @param original_data Optional data frame containing the original data before
 #'   subsetting. Used to determine which levels are present in the full dataset.
 #' @param ylevels Optional integer vector of original state levels (e.g., 1:6).
@@ -116,11 +134,12 @@ prepare_markov_data <- function(
 #'   - missing_levels: Character vector of levels that were missing
 #'
 #' @details
-#' When certain factor levels are absent from a dataset (e.g., in bootstrap
+#' When certain state levels are absent from a dataset (e.g., in bootstrap
 #' samples), this function:
 #' 1. Identifies which levels are present
 #' 2. Creates a mapping from old to new consecutive integers
-#' 3. Relevels the specified factor columns
+#' 3. Relevels the specified state columns while preserving factor vs numeric
+#'    type
 #' 4. Updates ylevels and absorb parameters if provided
 #'
 #' This is particularly useful for ordered factors representing health states
@@ -208,19 +227,31 @@ relevel_factors_consecutive <- function(
   # Create mapping from old to new state numbers
   state_mapping <- stats::setNames(seq_along(states_present), states_present)
 
-  # Relevel each factor column
+  # Relevel each state column while preserving the column type. This matters for
+  # previous-state predictors that are intentionally numeric, e.g. rcs(yprev, 6).
   for (col in factor_cols) {
     if (col %in% names(data)) {
-      # Convert to numeric if factor
-      if (is.factor(data[[col]])) {
-        data[[col]] <- as.numeric(as.character(data[[col]]))
+      prototype <- if (!is.null(original_data) && col %in% names(original_data)) {
+        original_data[[col]]
+      } else {
+        data[[col]]
       }
 
-      # Apply mapping
-      data[[col]] <- state_mapping[as.character(data[[col]])]
+      mapped <- unname(state_mapping[as.character(data[[col]])])
 
-      # Convert back to factor with new levels
-      data[[col]] <- factor(data[[col]], levels = seq_along(states_present))
+      if (is.factor(prototype) || is.factor(data[[col]])) {
+        data[[col]] <- factor(
+          mapped,
+          levels = seq_along(states_present),
+          ordered = is.ordered(prototype) || is.ordered(data[[col]])
+        )
+      } else if (is.integer(prototype) || is.integer(data[[col]])) {
+        data[[col]] <- as.integer(mapped)
+      } else if (is.numeric(prototype) || is.numeric(data[[col]])) {
+        data[[col]] <- as.numeric(mapped)
+      } else {
+        data[[col]] <- as.character(mapped)
+      }
     }
   }
 
@@ -233,12 +264,21 @@ relevel_factors_consecutive <- function(
 
   # Update absorbing state if provided and present
   new_absorb <- if (!is.null(absorb)) {
-    if (absorb %in% states_present) {
-      state_mapping[as.character(absorb)]
+    absorb_present <- absorb[absorb %in% states_present]
+    absorb_missing <- setdiff(absorb, states_present)
+    if (length(absorb_present) > 0) {
+      if (length(absorb_missing) > 0) {
+        warning(
+          "Absorbing state(s) ",
+          paste(absorb_missing, collapse = ", "),
+          " not present in data and were dropped."
+        )
+      }
+      unname(state_mapping[as.character(absorb_present)])
     } else {
       warning(
-        "Absorbing state ",
-        absorb,
+        "Absorbing state(s) ",
+        paste(absorb, collapse = ", "),
         " not present in data. Set to NULL."
       )
       NULL

@@ -1,0 +1,202 @@
+---
+title: "Nonlinear Previous-State Effects"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Nonlinear Previous-State Effects}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, message = FALSE}
+library(markov.misc)
+library(dplyr)
+library(ggplot2)
+library(VGAM)
+library(rms)
+```
+
+The previous state can be modeled categorically, linearly, or with a nonlinear
+numeric basis. The default remains categorical for backward compatibility:
+
+```{r categorical-prep}
+set.seed(20260505)
+
+raw_data <- sim_trajectories_brownian(
+  n_patients = 100,
+  follow_up_time = 8,
+  n_states = 10,
+  thresholds = seq(-3, 3, length.out = 9),
+  allowed_start_state = as.integer(2:9),
+  absorbing_state = 10,
+  x0_sd = 2,
+  sigma_rw = 0.25,
+  seed = 20260505
+)
+
+categorical_data <- prepare_markov_data(raw_data, absorbing_state = 10)
+is.factor(categorical_data$yprev)
+```
+
+For high-cardinality ordinal states, a categorical previous-state effect can use
+too many degrees of freedom. Set `factor_previous = FALSE` to keep `yprev`
+numeric and use a linear or spline effect instead:
+
+```{r numeric-prep}
+numeric_data <- prepare_markov_data(
+  raw_data,
+  absorbing_state = 10,
+  factor_previous = FALSE
+)
+
+is.numeric(numeric_data$yprev)
+```
+
+A linear previous-state effect uses one degree of freedom:
+
+```{r linear-fit}
+fit_linear <- vglm.markov(
+  ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
+  family = cumulative(reverse = TRUE, parallel = TRUE),
+  data = numeric_data
+)
+```
+
+A restricted cubic spline allows nonlinear transition effects while still using
+far fewer degrees of freedom than a full categorical previous-state model:
+
+```{r spline-fit}
+fit_spline <- vglm.markov(
+  ordered(y) ~ rms::rcs(time, 4) + tx + rms::rcs(yprev, 6),
+  family = cumulative(reverse = TRUE, parallel = TRUE),
+  data = numeric_data
+)
+```
+
+The same SOP workflow then applies. `vglm.markov()` stores the design-matrix
+metadata needed for the fast simulation path when inline spline terms are used.
+For inference, wrap the model in `robcov_vglm()` and pass the `avg_sops()`
+result to `inferences()`:
+
+```{r sops}
+baseline <- numeric_data[numeric_data$time == 1, , drop = FALSE]
+fit_spline_robust <- robcov_vglm(fit_spline, cluster = numeric_data$id)
+
+avg <- avg_sops(
+  fit_spline_robust,
+  newdata = baseline,
+  variables = list(tx = c(0, 1)),
+  times = 1:8,
+  ylevels = 1:10,
+  absorb = "10",
+  pvarname = "yprev",
+  id_var = "id"
+)
+
+head(avg)
+```
+
+```{r sops-inference}
+set.seed(20260506)
+
+avg_mvn <- inferences(
+  avg,
+  method = "simulation",
+  engine = "mvn",
+  n_sim = 50,
+  return_draws = FALSE
+)
+
+head(avg_mvn)
+```
+
+The model-based SOPs should be compared with empirical SOPs from the raw
+longitudinal trajectories, before `prepare_markov_data()` creates transition
+rows. This keeps absorbing states carried forward in the observed trajectory:
+
+```{r stacked-sops, fig.width = 7, fig.height = 5}
+empirical_sops <- raw_data |>
+  filter(time %in% 1:8) |>
+  count(tx, time, state = y, name = "n") |>
+  group_by(tx, time) |>
+  mutate(
+    estimate = n / sum(n),
+    source = "Empirical"
+  ) |>
+  ungroup() |>
+  select(tx, time, state, estimate, source)
+
+model_sops <- avg_mvn |>
+  mutate(
+    state = as.integer(as.character(state)),
+    source = "Spline model"
+  ) |>
+  select(tx, time, state, estimate, source)
+
+bind_rows(empirical_sops, model_sops) |>
+  mutate(
+    tx = factor(tx, levels = c(0, 1), labels = c("Control", "Treatment")),
+    state = factor(state, levels = 1:10)
+  ) |>
+  ggplot(aes(x = time, y = estimate, fill = state)) +
+  geom_col(width = 0.85) +
+  facet_grid(tx ~ source) +
+  scale_y_continuous(labels = function(x) paste0(round(100 * x), "%")) +
+  labs(
+    x = "Time",
+    y = "State occupation probability",
+    fill = "State"
+  )
+```
+
+For uncertainty, plot selected state-specific trajectories with their simulated
+confidence intervals and the matching empirical SOPs as points:
+
+```{r inference-plot, fig.width = 7, fig.height = 5}
+states_to_plot <- c(1, 5, 10)
+
+empirical_selected <- empirical_sops |>
+  filter(state %in% states_to_plot) |>
+  mutate(state = factor(state, levels = states_to_plot))
+
+avg_mvn |>
+  mutate(state = as.integer(as.character(state))) |>
+  filter(state %in% states_to_plot) |>
+  mutate(
+    tx = factor(tx, levels = c(0, 1), labels = c("Control", "Treatment")),
+    state = factor(state, levels = states_to_plot)
+  ) |>
+  ggplot(aes(x = time, y = estimate, color = state, fill = state)) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.15, color = NA) +
+  geom_line(linewidth = 0.7) +
+  geom_point(
+    data = empirical_selected |>
+      mutate(
+        tx = factor(tx, levels = c(0, 1), labels = c("Control", "Treatment")),
+        state = factor(state, levels = states_to_plot)
+      ),
+    aes(x = time, y = estimate),
+    shape = 21,
+    color = "black",
+    size = 1.8,
+    inherit.aes = FALSE
+  ) +
+  facet_wrap(vars(tx)) +
+  scale_y_continuous(labels = function(x) paste0(round(100 * x), "%")) +
+  labs(
+    x = "Time",
+    y = "State occupation probability",
+    color = "State",
+    fill = "State"
+  )
+```
+
+The same pattern scales to larger ordinal outcomes: keep `yprev` numeric with
+`factor_previous = FALSE`, then include the desired numeric basis in the model
+formula.
