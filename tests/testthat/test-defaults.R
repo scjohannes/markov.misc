@@ -165,7 +165,7 @@ describe("sim_trajectories_markov()", {
     )
 
     expect_equal(nrow(trajectories_minimal), 50 * 60) # Default follow_up_time = 60
-    expect_s3_class(trajectories_minimal, "tbl_df")
+    expect_s3_class(trajectories_minimal, "data.frame")
     expect_contains(
       names(trajectories_minimal),
       c("id", "time", "y", "yprev", "age", "sofa", "tx")

@@ -534,8 +534,22 @@ bootstrap_standardized_sops <- function(
     }
   }
   # Combine all bootstrap iterations
-  sop_results <- dplyr::bind_rows(sop_result_list) |>
-    dplyr::select(boot_id, time, tx, dplyr::everything())
+  if (length(sop_result_list) > 0) {
+    sop_results <- dplyr::bind_rows(sop_result_list) |>
+      dplyr::select(boot_id, time, tx, dplyr::everything())
+  } else {
+    state_cols <- stats::setNames(
+      replicate(n_states, numeric(0), simplify = FALSE),
+      paste0("state_", ylevels)
+    )
+    sop_results <- data.frame(
+      boot_id = integer(0),
+      time = times[0],
+      tx = integer(0),
+      state_cols,
+      check.names = FALSE
+    )
+  }
 
   # Extract coefs from boot_results
   coefs <- lapply(boot_results, function(x) x[["coefs"]])

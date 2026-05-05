@@ -1192,6 +1192,7 @@ format_competing_risks <- function(
         -cum_events,
         -prev_events
       )
+    return(data)
   }
 
   if (version_old) {

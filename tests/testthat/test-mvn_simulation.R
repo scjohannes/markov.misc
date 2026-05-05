@@ -10,6 +10,39 @@
 
 describe("MVN Simulation-Based Inference for SOPs", {
   describe("set_coef()", {
+    it("validates default model coefficient replacement", {
+      model <- list(coefficients = c(a = 1, b = 2))
+      modified <- set_coef(model, c(10, 20))
+
+      expect_equal(modified$coefficients, c(a = 10, b = 20))
+      expect_error(
+        set_coef(list(), 1),
+        "Model does not have a 'coefficients' element",
+        fixed = TRUE
+      )
+      expect_error(
+        set_coef(model, 1),
+        "Length of new_coefs",
+        fixed = TRUE
+      )
+    })
+
+    it("dispatches through rms-style aliases and robcov_vglm internals", {
+      lrm_model <- structure(list(coefficients = c(a = 1)), class = "lrm")
+      rms_model <- structure(list(coefficients = c(a = 1)), class = "rms")
+      robust_model <- structure(
+        list(
+          coefficients = c(a = 1, b = 2),
+          vglm_fit = NULL
+        ),
+        class = "robcov_vglm"
+      )
+
+      expect_equal(set_coef(lrm_model, 3)$coefficients, c(a = 3))
+      expect_equal(set_coef(rms_model, 4)$coefficients, c(a = 4))
+      expect_equal(set_coef(robust_model, c(5, 6))$coefficients, c(a = 5, b = 6))
+    })
+
     it("works for vglm models", {
       skip_if_not_installed("VGAM")
       skip_if_not_installed("rms")
@@ -77,6 +110,35 @@ describe("MVN Simulation-Based Inference for SOPs", {
   })
 
   describe("get_vcov_robust()", {
+    it("handles precomputed, fallback, formula, and unsupported cases", {
+      robust <- structure(list(var = matrix(2, 1, 1)), class = "robcov_vglm")
+      expect_equal(get_vcov_robust(robust), matrix(2, 1, 1))
+
+      precomputed <- structure(
+        list(var = matrix(3, 1, 1), orig.var = matrix(1, 1, 1)),
+        class = "orm"
+      )
+      expect_equal(get_vcov_robust(precomputed), matrix(3, 1, 1))
+
+      fit <- lm(mpg ~ wt, data = mtcars)
+      expect_equal(get_vcov_robust(fit), vcov(fit))
+      expect_error(
+        get_vcov_robust(fit, cluster = ~cyl),
+        "Unsupported model class for robust vcov",
+        fixed = TRUE
+      )
+      expect_error(
+        get_vcov_robust(structure(list(call = list()), class = "orm"), cluster = ~a + b),
+        "cluster formula must specify exactly one variable",
+        fixed = TRUE
+      )
+      expect_error(
+        get_vcov_robust(structure(list(call = list()), class = "orm"), cluster = ~id),
+        "Cluster variable 'id' not found",
+        fixed = TRUE
+      )
+    })
+
     it("returns robust (sandwich) vcov when cluster is NULL for vglm models", {
       skip_if_not_installed("VGAM")
       skip_if_not_installed("rms")
@@ -220,12 +282,13 @@ describe("MVN Simulation-Based Inference for SOPs", {
         ylevels = 1:6,
         absorb = 6,
         id_var = "id"
-      ) |>
-        inferences(
-          method = "simulation",
-          n_sim = 30,
-          return_draws = TRUE
-        )
+      )
+      result <- inferences(
+        result,
+        method = "simulation",
+        n_sim = 30,
+        return_draws = TRUE
+      )
 
       # Extract draws
       draws <- get_draws(result)
@@ -309,12 +372,13 @@ describe("MVN Simulation-Based Inference for SOPs", {
         ylevels = 1:6,
         absorb = 6,
         id_var = "id"
-      ) |>
-        inferences(
-          method = "simulation",
-          n_sim = 50,
-          vcov = V_inflated
-        )
+      )
+      result <- inferences(
+        result,
+        method = "simulation",
+        n_sim = 50,
+        vcov = V_inflated
+      )
 
       # CIs should be wider than with standard vcov
       result_standard <- avg_sops(
@@ -325,11 +389,12 @@ describe("MVN Simulation-Based Inference for SOPs", {
         ylevels = 1:6,
         absorb = 6,
         id_var = "id"
-      ) |>
-        inferences(
-          method = "simulation",
-          n_sim = 50
-        )
+      )
+      result_standard <- inferences(
+        result_standard,
+        method = "simulation",
+        n_sim = 50
+      )
 
       # Compare CI widths
       ci_width_inflated <- result$conf.high - result$conf.low
@@ -525,12 +590,13 @@ describe("MVN Simulation-Based Inference for SOPs", {
         ylevels = 1:6,
         absorb = 6,
         id_var = "id"
-      ) |>
-        inferences(
-          method = "simulation",
-          n_sim = 20,
-          return_draws = FALSE
-        )
+      )
+      result <- inferences(
+        result,
+        method = "simulation",
+        n_sim = 20,
+        return_draws = FALSE
+      )
 
       # get_draws should error
       expect_error(

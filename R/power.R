@@ -272,24 +272,28 @@ tidy_po <- function(
 
   # --- Common Calculation for P-values and CIs ---
   # Apply to the 'result' tibble regardless of which method generated it
-  result <- result |>
-    dplyr::mutate(
-      p_value = dplyr::case_when(
-        alternative == "two.sided" ~ 2 * stats::pnorm(-abs(statistic)),
-        alternative == "greater" ~ stats::pnorm(statistic, lower.tail = FALSE),
-        alternative == "less" ~ stats::pnorm(statistic)
-      ),
-      conf_low = dplyr::case_when(
-        alternative == "two.sided" ~ estimate - z_crit * std_error,
-        alternative == "greater" ~ estimate - z_crit * std_error,
-        alternative == "less" ~ -Inf
-      ),
-      conf_high = dplyr::case_when(
-        alternative == "two.sided" ~ estimate + z_crit * std_error,
-        alternative == "greater" ~ Inf,
-        alternative == "less" ~ estimate + z_crit * std_error
+  if (alternative == "two.sided") {
+    result <- result |>
+      dplyr::mutate(
+        p_value = 2 * stats::pnorm(-abs(statistic)),
+        conf_low = estimate - z_crit * std_error,
+        conf_high = estimate + z_crit * std_error
       )
-    )
+  } else if (alternative == "greater") {
+    result <- result |>
+      dplyr::mutate(
+        p_value = stats::pnorm(statistic, lower.tail = FALSE),
+        conf_low = estimate - z_crit * std_error,
+        conf_high = Inf
+      )
+  } else {
+    result <- result |>
+      dplyr::mutate(
+        p_value = stats::pnorm(statistic),
+        conf_low = -Inf,
+        conf_high = estimate + z_crit * std_error
+      )
+  }
 
   return(result)
 }

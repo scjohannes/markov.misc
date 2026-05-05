@@ -1267,7 +1267,7 @@ sim_trajectories_deterministic <- function(
     dplyr::group_by(id) |>
     dplyr::mutate(yprev = dplyr::lag(y, 1)) |>
     dplyr::ungroup() |>
-    dplyr::filter_out(time == 0)
+    dplyr::filter(time != 0)
 
   return(tibble::tibble(result))
 }
