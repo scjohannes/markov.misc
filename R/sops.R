@@ -76,7 +76,10 @@ validate_markov_model <- function(object) {
 }
 
 predict_vglm_response_markov <- function(object, newdata) {
-  if (!isTRUE(attr(object, "markov_split_assign"))) {
+  if (
+    !isTRUE(attr(object, "markov_vglm")) &&
+      !isTRUE(attr(object, "markov_split_assign"))
+  ) {
     return(VGAM::predict(object, newdata, type = "response"))
   }
 

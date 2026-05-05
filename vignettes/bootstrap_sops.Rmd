@@ -80,8 +80,8 @@ calc_time_in_state_diff(markov_data)
 
 `prepare_markov_data()` creates the transition-level data used by the ordinal
 Markov models. The models below use `rms::rcs(time, 4)` directly in the formula.
-The fitted VGAM model stores the spline knot locations, and the SOP routines
-reuse those locations when they build predictions over follow-up time.
+`vglm.markov()` stores the spline knot locations, and the SOP routines reuse
+those locations when they build predictions over follow-up time.
 
 ```{r}
 data <- prepare_markov_data(markov_data, absorbing_state = 6)
@@ -110,13 +110,13 @@ nonparametric bootstrap inference, and simulation inference.
 ```{r}
 model_b_formula <- ordered(y) ~ rcs(time, 4) + tx + age + yprev
 
-m_simple <- vglm(
+m_simple <- vglm.markov(
   model_b_formula,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
 
-m_time_po <- vglm_split_rcs(
+m_time_po <- vglm.markov(
   model_b_formula,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
@@ -136,7 +136,7 @@ model_b_constraints[[linear_time_term]] <- cbind(
   linear_deviation = seq_len(n_thresholds) - 1
 )
 
-m_time_ppo <- vglm_split_rcs(
+m_time_ppo <- vglm.markov(
   model_b_formula,
   family = cumulative(reverse = TRUE, parallel = FALSE), 
   data = data,
@@ -144,7 +144,7 @@ m_time_ppo <- vglm_split_rcs(
 )
 m_time_ppo@call$constraints <- model_b_constraints
 
-m_state_time <- vglm(
+m_state_time <- vglm.markov(
   ordered(y) ~ rcs(time, 4) * tx + age + yprev + rcs(time, 4):yprev,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data

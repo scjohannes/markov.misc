@@ -60,7 +60,7 @@ describe("avg_sops() and inferences() pipeline", {
 
   fit_inline_pipeline_model <- function(data) {
     suppressWarnings(
-      VGAM::vglm(
+      markov.misc::vglm.markov(
         ordered(y) ~ rms::rcs(time, 4) * tx + yprev + age,
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
         data = data
@@ -644,7 +644,46 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(inline_draws$draw, explicit_draws$draw, tolerance = 1e-10)
   })
 
-  test_that("inline rcs model can use column-level PPO constraints", {
+  test_that("full-PO vglm.markov() with inline rcs matches VGAM::vglm()", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+
+    raw_data <- markov.misc::sim_trajectories_brownian_gap(
+      n_patients = 200,
+      follow_up_time = 12,
+      treatment_prob = 0.5,
+      absorbing_state = 6,
+      seed = 2375679,
+      mu_treatment_effect = 0
+    )
+    data <- markov.misc::prepare_markov_data(raw_data, absorbing_state = 6)
+    data <- add_patient_age(data)
+    form <- ordered(y) ~ rms::rcs(time, 4) + tx + age + yprev
+
+    ordinary_fit <- suppressWarnings(
+      VGAM::vglm(
+        form,
+        family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+        data = data
+      )
+    )
+    markov_fit <- suppressWarnings(
+      markov.misc::vglm.markov(
+        form,
+        family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+        data = data
+      )
+    )
+
+    ordinary_fitted <- stats::predict(ordinary_fit, type = "response")
+    markov_fitted <- markov.misc:::predict_vglm_response_markov(markov_fit, data)
+
+    expect_s4_class(markov_fit, "vglm")
+    expect_true(isTRUE(attr(markov_fit, "markov_vglm")))
+    expect_equal(unname(markov_fitted), unname(ordinary_fitted), tolerance = 1e-10)
+  })
+
+  test_that("inline rcs vglm.markov() model can use column-level PPO constraints", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
 
@@ -662,7 +701,7 @@ describe("avg_sops() and inferences() pipeline", {
     form <- ordered(y) ~ rms::rcs(time, 4) + tx + age + yprev
 
     fit_po <- suppressWarnings(
-      markov.misc::vglm_split_rcs(
+      markov.misc::vglm.markov(
         form,
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
         data = data
@@ -681,7 +720,7 @@ describe("avg_sops() and inferences() pipeline", {
     )
 
     fit_ppo <- suppressWarnings(
-      markov.misc::vglm_split_rcs(
+      markov.misc::vglm.markov(
         form,
         family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
         data = data,
@@ -711,7 +750,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_true(all(is.finite(out$estimate)))
   })
 
-  test_that("vglm_split_rcs constrained PPO matches explicit spline basis", {
+  test_that("vglm.markov() constrained PPO matches explicit spline basis", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
 
@@ -766,7 +805,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     inline_form <- ordered(y) ~ rms::rcs(time, 4) + tx + age + yprev
     inline_po <- suppressWarnings(
-      markov.misc::vglm_split_rcs(
+      markov.misc::vglm.markov(
         inline_form,
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
         data = data
@@ -787,7 +826,7 @@ describe("avg_sops() and inferences() pipeline", {
     )
 
     inline_fit <- suppressWarnings(
-      markov.misc::vglm_split_rcs(
+      markov.misc::vglm.markov(
         inline_form,
         family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
         data = data,
