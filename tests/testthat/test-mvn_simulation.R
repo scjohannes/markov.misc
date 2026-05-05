@@ -228,12 +228,13 @@ describe("MVN Simulation-Based Inference for SOPs", {
         treatment_effect = 0.3,
         follow_up_time = 15
       )
+      baseline_data <- data[data$time == 1, , drop = FALSE]
       m_robust <- make_test_model(data, robust = TRUE)
 
       # Compute avg_sops with robust model
       result <- avg_sops(
         model = m_robust,
-        newdata = data,
+        newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:15,
         ylevels = 1:6,
@@ -254,7 +255,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
 
       # Check CIs are valid - for most observations, low <= estimate <= high
       # With percentile-based CIs, some estimates may fall slightly outside bounds
-      # due to simulation variance. We expect at least 95% to be within bounds.
+      # due to simulation variance. We expect at least 99% to be within bounds.
       in_bounds <- (result_ci$conf.low <= result_ci$estimate) &
         (result_ci$conf.high >= result_ci$estimate)
       expect_gt(mean(in_bounds, na.rm = TRUE), 0.99)
@@ -271,12 +272,13 @@ describe("MVN Simulation-Based Inference for SOPs", {
       skip_if_not_installed("mvtnorm")
 
       data <- make_test_data(n_patients = 40, seed = 777, follow_up_time = 10)
+      baseline_data <- data[data$time == 1, , drop = FALSE]
       m_robust <- make_test_model(data, robust = TRUE)
 
       # Compute avg_sops with simulation CIs and draws
       result <- avg_sops(
         model = m_robust,
-        newdata = data,
+        newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
         ylevels = 1:6,
@@ -357,6 +359,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
       skip_if_not_installed("mvtnorm")
 
       data <- make_test_data(n_patients = 40, seed = 999, follow_up_time = 10)
+      baseline_data <- data[data$time == 1, , drop = FALSE]
       m_vglm <- make_test_model(data)
 
       # Compute custom vcov (e.g., inflated for conservative CIs)
@@ -366,7 +369,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
       # Compute avg_sops with custom vcov
       result <- avg_sops(
         model = m_vglm,
-        newdata = data,
+        newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
         ylevels = 1:6,
@@ -383,7 +386,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
       # CIs should be wider than with standard vcov
       result_standard <- avg_sops(
         model = m_vglm,
-        newdata = data,
+        newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
         ylevels = 1:6,
@@ -413,12 +416,13 @@ describe("MVN Simulation-Based Inference for SOPs", {
       skip_if_not_installed("mvtnorm")
 
       data <- make_test_data(n_patients = 40, seed = 1010, follow_up_time = 10)
+      baseline_data <- data[data$time == 1, , drop = FALSE]
       m_robust <- make_test_model(data, robust = TRUE)
 
       # Compute avg_sops with robust model
       avg_result <- avg_sops(
         model = m_robust,
-        newdata = data,
+        newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
         ylevels = 1:6,
@@ -519,6 +523,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
       skip_if_not_installed("rms")
 
       data <- make_test_data(n_patients = 30, seed = 1111, follow_up_time = 10)
+      baseline_data <- data[data$time == 1, , drop = FALSE]
       m_vglm <- make_test_model(data)
 
       # Error: passing model directly instead of sops object
@@ -530,7 +535,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
       # Error: invalid method
       avg_result <- avg_sops(
         model = m_vglm,
-        newdata = data,
+        newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
         ylevels = 1:6,
@@ -579,12 +584,13 @@ describe("MVN Simulation-Based Inference for SOPs", {
       skip_if_not_installed("mvtnorm")
 
       data <- make_test_data(n_patients = 30, seed = 1212, follow_up_time = 10)
+      baseline_data <- data[data$time == 1, , drop = FALSE]
       m_robust <- make_test_model(data, robust = TRUE)
 
       # Compute avg_sops without return_draws
       result <- avg_sops(
         model = m_robust,
-        newdata = data,
+        newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
         ylevels = 1:6,

@@ -1,3 +1,5 @@
+# plan to rework tidy_po anyways, so no worth adding more tests for now
+
 test_that("tidy_po handles glm alternatives and excludes intercepts", {
   data <- data.frame(
     y = c(0, 0, 1, 1, 0, 1),

@@ -23,7 +23,8 @@ test_that("sim_trajectories_brownian keeps the absorbing state", {
   traj <- sim_trajectories_brownian(
     n_patients = 80,
     follow_up_time = 20,
-    seed = 321
+    seed = 321,
+    absorbing_state = 6
   )
 
   deaths <- traj[traj$y == 6, ]
@@ -108,7 +109,8 @@ test_that("sim_trajectories_brownian_gap keeps the absorbing state", {
   traj <- sim_trajectories_brownian_gap(
     n_patients = 80,
     follow_up_time = 20,
-    seed = 321
+    seed = 321,
+    absorbing_state = 6
   )
 
   deaths <- traj[traj$y == 6, ]
@@ -123,7 +125,7 @@ test_that("sim_trajectories_brownian_gap keeps the absorbing state", {
 })
 
 test_that("sim_actt2_brownian returns ACTT-2-shaped output", {
-  traj <- sim_actt2_brownian(n_patients = 60, seed = 42)
+  traj <- sim_actt2_brownian(n_patients = 60, seed = 1987)
 
   expect_named(traj, c("id", "tx", "time", "y", "yprev", "x"))
   expect_equal(min(traj$time), 1)

@@ -679,8 +679,6 @@ describe("robcov_vglm() stress tests", {
     skip_if_not_installed("VGAM")
 
     # Scenario: 5 clusters, but model has 2 parameters
-    # This is "risky" but mathematically possible.
-    # Real danger is if Clusters < Parameters (e.g., 2 clusters, 5 params)
 
     withr::local_seed(9005)
     n_clusters <- 3
@@ -703,7 +701,6 @@ describe("robcov_vglm() stress tests", {
     )
 
     # This should NOT crash, but might produce warnings or singular matrices
-    # We want to ensure the code is robust enough to return *something*
     res <- robcov_vglm(m, cluster = cluster)
 
     expect_s3_class(res, "robcov_vglm")

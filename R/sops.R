@@ -897,15 +897,6 @@ sops <- function(
     # Group by time, state, and stratification variables, then average
     group_cols <- unique(c("time", "state", by))
 
-    # Validate all grouping columns exist
-    missing_groups <- setdiff(group_cols, names(result))
-    if (length(missing_groups) > 0) {
-      stop(
-        "Grouping variables missing from result: ",
-        paste(missing_groups, collapse = ", ")
-      )
-    }
-
     # Aggregate using base R for minimal dependencies
     agg_formula <- stats::as.formula(
       paste("estimate ~", paste(group_cols, collapse = " + "))
@@ -2635,11 +2626,7 @@ get_draws <- function(object) {
   }
 
   # 4. Join metadata back to draws
-  if (requireNamespace("dplyr", quietly = TRUE)) {
-    draws <- dplyr::left_join(draws, meta, by = keys)
-  } else {
-    draws <- merge(draws, meta, by = keys, all.x = TRUE, sort = FALSE)
-  }
+  draws <- merge(draws, meta, by = keys, all.x = TRUE, sort = FALSE)
 
   return(draws)
 }
