@@ -282,6 +282,11 @@ proportional odds models. Inline splines may be used for time or for numeric
 previous-state effects such as \code{rcs(yprev, 6)}.
 }
 \details{
+\code{vglm.markov()} also makes the \code{rms} formula helpers \code{rcs()} and \verb{\%ia\%}
+available while building model frames and prediction design matrices. This
+lets formulas use \code{time \%ia\% yprev} for a linear-time by previous-state
+interaction without requiring \code{library(rms)} in the user's session.
+
 Non-spline terms, factor terms, and workflows that use explicit precomputed
 basis columns keep ordinary VGAM assignment behavior. This function does not
 compute robust covariance matrices; wrap the returned fit with
@@ -302,6 +307,20 @@ fit_numeric_prev <- vglm.markov(
   ordered(y) ~ rcs(time, 4) + tx + age + rcs(yprev, 6),
   family = cumulative(reverse = TRUE, parallel = TRUE),
   data = prepare_markov_data(data, factor_previous = FALSE)
+)
+
+fit_linear_time_by_prev <- vglm.markov(
+  ordered(y) ~ rcs(time, 6) + tx + age + yprev + time \%ia\% yprev,
+  family = cumulative(reverse = TRUE, parallel = TRUE),
+  data = data
+)
+
+# In contrast, rcs(time, 6) \%ia\% yprev follows rms semantics and interacts
+# the spline basis columns with yprev when yprev is categorical.
+fit_spline_basis_by_prev <- vglm.markov(
+  ordered(y) ~ rcs(time, 6) + tx + age + yprev + rcs(time, 6) \%ia\% yprev,
+  family = cumulative(reverse = TRUE, parallel = TRUE),
+  data = data
 )
 
 constraints <- fit_po@constraints

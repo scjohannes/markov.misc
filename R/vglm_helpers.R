@@ -10,6 +10,11 @@
 #' proportional odds models. Inline splines may be used for time or for numeric
 #' previous-state effects such as `rcs(yprev, 6)`.
 #'
+#' `vglm.markov()` also makes the `rms` formula helpers `rcs()` and `%ia%`
+#' available while building model frames and prediction design matrices. This
+#' lets formulas use `time %ia% yprev` for a linear-time by previous-state
+#' interaction without requiring `library(rms)` in the user's session.
+#'
 #' Non-spline terms, factor terms, and workflows that use explicit precomputed
 #' basis columns keep ordinary VGAM assignment behavior. This function does not
 #' compute robust covariance matrices; wrap the returned fit with
@@ -38,6 +43,20 @@
 #'   ordered(y) ~ rcs(time, 4) + tx + age + rcs(yprev, 6),
 #'   family = cumulative(reverse = TRUE, parallel = TRUE),
 #'   data = prepare_markov_data(data, factor_previous = FALSE)
+#' )
+#'
+#' fit_linear_time_by_prev <- vglm.markov(
+#'   ordered(y) ~ rcs(time, 6) + tx + age + yprev + time %ia% yprev,
+#'   family = cumulative(reverse = TRUE, parallel = TRUE),
+#'   data = data
+#' )
+#'
+#' # In contrast, rcs(time, 6) %ia% yprev follows rms semantics and interacts
+#' # the spline basis columns with yprev when yprev is categorical.
+#' fit_spline_basis_by_prev <- vglm.markov(
+#'   ordered(y) ~ rcs(time, 6) + tx + age + yprev + rcs(time, 6) %ia% yprev,
+#'   family = cumulative(reverse = TRUE, parallel = TRUE),
+#'   data = data
 #' )
 #'
 #' constraints <- fit_po@constraints
@@ -86,6 +105,10 @@ vglm.markov <- function(
   dataname <- as.character(substitute(data))
   function.name <- "vglm"
   ocall <- match.call()
+  formula <- add_rms_formula_helpers(formula)
+  if (!is.null(form2)) {
+    form2 <- add_rms_formula_helpers(form2)
+  }
 
   setup_smart <- utils::getFromNamespace("setup.smart", "VGAM")
   get_smart_prediction <- utils::getFromNamespace("get.smart.prediction", "VGAM")
@@ -112,6 +135,7 @@ vglm.markov <- function(
     0
   )
   mf <- mf[c(1, m)]
+  mf$formula <- formula
   mf$drop.unused.levels <- TRUE
   mf[[1]] <- as.name("model.frame")
   mf <- eval(mf, parent.frame())
@@ -310,6 +334,33 @@ vglm.markov <- function(
   attr(answer, "markov_vglm") <- TRUE
   attr(answer, "markov_split_assign") <- split_assign$has_rcs
   answer
+}
+
+add_rms_formula_helpers <- function(formula) {
+  if (!inherits(formula, "formula")) {
+    return(formula)
+  }
+
+  formula_env <- environment(formula)
+  if (is.null(formula_env)) {
+    formula_env <- parent.frame()
+  }
+
+  helper_env <- new.env(parent = formula_env)
+
+  if (!exists("rcs", envir = formula_env, inherits = TRUE)) {
+    assign("rcs", utils::getFromNamespace("rcs", "rms"), envir = helper_env)
+  }
+  if (!exists("%ia%", envir = formula_env, inherits = TRUE)) {
+    assign(
+      "%ia%",
+      utils::getFromNamespace("%ia%", "rms"),
+      envir = helper_env
+    )
+  }
+
+  environment(formula) <- helper_env
+  formula
 }
 
 split_rcs_assign <- function(x, terms) {
