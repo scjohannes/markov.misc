@@ -63,7 +63,7 @@ beta_hat <- as.numeric(stats::coef(fit)[1])
 scores <- as.numeric(fit_rb$scores[, 1])
 bread <- as.numeric(fit_rb$bread[1, 1])
 n_obs <- fit_rb$n
-v_hat <- bread / n_obs
+v_hat <- bread
 
 stopifnot(length(stats::coef(fit)) == 1)
 stopifnot(abs(sum(scores)) < 1e-8)
@@ -275,7 +275,7 @@ $$
 $$
 
 where $V(\hat\beta)=(-H(\hat\beta))^{-1}$, and in package terms
-$V(\hat\beta) = \texttt{bread}/n$.
+$V(\hat\beta) = \texttt{bread}$.
 
 ```{r tangent-viz}
 U_star <- sum(contrib_df$weighted_score_i)
@@ -498,25 +498,18 @@ $$
 
 In this package, bread is defined as:
 $$
-B = n \cdot \text{Var}(\hat{\beta}) = n \cdot [-H(\hat{\beta})]^{-1}
-$$
-
-So:
-$$
-[-H(\hat{\beta})]^{-1} = \frac{B}{n}
+B = \text{Var}(\hat{\beta}) = [-H(\hat{\beta})]^{-1}
 $$
 
 Substituting into the one-step update:
 $$
-\beta^* \approx \hat{\beta} + \frac{B}{n} \cdot U_{\text{star}}
-= \hat{\beta} + \frac{1}{n}(B \cdot U_{\text{star}})
+\beta^* \approx \hat{\beta} + B \cdot U_{\text{star}}
 $$
 
-We compute $(B \cdot U_{\text{star}})$ first (matrix times vector), then divide
-by $n$.
+We compute $(B \cdot U_{\text{star}})$ as a matrix times vector.
 
 ``` r
-beta_draws[i, ] <- beta_hat + as.vector((bread %*% U_star) / n_obs)
+beta_draws[i, ] <- beta_hat + as.vector(bread %*% U_star)
 ```
 
 ------------------------------------------------------------------------

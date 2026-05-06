@@ -1878,7 +1878,8 @@ inferences_simulation <- function(
 #' (shared with score perturbations) for `avg_sops` marginalization.
 #'
 #' @param model A `robcov_vglm` object with stored `scores`, `bread`, and
-#'   `cluster` components.
+#'   `cluster` components. The `bread` component is the model-based covariance
+#'   matrix returned by `vcov()` for the original `vglm` fit.
 #' @param baseline_data Baseline data (one row per patient).
 #' @param id_var Name of patient ID variable in `baseline_data`.
 #' @param n_sim Number of simulation draws.
@@ -1909,7 +1910,7 @@ generate_score_bootstrap_draws <- function(
 
   score_weight_dist <- match.arg(score_weight_dist, choices = "exponential")
 
-  required <- c("coefficients", "bread", "scores", "cluster", "n")
+  required <- c("coefficients", "bread", "scores", "cluster")
   missing_required <- required[vapply(
     required,
     function(x) is.null(model[[x]]),
@@ -1932,8 +1933,6 @@ generate_score_bootstrap_draws <- function(
   bread <- model$bread
   scores <- model$scores
   cluster <- model$cluster
-  n_obs <- model$n
-
   if (!is.matrix(scores)) {
     stop("`model$scores` must be a matrix for score bootstrap.")
   }
@@ -2002,16 +2001,15 @@ generate_score_bootstrap_draws <- function(
     # definition) zero (because we're looking at the first derivative at the MLE
     #).
 
-    # U_star is the perturbed total score vector for this draw. U_start
-    # represents what the total score (first derivative of the log-likelihood)
-    # would be if had resampled patients
+    # U_star is the perturbed total score vector for this draw. It
+    # represents the total score perturbation under resampled patient weights.
     U_star <- as.vector(crossprod(u_cluster, scores_clustered))
 
     # One-Step Newton-Raphson Update:
     # If we ignore covariance: if var(beta_x) very low, then even if U_star is
     # large, then the update will be small.
     #
-    # Reminder to self bread %*% U_start is equivanelt to sum(bread[i, ] *
+    # Reminder to self bread %*% U_star is equivalent to sum(bread[i, ] *
     # U_star) for each row of bread.
 
     # We can use Newton-Raphson to find root of the score equation, which gives
@@ -2030,9 +2028,9 @@ generate_score_bootstrap_draws <- function(
     # $\beta_{new} = \beta_{old} + V \times U(\beta_{old})$
     # The new beta (x1) is where the tangent line at the old beta (x0) intersects the x-axis (where score = 0).
 
-    # The bread (vcov) is the inverse of the negative Hessian
-
-    beta_draws[i, ] <- beta_hat + as.vector((bread %*% U_star) / n_obs)
+    # The bread component is vcov(fit), so this directly applies the
+    # one-step update from the total score perturbation.
+    beta_draws[i, ] <- beta_hat + as.vector(bread %*% U_star)
 
     w_patient <- w_cluster[cluster_idx]
     w_sum <- sum(w_patient)

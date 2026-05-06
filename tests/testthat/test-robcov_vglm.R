@@ -69,6 +69,12 @@ describe("robcov_vglm()", {
     expect_equal(dim(result$influence_beta_obs), c(n, p))
     expect_equal(dim(result$bread), c(p, p))
     expect_equal(dim(result$meat), c(p, p))
+    expect_equal(result$bread, vcov(m))
+
+    expected_var <- result$bread %*% result$meat %*% result$bread
+    expected_var <- (expected_var + t(expected_var)) / 2
+    dimnames(expected_var) <- dimnames(result$var)
+    expect_equal(result$var, expected_var, tolerance = 1e-15)
 
     # Check variance matrix is symmetric
     expect_equal(result$var, t(result$var), tolerance = 1e-15)
@@ -82,6 +88,9 @@ describe("robcov_vglm()", {
 
     # Check n matches
     expect_equal(result$n, n)
+
+    result_row_cluster <- robcov_vglm(m, cluster = seq_len(n))
+    expect_equal(result_row_cluster$var, result$var, tolerance = 1e-15)
   })
 
   it("stores VGAM influence contributions consistent with scores", {
@@ -434,6 +443,45 @@ describe("Score properties", {
     score_sums <- colSums(result$scores)
     expect_all_true(abs(score_sums) < 1e-5)
   })
+
+  it("matches the loop-equivalent score calculation", {
+    skip_if_not_installed("VGAM")
+
+    withr::local_seed(203)
+    n <- 160
+    test_data <- data.frame(
+      y = ordered(sample(1:4, n, replace = TRUE)),
+      x1 = rnorm(n),
+      x2 = rnorm(n)
+    )
+    m <- VGAM::vglm(
+      y ~ x1 + x2,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = test_data
+    )
+
+    scores <- compute_scores_vglm(m)
+    deriv_eta <- VGAM::weights(
+      m,
+      type = "working",
+      deriv.arg = TRUE
+    )$deriv
+    X_vlm <- stats::model.matrix(m, type = "vlm")
+    M <- VGAM::npred(m)
+
+    scores_loop <- matrix(0, nrow = n, ncol = length(coef(m)))
+    for (i in seq_len(n)) {
+      vlm_rows <- ((i - 1) * M + 1):(i * M)
+      scores_loop[i, ] <- as.vector(crossprod(
+        X_vlm[vlm_rows, , drop = FALSE],
+        deriv_eta[i, ]
+      ))
+    }
+    colnames(scores_loop) <- names(coef(m))
+    rownames(scores_loop) <- rownames(scores)
+
+    expect_equal(scores, scores_loop)
+  })
 })
 
 describe("Small-sample adjustment", {
@@ -456,8 +504,14 @@ describe("Small-sample adjustment", {
     m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
 
     # Compute with and without adjustment
-    result_noadj <- robcov_vglm(m, cluster = cluster, adjust = FALSE)
-    result_adj <- robcov_vglm(m, cluster = cluster, adjust = TRUE)
+    expect_warning(
+      result_noadj <- robcov_vglm(m, cluster = cluster, adjust = FALSE),
+      "fewer than 30 clusters"
+    )
+    expect_warning(
+      result_adj <- robcov_vglm(m, cluster = cluster, adjust = TRUE),
+      "fewer than 30 clusters"
+    )
 
     # Adjustment factor is G/(G-1) = 20/19 ≈ 1.0526
     expected_ratio <- sqrt(n_clusters / (n_clusters - 1))
@@ -469,6 +523,47 @@ describe("Small-sample adjustment", {
       rep(expected_ratio, length(se_ratio)),
       tolerance = 1e-10
     )
+  })
+})
+
+describe("Score bootstrap compatibility", {
+  it("uses vcov bread directly for one-step score updates", {
+    skip_if_not_installed("VGAM")
+
+    withr::local_seed(304)
+    n_clusters <- 30
+    n_per_cluster <- 4
+    n <- n_clusters * n_per_cluster
+    cluster <- rep(sprintf("id%02d", seq_len(n_clusters)), each = n_per_cluster)
+    x <- rnorm(n)
+    y <- rbinom(n, 1, plogis(-0.2 + 0.4 * x))
+    test_data <- data.frame(y = y, x = x, id = cluster)
+
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
+    robust <- robcov_vglm(m, cluster = test_data$id)
+    baseline_data <- data.frame(id = unique(test_data$id))
+
+    cluster_ids <- unique(as.character(robust$cluster))
+    scores_clustered <- rowsum(
+      robust$scores,
+      factor(as.character(robust$cluster), levels = cluster_ids),
+      reorder = FALSE
+    )
+
+    withr::local_seed(305)
+    w_cluster <- stats::rexp(length(cluster_ids), rate = 1)
+    U_star <- as.vector(crossprod(w_cluster - 1, scores_clustered))
+    expected_beta <- robust$coefficients + as.vector(robust$bread %*% U_star)
+
+    withr::local_seed(305)
+    draws <- generate_score_bootstrap_draws(
+      robust,
+      baseline_data = baseline_data,
+      id_var = "id",
+      n_sim = 1
+    )
+
+    expect_equal(unname(draws$beta_draws[1, ]), unname(expected_beta))
   })
 })
 
@@ -495,11 +590,17 @@ describe("Utility methods", {
 
     # Test with clustering
     cluster <- rep(1:10, each = 10)
-    result_cl <- robcov_vglm(m, cluster = cluster)
+    expect_warning(
+      result_cl <- robcov_vglm(m, cluster = cluster),
+      "fewer than 30 clusters"
+    )
     expect_snapshot(summary(result_cl))
 
     # Test with clustering and adjustment
-    result_adj <- robcov_vglm(m, cluster = cluster, adjust = TRUE)
+    expect_warning(
+      result_adj <- robcov_vglm(m, cluster = cluster, adjust = TRUE),
+      "fewer than 30 clusters"
+    )
     expect_snapshot(summary(result_adj))
 
     # Test print method returns invisibly
@@ -554,37 +655,71 @@ describe("robcov_vglm() stress tests", {
   it("handles missing data correctly (alignment with clusters)", {
     skip_if_not_installed("VGAM")
 
-    # Generate data with NAs
     withr::local_seed(9001)
     n <- 200
     x <- rnorm(n)
     y <- rbinom(n, 1, 0.5)
-
-    # Introduce NAs in predictors and outcome
     x[1:10] <- NA
     y[11:20] <- NA
 
     test_data <- data.frame(y = y, x = x, id = 1:n)
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
+    omitted <- as.integer(unlist(m@na.action, use.names = FALSE))
+    aligned_cluster <- test_data$id[-omitted]
 
-    # Fit vglm (will drop 20 rows)
-    # Note: vglm does not have a 'na.action' argument by default like lm,
-    # but handles NAs by dropping them if na.action is set globally or in model.frame
-    # We explicitly remove NAs to simulate the user passing "clean" data vs "dirty" clusters
+    res_original <- robcov_vglm(m, cluster = test_data$id)
+    res_aligned <- robcov_vglm(m, cluster = aligned_cluster)
 
-    clean_data <- na.omit(test_data)
-    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = clean_data)
+    expect_s3_class(res_original, "robcov_vglm")
+    expect_equal(res_original$n, 180) # 200 - 20 dropped
+    expect_equal(res_original$cluster, aligned_cluster)
+    expect_equal(res_original$var, res_aligned$var)
+  })
 
-    # Case 1: Cluster vector is too long (user forgot to drop NAs from cluster var)
-    # This simulates a very common user error
-    expect_error(
-      robcov_vglm(m, cluster = test_data$id),
-      "Length of 'cluster' must equal"
+  it("rejects missing and single-valued clusters", {
+    skip_if_not_installed("VGAM")
+
+    withr::local_seed(90011)
+    n <- 80
+    test_data <- data.frame(
+      y = rbinom(n, 1, 0.5),
+      x = rnorm(n),
+      id = rep(1:8, each = 10)
     )
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
 
-    # Case 2: Correct usage
-    res <- robcov_vglm(m, cluster = clean_data$id)
-    expect_s3_class(res, "robcov_vglm")
-    expect_equal(res$n, 180) # 200 - 20 dropped
+    cluster_missing <- test_data$id
+    cluster_missing[1] <- NA
+
+    expect_error(
+      robcov_vglm(m, cluster = cluster_missing),
+      "contains missing values"
+    )
+    expect_error(
+      robcov_vglm(m, cluster = rep(1, n)),
+      "at least two clusters"
+    )
+  })
+
+  it("warns for few clusters while retaining z-test p-values", {
+    skip_if_not_installed("VGAM")
+
+    withr::local_seed(90012)
+    n_clusters <- 5
+    n_per <- 20
+    n <- n_clusters * n_per
+    test_data <- data.frame(
+      y = rbinom(n, 1, 0.5),
+      x = rnorm(n),
+      id = rep(seq_len(n_clusters), each = n_per)
+    )
+    m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
+
+    expect_warning(
+      res <- robcov_vglm(m, cluster = test_data$id),
+      "fewer than 30 clusters"
+    )
+    expect_equal(res$pvalues, 2 * pnorm(-abs(res$z)))
   })
 
   it("works with model weights", {
@@ -700,8 +835,11 @@ describe("robcov_vglm() stress tests", {
       data = test_data
     )
 
-    # This should NOT crash, but might produce warnings or singular matrices
-    res <- robcov_vglm(m, cluster = cluster)
+    # This should NOT crash, but warns because few clusters give fragile z-tests.
+    expect_warning(
+      res <- robcov_vglm(m, cluster = cluster),
+      "fewer than 30 clusters"
+    )
 
     expect_s3_class(res, "robcov_vglm")
 
@@ -728,7 +866,10 @@ describe("robcov_vglm() stress tests", {
     m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
 
     # This ensures rowsum() or internal logic doesn't create NA rows for empty level "C"
-    res <- robcov_vglm(m, cluster = cluster_fac)
+    expect_warning(
+      res <- robcov_vglm(m, cluster = cluster_fac),
+      "fewer than 30 clusters"
+    )
 
     expect_s3_class(res, "robcov_vglm")
 

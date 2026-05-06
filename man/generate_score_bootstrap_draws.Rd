@@ -14,7 +14,8 @@ generate_score_bootstrap_draws(
 }
 \arguments{
 \item{model}{A \code{robcov_vglm} object with stored \code{scores}, \code{bread}, and
-\code{cluster} components.}
+\code{cluster} components. The \code{bread} component is the model-based covariance
+matrix returned by \code{vcov()} for the original \code{vglm} fit.}
 
 \item{baseline_data}{Baseline data (one row per patient).}
 

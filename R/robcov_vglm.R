@@ -6,8 +6,9 @@
 #'
 #' @param fit A fitted vglm object from the VGAM package.
 #' @param cluster Optional vector of cluster identifiers. If provided, computes
-#'   cluster-robust standard errors. Must have the same length as the number of
-#'   observations.
+#'   cluster-robust standard errors. Must have the same length as the fitted
+#'   observations, or the same length as the original pre-NA data when the fitted
+#'   model records omitted rows in `fit@na.action`.
 #' @param adjust Logical. If TRUE, applies small-sample correction factor
 #'   G/(G-1) for clustered data, where G is the number of clusters. Default is
 #'   FALSE to match `rms::robcov()` behavior.
@@ -50,10 +51,12 @@
 #'
 #'   **Sandwich components:**
 #'   \item{scores}{Matrix of observation-level score contributions (n x p)}
-#'   \item{influence_beta_obs}{Matrix of observation-level influence
-#'     contributions for \eqn{\beta} (n x p), computed via `VGAM::Influence()`}
-#'   \item{bread}{The "bread" matrix (scaled inverse Hessian)}
-#'   \item{meat}{The "meat" matrix}
+#'   \item{influence_beta_obs}{Optional matrix of observation-level influence
+#'     contributions for \eqn{\beta} (n x p), computed via `VGAM::Influence()`
+#'     when available}
+#'   \item{bread}{The model-based covariance matrix, `vcov(fit)`}
+#'   \item{meat}{The crossproduct of raw observation scores, or cluster-summed
+#'     scores when `cluster` is supplied}
 #'
 #'   **Clustering information:**
 #'   \item{cluster}{The cluster variable (if provided)}
@@ -63,17 +66,17 @@
 #'
 #' @details
 #' The sandwich estimator has the form:
-#' \deqn{V = B \cdot M \cdot B / n}
-#' where B is the "bread" (n times the inverse of the negative Hessian, i.e.,
-#' n * vcov(fit)) and M is the "meat" (the variance of the score contributions).
+#' \deqn{V = B \cdot M \cdot B}
+#' where B is the model-based covariance matrix returned by `vcov(fit)`, based
+#' on VGAM's final fitted information matrix, and M is the score crossproduct.
 #'
 #' For unclustered data, the meat matrix is:
-#' \deqn{M = \frac{1}{n} \sum_{i=1}^{n} \psi_i \psi_i'}
+#' \deqn{M = \sum_{i=1}^{n} \psi_i \psi_i'}
 #' where \eqn{\psi_i} is the score (gradient of log-likelihood) for observation i.
 #'
 #' For clustered data, scores are summed within clusters before computing the
 #' meat matrix:
-#' \deqn{M = \frac{1}{n} \sum_{g=1}^{G} \left(\sum_{i \in g} \psi_i\right)
+#' \deqn{M = \sum_{g=1}^{G} \left(\sum_{i \in g} \psi_i\right)
 #'       \left(\sum_{i \in g} \psi_i\right)'}
 #'
 #' When `adjust = TRUE`, the meat matrix is multiplied by G/(G-1) for clustered
@@ -83,17 +86,19 @@
 #'
 #' **Z-statistics and p-values**: The returned object includes z-statistics
 #' computed as coefficients divided by robust standard errors, and two-sided
-#' p-values from the standard normal distribution. These can be used for
-#' inference that is robust to model misspecification or within-cluster
-#' correlation.
+#' p-values from the standard normal distribution. This approximation is
+#' asymptotic in the number of independent observations or clusters. With few
+#' clusters, p-values may be anti-conservative.
 #'
-#' **Comparison with rms::robcov()**: This function produces nearly identical
-#' results to `rms::robcov()` when used with equivalent models:
-#' - For binary outcomes (vglm with binomialff vs orm), results match to
-#'   numerical precision
-#' - For ordinal outcomes (vglm with cumulative vs orm), small differences
-#'   (~0.1-1.5%) may occur due to different internal parameterizations, but
-#'   the results are practically equivalent
+#' **Weights and aggregated responses**: Scores are computed at the fitted-row
+#' level. With prior or frequency weights, or with aggregated ordinal count
+#' responses, this treats each fitted row as the independent score contribution.
+#' That can differ from a sandwich estimator computed after expanding data to
+#' one row per independent individual.
+#'
+#' **Comparison with rms::robcov()**: For equivalent models, results should be
+#' compared after accounting for parameterization, cutpoint direction, response
+#' coding, weights, and missing-data handling.
 #'
 #' @examples
 #' \dontrun{
@@ -132,16 +137,18 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = FALSE) {
   p <- length(coef(fit))
   coefficients <- coef(fit)
 
-  # Get the bread matrix: n * vcov(fit)
-  # vcov(fit) is the inverse of the negative Hessian
+  # Get the bread matrix: VGAM's model-based covariance matrix.
   model_vcov <- vcov(fit)
   original_se <- sqrt(diag(model_vcov))
   names(original_se) <- names(coefficients)
-  bread <- n * model_vcov
+  bread <- model_vcov
 
   # --- 2. Compute observation-level score contributions ---
   scores <- compute_scores_vglm(fit)
-  influence_beta_obs <- VGAM::Influence(fit)
+  influence_beta_obs <- tryCatch(
+    VGAM::Influence(fit),
+    error = function(e) NULL
+  )
 
   # Validate scores dimensions
 
@@ -151,56 +158,71 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = FALSE) {
   if (ncol(scores) != p) {
     stop("Number of score columns does not match number of parameters")
   }
-  if (!is.matrix(influence_beta_obs)) {
-    stop("VGAM::Influence(fit) did not return a matrix.")
-  }
-  if (nrow(influence_beta_obs) != n || ncol(influence_beta_obs) != p) {
-    stop(
-      "Influence matrix dimensions do not match expected [n x p]: got [",
-      nrow(influence_beta_obs),
-      " x ",
-      ncol(influence_beta_obs),
-      "], expected [",
-      n,
-      " x ",
-      p,
-      "]."
-    )
+  if (!is.null(influence_beta_obs)) {
+    if (
+      !is.matrix(influence_beta_obs) ||
+        nrow(influence_beta_obs) != n ||
+        ncol(influence_beta_obs) != p
+    ) {
+      warning(
+        "VGAM::Influence(fit) did not return the expected [n x p] matrix; ",
+        "setting influence_beta_obs to NULL.",
+        call. = FALSE
+      )
+      influence_beta_obs <- NULL
+    }
   }
 
   # --- 3. Compute the meat matrix ---
   if (!is.null(cluster)) {
-    if (length(cluster) != n) {
-      stop("Length of 'cluster' must equal number of observations (", n, ")")
+    cluster <- align_cluster_vglm(fit, cluster, n)
+
+    if (anyNA(cluster)) {
+      stop(
+        "'cluster' contains missing values after alignment with the fitted ",
+        "data."
+      )
     }
 
     # Convert to factor and aggregate scores by cluster
-    cluster <- as.factor(cluster)
+    cluster_group <- as.factor(cluster)
 
     # Sum scores within clusters using efficient rowsum
-    scores_clustered <- rowsum(scores, cluster, reorder = FALSE)
+    scores_clustered <- rowsum(scores, cluster_group, reorder = FALSE)
 
     # Count actual clusters present in data (not just factor levels)
     n_clusters <- nrow(scores_clustered)
 
+    if (n_clusters < 2L) {
+      stop("Cluster-robust covariance requires at least two clusters.")
+    }
+    if (n_clusters < 30L) {
+      warning(
+        "Cluster-robust p-values use normal z-tests; with fewer than 30 ",
+        "clusters they may be anti-conservative.",
+        call. = FALSE
+      )
+    }
+
     # Compute meat matrix from clustered scores
-    meat <- crossprod(scores_clustered) / n
+    meat <- crossprod(scores_clustered)
 
     # Apply small-sample correction if requested
-    if (adjust && n_clusters > 1) {
+    if (adjust) {
       meat <- meat * (n_clusters / (n_clusters - 1))
     }
   } else {
     n_clusters <- NULL
     # Standard (unclustered) meat matrix
-    meat <- crossprod(scores) / n
+    meat <- crossprod(scores)
   }
 
-  # --- 4. Compute the sandwich: V = B * M * B / n ---
-  robust_var <- (bread %*% meat %*% bread) / n
+  # --- 4. Compute the sandwich: V = B * M * B ---
+  robust_var <- bread %*% meat %*% bread
 
   # Ensure symmetry (numerical stability)
   robust_var <- (robust_var + t(robust_var)) / 2
+  dimnames(robust_var) <- dimnames(model_vcov)
 
   # Extract standard errors
   robust_se <- sqrt(diag(robust_var))
@@ -301,6 +323,10 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = FALSE) {
 #'
 #' @keywords internal
 compute_scores_vglm <- function(fit) {
+  if (!inherits(fit, "vglm")) {
+    stop("'fit' must be a vglm object")
+  }
+
   # Get dimensions
   n <- nobs(fit, type = "lm")
   M <- VGAM::npred(fit)
@@ -308,27 +334,95 @@ compute_scores_vglm <- function(fit) {
 
   # Get working weights with derivatives
   # wt_info$deriv is an n x M matrix containing d(log L)/d(eta_m) for each obs
-  wt_info <- VGAM::weights(fit, type = "working", deriv = TRUE)
+  wt_info <- VGAM::weights(fit, type = "working", deriv.arg = TRUE)
+  if (!is.list(wt_info) || is.null(wt_info$deriv)) {
+    stop(
+      "Could not extract d logLik / d eta from ",
+      "VGAM::weights(..., deriv.arg = TRUE)."
+    )
+  }
   deriv_eta <- wt_info$deriv
+
+  if (!is.matrix(deriv_eta)) {
+    deriv_eta <- matrix(deriv_eta, nrow = n)
+  }
+  if (nrow(deriv_eta) != n || ncol(deriv_eta) != M) {
+    stop(
+      "Unexpected derivative dimensions: got [",
+      nrow(deriv_eta),
+      " x ",
+      ncol(deriv_eta),
+      "], expected [",
+      n,
+      " x ",
+      M,
+      "]."
+    )
+  }
 
   # Get the VLM model matrix (n*M x p)
   X_vlm <- stats::model.matrix(fit, type = "vlm")
 
-  # Initialize score matrix
-  scores <- matrix(0, nrow = n, ncol = p)
-
-  # Compute scores for each observation
-  # Score_i = X_i' %*% deriv_eta_i
-  # where X_i is the M x p submatrix of X_vlm for observation i
-  for (i in seq_len(n)) {
-    vlm_rows <- ((i - 1) * M + 1):(i * M)
-    X_i <- X_vlm[vlm_rows, , drop = FALSE]
-    deriv_i <- deriv_eta[i, ]
-    scores[i, ] <- as.vector(crossprod(X_i, deriv_i))
+  if (nrow(X_vlm) != n * M || ncol(X_vlm) != p) {
+    stop(
+      "Unexpected VLM model matrix dimensions: got [",
+      nrow(X_vlm),
+      " x ",
+      ncol(X_vlm),
+      "], expected [",
+      n * M,
+      " x ",
+      p,
+      "]."
+    )
   }
 
+  deriv_vec <- as.vector(t(deriv_eta))
+  obs_index <- rep(seq_len(n), each = M)
+  scores <- rowsum(X_vlm * deriv_vec, group = obs_index, reorder = FALSE)
+  scores <- as.matrix(scores)
+
   colnames(scores) <- names(coef(fit))
+  lm_rownames <- tryCatch(
+    rownames(stats::model.matrix(fit, type = "lm")),
+    error = function(e) NULL
+  )
+  if (length(lm_rownames) == n) {
+    rownames(scores) <- lm_rownames
+  }
   return(scores)
+}
+
+
+align_cluster_vglm <- function(fit, cluster, n) {
+  if (length(cluster) == n) {
+    return(cluster)
+  }
+
+  na_action <- tryCatch(
+    methods::slot(fit, "na.action"),
+    error = function(e) NULL
+  )
+  if (is.list(na_action)) {
+    na_action <- unlist(na_action, use.names = FALSE)
+  }
+  na_action <- as.integer(na_action)
+  na_action <- na_action[!is.na(na_action)]
+
+  if (
+    length(na_action) > 0L &&
+      max(na_action) <= length(cluster) &&
+      length(cluster[-na_action]) == n
+  ) {
+    return(cluster[-na_action])
+  }
+
+  stop(
+    "Length of 'cluster' must equal nobs(fit, type = \"lm\") = ",
+    n,
+    ", or must be the original pre-NA vector from which fit@na.action ",
+    "can be removed."
+  )
 }
 
 

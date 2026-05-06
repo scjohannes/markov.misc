@@ -22,7 +22,10 @@ test_that("get_draws() preserves covariates for sops objects", {
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
     data = data
   )
-  m_vglm_rob <- robcov_vglm(m_vglm, cluster = data$id)
+  expect_warning(
+    m_vglm_rob <- robcov_vglm(m_vglm, cluster = data$id),
+    "fewer than 30 clusters"
+  )
 
   # Compute individual sops
   sops_result <- sops(

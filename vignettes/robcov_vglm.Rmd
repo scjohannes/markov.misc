@@ -96,7 +96,7 @@ fit_orm <- orm(
 
 ## Robust Covariance Estimation
 
-Now we compute robust standard errors. Since we have repeated measures per patient, we should use cluster-robust standard errors clustering on `id`.
+Now we compute robust standard errors. Since we have repeated measures per patient, we should use cluster-robust standard errors clustering on `id`. The cluster vector must identify the fitted observations. If `vglm()` removed rows because of missing values and records those rows in `fit@na.action`, `robcov_vglm()` can also align an original pre-NA cluster vector.
 
 ### Using robcov_vglm
 
@@ -111,6 +111,8 @@ You can also get a full summary with z-statistics and p-values:
 ```{r summary_robcov}
 summary(rob_vglm)
 ```
+
+The p-values are based on normal z-tests. This is an asymptotic approximation in the number of independent observations or clusters; with few clusters, the p-values can be anti-conservative.
 
 ### Using rms::robcov
 
@@ -135,12 +137,17 @@ se <- rob_vglm$se
 se
 
 # Meat and Bread matrices
-# Bread = Inverse Hessian * n
+# Bread = model-based covariance matrix from vcov(fit)
 dim(rob_vglm$bread)
 
-# Meat = Variance of scores
+# Meat = crossproduct of cluster-summed scores
 dim(rob_vglm$meat)
 ```
+
+Internally, the cluster-robust covariance is computed as
+`bread %*% meat %*% bread`, where `bread = vcov(fit)` and `meat` is the crossproduct of raw scores after summing scores within cluster. For unclustered robust standard errors, `meat` is the crossproduct of the observation-level score matrix.
+
+The score-bootstrap engine uses the same convention: coefficient perturbations are one-step updates of the form `coef(fit) + vcov(fit) %*% U_star`, where `U_star` is a total score perturbation built from cluster-summed scores.
 
 ## Small-Sample Adjustment
 
@@ -156,3 +163,7 @@ data.frame(
   Percent_Increase = (rob_vglm_adj$se / rob_vglm$se - 1) * 100
 )
 ```
+
+## Weights and Aggregated Responses
+
+`robcov_vglm()` computes score contributions at the fitted-row level. With prior or frequency weights, or with aggregated ordinal count responses, one fitted row may represent more than one individual observation. In that setting, the robust covariance treats rows as the independent units, which can differ from a sandwich estimator computed after expanding the data to one row per independent individual.
