@@ -34,7 +34,7 @@ library(patchwork)
 
 N_PATIENTS <- 800
 R <- 50 # Reduced for vignette build time; use higher (e.g., 1000) for analysis
-SEED <- 2375679
+SEED <- 237567
 FU <- 30
 ```
 
@@ -108,20 +108,19 @@ nonparametric bootstrap inference, and simulation inference.
 ### Fit the models
 
 ```{r}
-model_b_formula <- ordered(y) ~ rcs(time, 4) + tx + age + yprev
-
 m_simple <- vglm.markov(
-  model_b_formula,
+  ordered(y) ~ rcs(time, 4) + tx + age + yprev,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
 
 m_time_po <- vglm.markov(
-  model_b_formula,
+  ordered(y) ~ rcs(time, 4) + tx + age + yprev,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
 model_b_constraints <- m_time_po@constraints
+
 linear_time_term <- grep(
   "^rcs\\(time, 4\\).*time$",
   names(model_b_constraints),
@@ -137,7 +136,7 @@ model_b_constraints[[linear_time_term]] <- cbind(
 )
 
 m_time_ppo <- vglm.markov(
-  model_b_formula,
+  ordered(y) ~ rcs(time, 4) + tx + age + yprev,
   family = cumulative(reverse = TRUE, parallel = FALSE), 
   data = data,
   constraints = model_b_constraints
@@ -145,7 +144,7 @@ m_time_ppo <- vglm.markov(
 m_time_ppo@call$constraints <- model_b_constraints
 
 m_state_time <- vglm.markov(
-  ordered(y) ~ rcs(time, 4) * tx + age + yprev + rcs(time, 4):yprev,
+  ordered(y) ~ rcs(time, 4) * tx + age + yprev,
   family = cumulative(reverse = TRUE, parallel = TRUE), 
   data = data
 )
@@ -169,7 +168,7 @@ run_boot <- function(model, name) {
   ) |> 
      inferences(
       method = "bootstrap",
-      n_sim = R, 
+      n_sim = R/5, 
       workers = 6,
       conf_level = 0.95,
       return_draws = TRUE
@@ -204,7 +203,7 @@ run_sim <- function(model, name, engine = "mvn") {
      inferences(
       method = "simulation",
       engine = engine,
-      n_sim = R, 
+      n_sim = R*2, 
       conf_level = 0.95,
       workers = 1,
       return_draws = TRUE

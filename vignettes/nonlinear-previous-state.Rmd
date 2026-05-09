@@ -29,18 +29,18 @@ numeric basis. The default remains categorical for backward compatibility:
 set.seed(20260505)
 
 raw_data <- sim_trajectories_brownian(
-  n_patients = 100,
+  n_patients = 200,
   follow_up_time = 8,
-  n_states = 10,
-  thresholds = seq(-3, 3, length.out = 9),
-  allowed_start_state = as.integer(2:9),
-  absorbing_state = 10,
+  n_states = 20,
+  thresholds = seq(-3, 3, length.out = 19),
+  allowed_start_state = as.integer(2:19),
+  absorbing_state = 20,
   x0_sd = 2,
   sigma_rw = 0.25,
   seed = 20260505
 )
 
-categorical_data <- prepare_markov_data(raw_data, absorbing_state = 10)
+categorical_data <- prepare_markov_data(raw_data, absorbing_state = 20)
 is.factor(categorical_data$yprev)
 ```
 
@@ -51,7 +51,7 @@ numeric and use a linear or spline effect instead:
 ```{r numeric-prep}
 numeric_data <- prepare_markov_data(
   raw_data,
-  absorbing_state = 10,
+  absorbing_state = 20,
   factor_previous = FALSE
 )
 
@@ -93,8 +93,8 @@ avg <- avg_sops(
   newdata = baseline,
   variables = list(tx = c(0, 1)),
   times = 1:8,
-  ylevels = 1:10,
-  absorb = "10",
+  ylevels = 1:20,
+  absorb = "20",
   pvarname = "yprev",
   id_var = "id"
 )
@@ -142,12 +142,13 @@ model_sops <- avg_mvn |>
 bind_rows(empirical_sops, model_sops) |>
   mutate(
     tx = factor(tx, levels = c(0, 1), labels = c("Control", "Treatment")),
-    state = factor(state, levels = 1:10)
+    state = factor(state, levels = 1:20)
   ) |>
   ggplot(aes(x = time, y = estimate, fill = state)) +
   geom_col(width = 0.85) +
   facet_grid(tx ~ source) +
   scale_y_continuous(labels = function(x) paste0(round(100 * x), "%")) +
+  scale_fill_viridis_d() +
   labs(
     x = "Time",
     y = "State occupation probability",
