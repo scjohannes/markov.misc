@@ -870,7 +870,7 @@ time_in_state <- function(sops, target_states = 1) {
 
   # --- 3. Filter & Aggregate States ---
   subset_args <- rep(list(TRUE), ndim)
-  subset_args[[state_dim]] <- target_chars
+  subset_args[[state_dim]] <- match(target_chars, state_names)
 
   sops_slice <- do.call("[", c(list(sops), subset_args, drop = FALSE))
   prob_in_target <- apply(sops_slice, (1:ndim)[-state_dim], sum)

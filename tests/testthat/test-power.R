@@ -1,5 +1,3 @@
-# plan to rework tidy_po anyways, so no worth adding more tests for now
-
 test_that("tidy_po handles glm alternatives and excludes intercepts", {
   data <- data.frame(
     y = c(0, 0, 1, 1, 0, 1),
@@ -19,6 +17,97 @@ test_that("tidy_po handles glm alternatives and excludes intercepts", {
   expect_true(all(is.finite(two_sided$conf_high)))
   expect_equal(unname(greater$conf_high), rep(Inf, 2))
   expect_equal(unname(less$conf_low), rep(-Inf, 2))
+})
+
+test_that("sample_from_arrow samples balanced treatment groups", {
+  skip_if_not_installed("arrow")
+
+  path <- withr::local_tempdir()
+  data <- data.frame(
+    id = rep(1:8, each = 2),
+    tx = rep(rep(c(0, 1), each = 4), each = 2),
+    y = seq_len(16)
+  )
+  arrow::write_dataset(data, path)
+
+  sampled <- sample_from_arrow(
+    data_path = path,
+    sample_size = 4,
+    allocation_ratio = 0.5,
+    seed = 1
+  )
+
+  expect_equal(length(unique(sampled$id)), 4)
+  expect_equal(as.integer(table(unique(sampled[c("id", "tx")])$tx)), c(2L, 2L))
+})
+
+test_that("tidy_po handles vglm, orm, clm, and coxph models", {
+  skip_if_not_installed("VGAM")
+  skip_if_not_installed("rms")
+  skip_if_not_installed("ordinal")
+  skip_if_not_installed("survival")
+
+  data <- data.frame(
+    y_ord = ordered(rep(1:3, times = 8)),
+    y_bin = rep(c(0, 1), times = 12),
+    tx = rep(c(0, 1), each = 12),
+    x = rep(c(-1, 0, 1), times = 8),
+    time = seq_len(24) + 1,
+    status = rep(c(1, 0, 1, 1), length.out = 24)
+  )
+
+  vglm_fit <- suppressWarnings(
+    VGAM::vglm(
+      y_ord ~ tx + x,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data
+    )
+  )
+  vglm_tidy <- tidy_po(vglm_fit)
+  expect_setequal(vglm_tidy$term, c("tx", "x"))
+
+  dd <- rms::datadist(data)
+  withr::local_options(datadist = "dd")
+  assign("dd", dd, envir = globalenv())
+  withr::defer(rm("dd", envir = globalenv()))
+
+  orm_fit <- rms::orm(y_ord ~ tx + x, data = data, x = TRUE, y = TRUE)
+  orm_tidy <- tidy_po(orm_fit)
+  orm_robust_tidy <- tidy_po(rms::robcov(orm_fit))
+  expect_setequal(orm_tidy$term, c("tx", "x"))
+  expect_setequal(orm_robust_tidy$term, c("tx", "x"))
+
+  clm_fit <- suppressWarnings(ordinal::clm(y_ord ~ tx + x, data = data))
+  clm_tidy <- tidy_po(clm_fit)
+  expect_setequal(clm_tidy$term, c("tx", "x"))
+
+  cox_fit <- suppressWarnings(
+    survival::coxph(survival::Surv(time, status) ~ tx + x, data = data)
+  )
+  cox_tidy <- tidy_po(cox_fit)
+  expect_setequal(cox_tidy$term, c("tx", "x"))
+})
+
+test_that("tidy_po warns for rank-deficient coxph coefficients", {
+  skip_if_not_installed("survival")
+
+  data <- data.frame(
+    time = 1:8,
+    status = c(1, 1, 0, 1, 0, 1, 0, 1),
+    x = c(0, 1, 0, 1, 0, 1, 0, 1)
+  )
+  fit <- survival::coxph(
+    survival::Surv(time, status) ~ x + duplicate_x,
+    data = transform(data, duplicate_x = x),
+    singular.ok = TRUE
+  )
+
+  expect_warning(
+    out <- tidy_po(fit),
+    "Some coefficients in coxph model are NA",
+    fixed = TRUE
+  )
+  expect_true(any(is.na(out$estimate)))
 })
 
 test_that("tidy_po rejects unsupported model objects", {

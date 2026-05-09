@@ -160,3 +160,62 @@ test_that("bootstrap_analysis_wrapper reports model fitting failures", {
   expect_null(result$model)
   expect_equal(result$missing_states, character(0))
 })
+
+test_that("bootstrap_analysis_wrapper updates orm datadist", {
+  skip_if_not_installed("rms")
+
+  update.orm <- function(object, data, ...) {
+    structure(list(data = data), class = "orm")
+  }
+  assign("update.orm", update.orm, envir = globalenv())
+  withr::defer(rm("update.orm", envir = globalenv()))
+  withr::defer(options(datadist = NULL))
+  withr::defer(
+    if (exists("dd", envir = globalenv())) rm("dd", envir = globalenv())
+  )
+
+  boot_data <- data.frame(y = factor(c(1, 2, 3)), x = c(0, 1, 2))
+  result <- bootstrap_analysis_wrapper(
+    boot_data = boot_data,
+    model = structure(list(), class = "orm"),
+    factor_cols = "y",
+    original_data = boot_data,
+    update_datadist = TRUE
+  )
+
+  expect_s3_class(result$model, "orm")
+  expect_equal(getOption("datadist"), "dd")
+  expect_true(exists("dd", envir = globalenv()))
+})
+
+test_that("bootstrap_analysis_wrapper falls back when coefstart update fails", {
+  coef.vglm <- function(object, ...) object$coefficients
+  update.vglm <- function(object, data, coefstart = NULL, ...) {
+    if (!is.null(coefstart)) {
+      stop("coefstart failed")
+    }
+    structure(
+      list(data = data, coefficients = object$coefficients),
+      class = "vglm"
+    )
+  }
+  assign("coef.vglm", coef.vglm, envir = globalenv())
+  assign("update.vglm", update.vglm, envir = globalenv())
+  withr::defer(rm("coef.vglm", envir = globalenv()))
+  withr::defer(rm("update.vglm", envir = globalenv()))
+
+  boot_data <- data.frame(y = factor(c(1, 2)), x = c(0, 1))
+  model <- structure(list(coefficients = c(a = 1)), class = "vglm")
+
+  result <- bootstrap_analysis_wrapper(
+    boot_data = boot_data,
+    model = model,
+    factor_cols = "y",
+    original_data = boot_data,
+    update_datadist = FALSE,
+    use_coefstart = TRUE
+  )
+
+  expect_s3_class(result$model, "vglm")
+  expect_equal(result$model$data, boot_data)
+})

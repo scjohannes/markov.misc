@@ -1,4 +1,4 @@
-test_that("sops() covers validation and stratified aggregation branches", {
+test_that("sops() validates inputs and supports stratified aggregation", {
   model <- structure(list(), class = "mock_model")
   newdata <- data.frame(
     id = 1:3,
@@ -141,7 +141,7 @@ test_that("sops() infers ylevels from supported model containers", {
   )
 })
 
-test_that("avg_sops() covers validation and by branches", {
+test_that("avg_sops() validates inputs and preserves grouping metadata", {
   model <- structure(list(), class = "mock_model")
   newdata <- data.frame(
     id = c(1, 2),
@@ -235,7 +235,7 @@ test_that("avg_sops() reports missing grouping variables from individual SOPs", 
   )
 })
 
-test_that("get_draws() covers invalid input and no-key fallback", {
+test_that("get_draws() rejects plain data frames and falls back without join keys", {
   expect_error(
     get_draws(data.frame(x = 1)),
     "get_draws() requires an object from inferences",
@@ -271,7 +271,55 @@ test_that("get_draws() joins metadata with base merge", {
   expect_equal(draws$estimate, c(0.5, 0.6))
 })
 
-test_that("markov_msm_build() covers default columns and missing design columns", {
+test_that("get_draws() preserves covariates for individual SOP draws", {
+  skip_if_not_installed("VGAM")
+  skip_if_not_installed("rms")
+  skip_if_not_installed("mvtnorm")
+  skip_if_not_installed("dplyr")
+
+  withr::local_seed(123)
+  data <- make_test_data(n_patients = 20, seed = 123, follow_up_time = 30)
+  data$age <- stats::rnorm(nrow(data), 60, 10)
+
+  m_vglm <- VGAM::vglm(
+    ordered(y) ~ rms::rcs(time, 3) + tx + yprev + age,
+    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+    data = data
+  )
+  expect_warning(
+    m_vglm_rob <- robcov_vglm(m_vglm, cluster = data$id),
+    "fewer than 30 clusters"
+  )
+
+  sops_result <- sops(
+    model = m_vglm_rob,
+    newdata = dplyr::filter(data, time == 1),
+    times = 1:5,
+    ylevels = 1:6,
+    absorb = 6,
+    tvarname = "time",
+    pvarname = "yprev"
+  )
+
+  result_ci <- inferences(
+    sops_result,
+    method = "simulation",
+    n_sim = 10,
+    return_draws = TRUE
+  )
+
+  draws <- get_draws(result_ci)
+  sample_row <- draws[1, ]
+  orig_row <- data[sample_row$rowid, ]
+
+  expect_s3_class(draws, "data.frame")
+  expect_contains(names(draws), c("draw_id", "rowid", "time", "state", "estimate"))
+  expect_contains(names(draws), c("tx", "age"))
+  expect_equal(sample_row$tx, orig_row$tx)
+  expect_equal(sample_row$age, orig_row$age)
+})
+
+test_that("markov_msm_build() reports missing design columns", {
   model <- VGAM::vglm(
     y ~ x,
     family = VGAM::binomialff,
@@ -302,7 +350,7 @@ test_that("markov_msm_build() covers default columns and missing design columns"
   )
 })
 
-test_that("markov_msm_run() covers no absorbing states", {
+test_that("markov_msm_run() propagates probabilities without absorbing states", {
   components <- list(
     X_init = matrix(0, nrow = 2, ncol = 1, dimnames = list(NULL, "x")),
     X_transition = list(
@@ -334,4 +382,251 @@ test_that("markov_msm_run() covers no absorbing states", {
   expect_equal(dim(out), c(2L, 2L, 2L))
   expect_equal(out[, 1, 1], c(0.5, 0.5))
   expect_equal(out[, 2, 1], c(0.5, 0.5))
+})
+
+test_that("standardize_sops() validates inputs and marginalizes arrays", {
+  model <- structure(list(), class = "vglm")
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    {
+      expect_error(
+        standardize_sops(model, data = NULL),
+        "No data provided",
+        fixed = TRUE
+      )
+      expect_error(
+        standardize_sops(
+          model,
+          data = data.frame(id = 1, time = 1, tx = 0),
+          ylevels = 1:2
+        ),
+        "Previous-state variable",
+        fixed = TRUE
+      )
+    }
+  )
+
+  data <- data.frame(
+    id = c(1, 1, 2, 2),
+    time = c(1, 2, 1, 2),
+    yprev = c(1, 1, 2, 2),
+    tx = c(0, 0, 1, 1)
+  )
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    soprob_markov = function(object, data, times, ylevels, absorb, tvarname, pvarname, gap, t_covs) {
+      if (all(data$tx == 1)) {
+        array(
+          c(0.8, 0.6, 0.2, 0.4, 0.7, 0.5, 0.3, 0.5),
+          dim = c(2, 2, 2)
+        )
+      } else {
+        array(
+          c(0.4, 0.2, 0.6, 0.8, 0.3, 0.1, 0.7, 0.9),
+          dim = c(2, 2, 2)
+        )
+      }
+    },
+    {
+      out <- standardize_sops(
+        model,
+        data = data,
+        times = 1:2,
+        ylevels = 1:2,
+        absorb = NULL
+      )
+    }
+  )
+
+  expect_equal(dim(out$sop_tx), c(2L, 2L))
+  expect_equal(colnames(out$sop_tx), c("1", "2"))
+  expect_equal(out$sop_tx[, 1], c(mean(c(0.8, 0.6)), mean(c(0.2, 0.4))))
+  expect_equal(out$sop_ctrl[, 2], c(mean(c(0.3, 0.1)), mean(c(0.7, 0.9))))
+})
+
+test_that("standardize_sops() supports model data and draw arrays", {
+  model <- structure(
+    list(
+      x = data.frame(
+        id = c(1, 2),
+        time = c(1, 1),
+        yprev = c(1, 2),
+        tx = c(0, 1)
+      ),
+      y = c(1, 2)
+    ),
+    class = "vglm"
+  )
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    soprob_markov = function(...) {
+      arr <- array(
+        seq_len(2 * 2 * 2 * 2) / 100,
+        dim = c(2, 2, 2, 2),
+        dimnames = list(NULL, NULL, NULL, c("1", "2"))
+      )
+      arr
+    },
+    {
+      out <- standardize_sops(
+        model,
+        data = NULL,
+        times = 1:2,
+        ylevels = 1:2,
+        absorb = NULL
+      )
+    }
+  )
+
+  expect_equal(dim(out$sop_tx), c(2L, 2L, 2L))
+  expect_equal(dimnames(out$sop_tx)[[3]], c("1", "2"))
+})
+
+test_that("standardize_sops() rejects unexpected SOP array dimensions", {
+  model <- structure(list(), class = "vglm")
+  data <- data.frame(id = 1, time = 1, yprev = 1, tx = 0)
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    soprob_markov = function(...) matrix(1, nrow = 1, ncol = 1),
+    {
+      expect_error(
+        standardize_sops(model, data = data, times = 1, ylevels = 1),
+        "Unexpected array dimensions",
+        fixed = TRUE
+      )
+    }
+  )
+})
+
+test_that("time_in_state() handles bootstrap data frames", {
+  boot <- data.frame(
+    boot_id = rep(1:2, each = 4),
+    time = rep(1:2, times = 4),
+    tx = rep(c(1, 0), each = 2, times = 2),
+    state_1 = c(0.8, 0.7, 0.5, 0.4, 0.6, 0.5, 0.3, 0.2),
+    state_2 = c(0.2, 0.3, 0.5, 0.6, 0.4, 0.5, 0.7, 0.8)
+  )
+
+  one_state <- time_in_state(boot, target_states = 1)
+  two_states <- time_in_state(boot, target_states = c(1, 2))
+
+  expect_equal(one_state$SOP_tx, c(1.5, 1.1))
+  expect_equal(one_state$SOP_ctrl, c(0.9, 0.5))
+  expect_equal(two_states$delta, c(0, 0))
+
+  expect_error(
+    time_in_state(data.frame(boot_id = 1, time = 1)),
+    "must contain 'boot_id', 'time', and 'tx'",
+    fixed = TRUE
+  )
+  expect_error(
+    time_in_state(data.frame(boot_id = 1, time = 1, tx = 0)),
+    "does not contain any columns starting with 'state_'",
+    fixed = TRUE
+  )
+  expect_error(
+    time_in_state(boot, target_states = 3),
+    "target state columns were not found",
+    fixed = TRUE
+  )
+})
+
+test_that("time_in_state() handles arrays and validation branches", {
+  arr3 <- array(
+    c(
+      0.8, 0.6,
+      0.2, 0.4,
+      0.7, 0.5,
+      0.3, 0.5
+    ),
+    dim = c(2, 2, 2),
+    dimnames = list(NULL, NULL, c("1", "2"))
+  )
+  arr4 <- array(
+    seq_len(2 * 2 * 2 * 2) / 100,
+    dim = c(2, 2, 2, 2),
+    dimnames = list(NULL, NULL, NULL, c("1", "2"))
+  )
+  unnamed <- array(rep(c(0.2, 0.8), 4), dim = c(2, 2, 2))
+
+  expect_equal(time_in_state(arr3, target_states = "1"), c(1.0, 1.0))
+  expect_equal(dim(time_in_state(arr4, target_states = c("1", "2"))), c(2L, 2L))
+  expect_equal(time_in_state(unnamed, target_states = 1), c(0.4, 1.6))
+  expect_error(time_in_state(1:3), "must be an array or data frame", fixed = TRUE)
+  expect_error(time_in_state(matrix(1, 2, 2)), "must be 3D or 4D", fixed = TRUE)
+  expect_error(
+    time_in_state(arr3, target_states = "3"),
+    "Target states not found",
+    fixed = TRUE
+  )
+})
+
+test_that("low-level SOP helpers validate model families and state metadata", {
+  skip_if_not_installed("VGAM")
+  loadNamespace("VGAM")
+
+  expect_error(
+    markov.misc:::validate_markov_model(lm(mpg ~ wt, data = mtcars)),
+    NA
+  )
+
+  model <- methods::new("vglm")
+  model@family <- methods::new("vglmff", vfamily = "binomialff")
+  expect_error(
+    markov.misc:::validate_markov_model(model),
+    "only the cumulative family",
+    fixed = TRUE
+  )
+
+  model@family <- methods::new("vglmff", vfamily = "cumulative")
+  model@call <- quote(VGAM::vglm(y ~ x, family = VGAM::cumulative()))
+  expect_error(
+    markov.misc:::validate_markov_model(model),
+    "argument is missing|Cannot determine"
+  )
+
+  model@call <- quote(VGAM::vglm(y ~ x, family = VGAM::cumulative(reverse = FALSE)))
+  expect_error(
+    markov.misc:::validate_markov_model(model),
+    "must use reverse = TRUE",
+    fixed = TRUE
+  )
+
+  expect_error(
+    markov.misc:::score_bootstrap_components(list()),
+    "supports robcov_vglm and orm",
+    fixed = TRUE
+  )
+
+  expect_error(
+    markov.misc:::marginalize_sops_array(
+      array(1, dim = c(1, 1, 1)),
+      grid = data.frame(tx = 0),
+      times = 1,
+      ylevels = 1,
+      variables = list(tx = 0),
+      n_cf = 1,
+      n_each = 1,
+      weights = 0
+    ),
+    "positive finite sum",
+    fixed = TRUE
+  )
+
+  expect_warning(
+    no_rowid <- markov.misc:::array_to_df_individual(
+      array(1, dim = c(1, 1, 1)),
+      times = 1,
+      ylevels = 1,
+      newdata = data.frame(id = 10),
+      by = "missing"
+    ),
+    "Variables in 'by' not found",
+    fixed = TRUE
+  )
+  expect_equal(no_rowid$rowid, 1)
 })

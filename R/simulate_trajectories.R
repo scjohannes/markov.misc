@@ -1345,6 +1345,9 @@ recurr_event <- function(
   max_events = NULL
 ) {
   # prepare variables
+  if (missing(id)) {
+    id <- 1L
+  }
   n <- length(id)
 
   lambda_i <- param
@@ -1402,11 +1405,7 @@ recurr_event <- function(
   #____ Model waiting times between events and store as vector   ________________#
   #______________________________________________________________________________#
   # Assign patient ID for later dataframe
-  if (missing(id)) {
-    id <- rep(1:n, each = max_events)
-  } else {
-    id <- rep(id, each = max_events)
-  }
+  id <- rep(id, each = max_events)
 
   # generate the waiting times between events for each individual
   rates_rep <- rep(rates, times = n)
@@ -1640,14 +1639,23 @@ sim_trajectories_tte <- function(
     ids_tx <- baseline_data$id[baseline_data$tx == tx_val]
 
     for (i in states) {
-      state_changes[[m]] <- recurr_event(
+      state_change <- recurr_event(
         id = ids_tx,
         param = param_list[[j]][i],
         b = b[i],
         follow_up = follow_up_time,
         max_events = NULL
       )
-      state_changes[[m]] <- cbind(state_changes[[m]], state = i, tx = tx_val)
+      if (nrow(state_change) == 0L) {
+        state_changes[[m]] <- data.frame(
+          id = numeric(0),
+          event_time = numeric(0),
+          state = numeric(0),
+          tx = numeric(0)
+        )
+      } else {
+        state_changes[[m]] <- cbind(state_change, state = i, tx = tx_val)
+      }
       m <- m + 1
     }
   }

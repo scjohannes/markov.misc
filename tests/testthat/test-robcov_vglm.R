@@ -484,6 +484,78 @@ describe("Score properties", {
   })
 })
 
+test_that("compare_se_orm_vglm compares model-based and robust SEs", {
+  skip_if_not_installed("VGAM")
+  skip_if_not_installed("rms")
+
+  withr::local_seed(8128)
+  n <- 80
+  data <- data.frame(
+    y = rbinom(n, 1, 0.5),
+    x = rnorm(n),
+    cluster = rep(seq_len(20), each = 4)
+  )
+
+  dd <- rms::datadist(data)
+  withr::local_options(datadist = "dd")
+  assign("dd", dd, envir = globalenv())
+  withr::defer(rm("dd", envir = globalenv()))
+
+  orm_fit <- rms::orm(y ~ x, data = data, x = TRUE, y = TRUE)
+  vglm_fit <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = data)
+
+  unclustered <- compare_se_orm_vglm(orm_fit, vglm_fit)
+  expect_warning(
+    clustered <- compare_se_orm_vglm(orm_fit, vglm_fit, cluster = data$cluster),
+    "Cluster-robust p-values",
+    fixed = TRUE
+  )
+
+  expect_named(
+    unclustered,
+    c(
+      "parameter",
+      "se_orm_model",
+      "se_vglm_model",
+      "se_orm_robust",
+      "se_vglm_robust",
+      "ratio_model",
+      "ratio_robust"
+    )
+  )
+  expect_equal(nrow(clustered), nrow(unclustered))
+  expect_true(all(is.finite(clustered$ratio_model)))
+  expect_true(all(is.finite(clustered$ratio_robust)))
+})
+
+test_that("compare_se_orm_vglm warns when model intercept structures differ", {
+  skip_if_not_installed("VGAM")
+  skip_if_not_installed("rms")
+
+  withr::local_seed(8129)
+  n <- 90
+  data <- data.frame(
+    y_ord = ordered(rep(1:3, length.out = n)),
+    y_bin = rep(0:1, length.out = n),
+    x = rnorm(n)
+  )
+
+  dd <- rms::datadist(data)
+  withr::local_options(datadist = "dd")
+  assign("dd", dd, envir = globalenv())
+  withr::defer(rm("dd", envir = globalenv()))
+
+  orm_fit <- rms::orm(y_ord ~ x, data = data, x = TRUE, y = TRUE)
+  vglm_fit <- VGAM::vglm(y_bin ~ x, family = VGAM::binomialff, data = data)
+
+  expect_warning(
+    comparison <- compare_se_orm_vglm(orm_fit, vglm_fit),
+    "Number of intercepts differs",
+    fixed = TRUE
+  )
+  expect_s3_class(comparison, "data.frame")
+})
+
 describe("Small-sample adjustment", {
   it("works correctly", {
     skip_if_not_installed("VGAM")

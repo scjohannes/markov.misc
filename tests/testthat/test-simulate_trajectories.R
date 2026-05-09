@@ -201,6 +201,28 @@ test_that("sim_trajectories_markov carries forward once all patients are absorbi
   expect_equal(nrow(result), 12)
 })
 
+test_that("sim_trajectories_markov passes tx even when not requested as a covariate", {
+  baseline <- data.frame(id = 1:2, yprev = c(1, 1), tx = c(0, 1))
+
+  expect_warning(
+    result <- sim_trajectories_markov(
+      baseline_data = baseline,
+      follow_up_time = 2,
+      intercepts = 0,
+      lp_function = function(yprev, t, tx, parameter, extra_params) {
+        ifelse(tx == 1, 10, -10)
+      },
+      covariate_names = character(0),
+      seed = 1
+    ),
+    "None of the specified covariate_names found",
+    fixed = TRUE
+  )
+
+  expect_equal(nrow(result), 4)
+  expect_true(all(result$tx %in% c(0, 1)))
+})
+
 test_that("sim_trajectories_brownian validates inputs and supports normal link options", {
   expect_error(
     sim_trajectories_brownian(n_patients = 0),
@@ -274,6 +296,18 @@ test_that("sim_trajectories_brownian validates inputs and supports normal link o
   expect_setequal(unique(result$y), unique(result$y[result$y %in% 1:3]))
 })
 
+test_that("sim_trajectories_brownian applies late piecewise drift", {
+  result <- sim_trajectories_brownian(
+    n_patients = 4,
+    follow_up_time = 4,
+    drift_change_times = c(1, 2),
+    seed = 101
+  )
+
+  expect_equal(max(result$time), 4)
+  expect_named(result, c("id", "tx", "time", "y", "yprev", "x"))
+})
+
 test_that("sim_trajectories_brownian_gap validates additional inputs", {
   expect_error(sim_trajectories_brownian_gap(n_patients = 0), "n_patients must be")
   expect_error(sim_trajectories_brownian_gap(follow_up_time = 0), "follow_up_time must be")
@@ -326,6 +360,37 @@ test_that("sim_trajectories_brownian_gap validates additional inputs", {
   expect_true(all(result$y %in% 1:3))
 })
 
+test_that("sim_trajectories_brownian_gap handles piecewise drift and zero transition mass", {
+  result <- sim_trajectories_brownian_gap(
+    n_patients = 3,
+    follow_up_time = 4,
+    n_states = 2,
+    thresholds = 10,
+    allowed_start_state = 2L,
+    absorbing_state = 1L,
+    refresh_rate = 100,
+    drift_change_times = c(1, 2),
+    seed = 102
+  )
+
+  expect_equal(max(result$time), 4)
+  expect_true(all(result$y %in% 1:2))
+})
+
+test_that("sim_trajectories_brownian_gap reaches both piecewise drift tails", {
+  result <- sim_trajectories_brownian_gap(
+    n_patients = 3,
+    follow_up_time = 5,
+    absorbing_state = NULL,
+    drift_change_times = c(2, 4),
+    refresh_rate = 100,
+    seed = 108
+  )
+
+  expect_equal(max(result$time), 5)
+  expect_named(result, c("id", "tx", "time", "y", "yprev", "x"))
+})
+
 test_that("sim_trajectories_deterministic validates inputs and returns trajectories", {
   expect_error(sim_trajectories_deterministic(n_patients = 0), "n_patients must")
   expect_error(sim_trajectories_deterministic(follow_up_time = 0), "follow_up_time must")
@@ -360,6 +425,71 @@ test_that("sim_trajectories_deterministic validates inputs and returns trajector
   expect_true(any(result$y %in% c(1, 6)))
 })
 
+test_that("sim_trajectories_deterministic handles baseline and later absorbing states", {
+  high_start <- sim_trajectories_deterministic(
+    n_patients = 2,
+    n_states = 6,
+    follow_up_time = 3,
+    B0 = 100,
+    b0_sd = 0,
+    B1 = 0,
+    b1_recovery_mean = 0,
+    b1_recovery_sd = 0,
+    mortality_prob_control = 0,
+    mortality_prob_treatment = 0,
+    treatment_prob = 0,
+    absorbing_states = c(1, 6),
+    seed = 103
+  )
+  low_start <- sim_trajectories_deterministic(
+    n_patients = 2,
+    n_states = 6,
+    follow_up_time = 3,
+    B0 = -100,
+    b0_sd = 0,
+    B1 = 0,
+    b1_recovery_mean = 0,
+    b1_recovery_sd = 0,
+    mortality_prob_control = 0,
+    mortality_prob_treatment = 0,
+    treatment_prob = 0,
+    absorbing_states = c(1, 6),
+    seed = 104
+  )
+  later_absorb <- sim_trajectories_deterministic(
+    n_patients = 2,
+    n_states = 6,
+    follow_up_time = 3,
+    B0 = 3,
+    b0_sd = 0,
+    B1 = 10,
+    b1_recovery_mean = 0,
+    b1_recovery_sd = 0,
+    mortality_prob_control = 0,
+    mortality_prob_treatment = 0,
+    treatment_prob = 0,
+    absorbing_states = c(1, 6),
+    seed = 105
+  )
+
+  expect_true(all(high_start$yprev[high_start$time == 1] == 5))
+  expect_true(all(low_start$yprev[low_start$time == 1] == 2))
+  expect_true(any(later_absorb$y == 6))
+
+  treated <- sim_trajectories_deterministic(
+    n_patients = 2,
+    n_states = 6,
+    follow_up_time = 2,
+    treatment_prob = 1,
+    mortality_prob_treatment = 1,
+    b0_sd = 0,
+    b1_mortality_sd = 0,
+    absorbing_states = c(1, 6),
+    seed = 109
+  )
+  expect_true(all(treated$tx == 1))
+})
+
 test_that("recurr_event simulates events and validates vector parameter lengths", {
   withr::local_seed(1)
   result <- recurr_event(id = 1:2, param = 0.5, b = 0, follow_up = 10, max_events = 3)
@@ -371,6 +501,27 @@ test_that("recurr_event simulates events and validates vector parameter lengths"
   expect_error(
     recurr_event(id = 1:2, param = c(0.1, 0.2), follow_up = 10, max_events = NULL),
     "Length of param must be one or equal to max_events",
+    fixed = TRUE
+  )
+})
+
+test_that("recurr_event auto-selects event counts for scalar and vector rates", {
+  withr::local_seed(2)
+  scalar <- recurr_event(param = 0.01, b = 0.001, follow_up = 1, max_events = NULL)
+  vector <- recurr_event(
+    id = 1,
+    param = c(0.01, 0.02, 0.03),
+    b = 0,
+    follow_up = 1,
+    max_events = NULL
+  )
+
+  expect_equal(ncol(scalar), 2)
+  expect_equal(ncol(vector), 2)
+
+  expect_warning(
+    recurr_event(id = 1, param = 100, b = 0, follow_up = 100, max_events = NULL),
+    "max_events = 20",
     fixed = TRUE
   )
 })
@@ -447,4 +598,90 @@ test_that("sim_trajectories_tte expands event histories into daily states", {
   expect_equal(nrow(result), 6)
   expect_equal(result$time, rep(1:3, 2))
   expect_true(all(result$y %in% 1:3))
+})
+
+test_that("sim_trajectories_tte generates baseline data and handles absorbing baselines", {
+  with_mocked_bindings(
+    recurr_event = function(id, param, b, follow_up, max_events) {
+      cbind(id = numeric(0), event_time = numeric(0))
+    },
+    {
+      generated <- sim_trajectories_tte(
+        baseline_data = NULL,
+        baseline_states = 1:3,
+        prob = c(0.2, 0.3, 0.5),
+        n = 2,
+        states = 1:3,
+        absorbing_states = 3,
+        follow_up_time = 2,
+        param = c(0.01, 0.02, 0.03),
+        hazard_ratios = list(rep(1, 3)),
+        b = 0,
+        seed = 106
+      )
+    }
+  )
+
+  expect_equal(nrow(generated), 4)
+  expect_named(generated, c("id", "tx", "time", "y", "yprev"))
+
+  baseline <- data.frame(
+    id = c(1, 2),
+    tx = c(0, 1),
+    state = factor(c(NA, 3), levels = 1:3),
+    event_time = 0
+  )
+  with_mocked_bindings(
+    recurr_event = function(id, param, b, follow_up, max_events) {
+      cbind(id = numeric(0), event_time = numeric(0))
+    },
+    {
+      expect_warning(
+        absorbing <- sim_trajectories_tte(
+          baseline,
+          states = 1:3,
+          absorbing_states = 3,
+          follow_up_time = 2,
+          param = c(0.01, 0.02, 0.03),
+          hazard_ratios = list(rep(1, 3)),
+          b = c(0, 0, 0),
+          seed = 107
+        ),
+        "absorbing state at baseline",
+        fixed = TRUE
+      )
+    }
+  )
+
+  expect_equal(nrow(absorbing), 4)
+  expect_true(any(is.na(absorbing$y)))
+
+  numeric_absorbing <- data.frame(
+    id = 1,
+    tx = 0,
+    state = 3,
+    event_time = 0
+  )
+  with_mocked_bindings(
+    recurr_event = function(id, param, b, follow_up, max_events) {
+      data.frame(id = numeric(0), event_time = numeric(0))
+    },
+    {
+      expect_warning(
+        numeric_out <- sim_trajectories_tte(
+          numeric_absorbing,
+          states = 1:3,
+          absorbing_states = 3,
+          follow_up_time = 2,
+          param = c(0.01, 0.02, 0.03),
+          hazard_ratios = list(rep(1, 3)),
+          b = 0,
+          seed = 110
+        ),
+        "absorbing state at baseline",
+        fixed = TRUE
+      )
+    }
+  )
+  expect_equal(numeric_out$y, c(3, 3))
 })
