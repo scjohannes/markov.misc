@@ -362,6 +362,60 @@ get_vcov_robust <- function(
   }
 }
 
+validate_coef_vcov <- function(beta, Sigma, arg = "vcov") {
+  if (!is.matrix(Sigma)) {
+    stop("`", arg, "` must be a matrix.")
+  }
+
+  if (length(beta) != nrow(Sigma) || length(beta) != ncol(Sigma)) {
+    stop(
+      "Dimension mismatch: coefficients (",
+      length(beta),
+      ") vs ",
+      arg,
+      " matrix (",
+      nrow(Sigma),
+      " x ",
+      ncol(Sigma),
+      "). For orm models, use the full covariance matrix from ",
+      "rms::robcov(fit)$var or rms::robcov(fit)$orig.var, not stats::vcov(fit)."
+    )
+  }
+
+  beta_names <- names(beta)
+  Sigma_names <- rownames(Sigma)
+  if (
+    !is.null(beta_names) &&
+      !is.null(Sigma_names) &&
+      !identical(beta_names, Sigma_names)
+  ) {
+    stop(
+      "Coefficient names do not match row names of `",
+      arg,
+      "`. Expected: ",
+      paste(beta_names, collapse = ", "),
+      "; got: ",
+      paste(Sigma_names, collapse = ", "),
+      "."
+    )
+  }
+
+  Sigma_colnames <- colnames(Sigma)
+  if (
+    !is.null(beta_names) &&
+      !is.null(Sigma_colnames) &&
+      !identical(beta_names, Sigma_colnames)
+  ) {
+    stop(
+      "Coefficient names do not match column names of `",
+      arg,
+      "`."
+    )
+  }
+
+  Sigma
+}
+
 
 #' Extract Coefficients from Model Objects (Generic Helper)
 #'

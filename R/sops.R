@@ -111,6 +111,100 @@ predict_vglm_response_markov <- function(object, newdata) {
   object@family@linkinv(eta = eta, extra = object@extra)
 }
 
+predict_orm_response_markov <- function(object, newdata) {
+  Gamma <- get_effective_coefs(object)
+  X <- orm_model_matrix(object, newdata, include_intercept = TRUE)
+  X <- X[, colnames(Gamma), drop = FALSE]
+  probs <- lp_to_probs(X %*% t(Gamma), nrow(Gamma))
+  colnames(probs) <- as_state_labels(object$yunique)
+  probs
+}
+
+orm_model_matrix <- function(model, newdata, include_intercept = FALSE) {
+  if (!inherits(model, "orm")) {
+    stop("orm_model_matrix() requires an orm model.")
+  }
+  if (is.null(model$Design) || is.null(model$sformula)) {
+    stop(
+      "Fast orm prediction requires a model fitted by rms::orm() with ",
+      "stored Design metadata."
+    )
+  }
+
+  design <- model$Design
+  newdata <- normalize_orm_prediction_data(model, newdata)
+
+  oldopts <- options(
+    contrasts = c(factor = "contr.treatment", ordered = "contr.treatment"),
+    Design.attr = design
+  )
+  on.exit({
+    options(contrasts = oldopts$contrasts)
+    options(Design.attr = oldopts$Design.attr)
+  }, add = TRUE)
+
+  formulano <- add_rms_formula_helpers(model$sformula)
+  Terms <- stats::terms(formulano, specials = "strat")
+  attr(Terms, "response") <- 0L
+  attr(Terms, "intercept") <- 1L
+
+  strata_terms <- attr(Terms, "specials")$strat
+  Terms_ns <- if (length(strata_terms)) {
+    Terms[-strata_terms]
+  } else {
+    Terms
+  }
+
+  mf <- stats::model.frame(Terms, newdata, na.action = stats::na.pass)
+  X <- stats::model.matrix(Terms_ns, mf)[, -1L, drop = FALSE]
+
+  expected_cols <- design$colnames
+  if (length(expected_cols) != ncol(X)) {
+    stop(
+      "Could not reconstruct the orm design matrix. Expected ",
+      length(expected_cols),
+      " columns, got ",
+      ncol(X),
+      "."
+    )
+  }
+  colnames(X) <- expected_cols
+
+  if (include_intercept) {
+    X <- cbind("(Intercept)" = 1, X)
+  }
+
+  X
+}
+
+normalize_orm_prediction_data <- function(model, newdata) {
+  design <- model$Design
+  categorical <- design$name[design$assume.code %in% c(5L, 8L)]
+
+  for (nm in categorical) {
+    if (!nm %in% names(newdata)) {
+      next
+    }
+
+    levels_nm <- as.character(design$parms[[nm]])
+    values <- newdata[[nm]]
+    coerced <- factor(as.character(values), levels = levels_nm)
+    bad <- is.na(coerced) & !is.na(values)
+    if (any(bad)) {
+      stop(
+        "Values in `",
+        nm,
+        "` are not among fitted orm levels: ",
+        paste(utils::head(unique(as.character(values[bad])), 5), collapse = ", "),
+        if (length(unique(values[bad])) > 5) " ..." else ""
+      )
+    }
+    newdata[[nm]] <- coerced
+  }
+
+  newdata
+}
+
 as_state_labels <- function(x) {
   as.character(x)
 }
@@ -284,7 +378,7 @@ soprob_markov <- function(
   # Define prediction function
   prd <- switch(
     ftype,
-    rms = function(obj, d) stats::predict(obj, d, type = "fitted.ind"),
+    rms = function(obj, d) predict_orm_response_markov(obj, d),
     vgam = function(obj, d) predict_vglm_response_markov(obj, d),
     rmsb = function(obj, d) {
       stats::predict(obj, d, type = "fitted.ind", posterior.summary = "all")
@@ -1262,7 +1356,7 @@ avg_sops <- function(
 #'     \item `"mvn"` (default): Draws coefficients from MVN(beta_hat, Sigma).
 #'     \item `"score_bootstrap"`: Uses one-step score perturbation with
 #'       cluster-level exponential multipliers. Requires a `robcov_vglm` model
-#'       and `avg_sops()` objects.
+#'       or an `orm` model with `cluster`, and `avg_sops()` objects.
 #'   }
 #' @param score_weight_dist Character. Cluster weight distribution for
 #'   `engine = "score_bootstrap"`. Currently only `"exponential"` is supported.
@@ -1270,6 +1364,9 @@ avg_sops <- function(
 #'   iterations (for bootstrap). Default is 1000.
 #' @param vcov Optional custom variance-covariance matrix. If provided,
 #'   overrides the vcov extracted from the model.
+#' @param cluster Optional row-level cluster vector for
+#'   `engine = "score_bootstrap"` with `orm` models. Values should match
+#'   `id_var` in the baseline data used by `avg_sops()`.
 #' @param workers Number of parallel workers. If NULL (default) or 1, uses
 #'   sequential processing. If > 1, uses parallel processing with that many
 #'   workers.
@@ -1313,8 +1410,8 @@ avg_sops <- function(
 #'
 #' - Works for both individual-level (`sops()`) and averaged (`avg_sops()`) SOPs
 #'   for `engine = "mvn"`
-#' - `engine = "score_bootstrap"` currently supports `avg_sops()` with
-#'   `robcov_vglm` models only
+#' - `engine = "score_bootstrap"` supports `avg_sops()` with `robcov_vglm`
+#'   models and with `orm` models when `cluster` is supplied.
 #'
 #' ## Bootstrap Method
 #'
@@ -1366,6 +1463,32 @@ avg_sops <- function(
 #' ) |>
 #'   inferences(method = "simulation", engine = "score_bootstrap", n_sim = 1000)
 #'
+#' # orm fits use rms::robcov() for full robust covariance matrices.
+#' dd <- rms::datadist(data)
+#' options(datadist = "dd")
+#' fit_orm <- rms::orm(y ~ time + tx + yprev, data = data, x = TRUE, y = TRUE)
+#' fit_orm_robust <- rms::robcov(fit_orm, cluster = data$id)
+#'
+#' avg_orm <- avg_sops(
+#'   model = fit_orm_robust,
+#'   newdata = baseline_data,
+#'   variables = list(tx = c(0, 1)),
+#'   times = 1:60,
+#'   ylevels = factor(1:6),
+#'   absorb = "6",
+#'   id_var = "id"
+#' )
+#' result_orm <- avg_orm |>
+#'   inferences(method = "simulation", engine = "mvn", n_sim = 1000)
+#'
+#' result_orm_score <- avg_orm |>
+#'   inferences(
+#'     method = "simulation",
+#'     engine = "score_bootstrap",
+#'     cluster = data$id,
+#'     n_sim = 1000
+#'   )
+#'
 #' # Step 2b: Bootstrap inference (must use full data)
 #' result_boot <- avg_sops(
 #'   model = fit_robust,
@@ -1412,6 +1535,7 @@ inferences <- function(
   score_weight_dist = "exponential",
   n_sim = 1000,
   vcov = NULL,
+  cluster = NULL,
   workers = NULL,
   conf_level = 0.95,
   conf_type = "perc",
@@ -1444,6 +1568,7 @@ inferences <- function(
       score_weight_dist = score_weight_dist,
       n_sim = n_sim,
       vcov = vcov,
+      cluster = cluster,
       conf_level = conf_level,
       conf_type = conf_type,
       workers = workers,
@@ -1478,6 +1603,7 @@ inferences <- function(
 #' @param score_weight_dist Cluster weight distribution for score bootstrap.
 #' @param n_sim Number of simulation draws.
 #' @param vcov Custom variance-covariance matrix (optional, overrides model vcov).
+#' @param cluster Row-level cluster vector for orm score bootstrap.
 #' @param conf_level Confidence level.
 #' @param conf_type Type of confidence interval ("perc" or "wald").
 #' @param workers Number of parallel workers. If NULL or 1, uses sequential
@@ -1493,6 +1619,7 @@ inferences_simulation <- function(
   score_weight_dist,
   n_sim,
   vcov,
+  cluster,
   conf_level,
   conf_type,
   workers,
@@ -1565,21 +1692,10 @@ inferences_simulation <- function(
 
     if (!is.null(vcov) && is.matrix(vcov)) {
       Sigma <- vcov
+      Sigma <- validate_coef_vcov(beta_hat, Sigma, arg = "vcov")
     } else {
       Sigma <- get_vcov_robust(model)
-    }
-
-    if (length(beta_hat) != nrow(Sigma) || length(beta_hat) != ncol(Sigma)) {
-      stop(
-        "Dimension mismatch: coefficients (",
-        length(beta_hat),
-        ") vs ",
-        "vcov matrix (",
-        nrow(Sigma),
-        " x ",
-        ncol(Sigma),
-        ")"
-      )
+      Sigma <- validate_coef_vcov(beta_hat, Sigma, arg = "model vcov")
     }
 
     beta_draws <- mvtnorm::rmvnorm(n_sim, mean = beta_hat, sigma = Sigma)
@@ -1602,7 +1718,8 @@ inferences_simulation <- function(
       baseline_data = baseline_data,
       id_var = id_var,
       n_sim = n_sim,
-      score_weight_dist = score_weight_dist
+      score_weight_dist = score_weight_dist,
+      cluster = cluster
     )
     beta_draws <- score_draws$beta_draws
     baseline_weights_draws <- score_draws$baseline_weights
@@ -1614,9 +1731,10 @@ inferences_simulation <- function(
   n_states <- length(ylevels)
 
   # --- 4. Detect Fast Path Eligibility ---
-  # The fast path uses pre-computed design matrix decompositions for VGLM models
+  # The fast path uses pre-computed design matrix decompositions for supported
+  # ordinal model backends.
   model_chk <- if (inherits(model, "robcov_vglm")) model$vglm_fit else model
-  use_fast_path <- inherits(model_chk, "vglm")
+  use_fast_path <- inherits(model_chk, c("vglm", "orm"))
 
   if (use_fast_path) {
     # --- FAST PATH: Pre-build components once, then run efficient Markov loop ---
@@ -1627,6 +1745,7 @@ inferences_simulation <- function(
         t_covs = t_covs,
         times = times,
         ylevels = ylevels,
+        absorb = absorb,
         tvarname = tvarname,
         pvarname = pvarname
       ),
@@ -1640,9 +1759,6 @@ inferences_simulation <- function(
     )
 
     if (!is.null(components)) {
-      # Get constraint list for computing Gamma from beta draws
-      C_list <- VGAM::constraints(model_chk)
-
       # Define fast analysis function
       analysis_fn <- function(i) {
         baseline_weights <- NULL
@@ -1651,7 +1767,7 @@ inferences_simulation <- function(
         }
 
         # Compute effective coefficients from beta draw
-        Gamma_i <- compute_Gamma(beta_draws[i, ], C_list)
+        Gamma_i <- get_effective_coefs(model_chk, beta = beta_draws[i, ])
 
         # Run fast Markov simulation
         sops_array <- tryCatch(
@@ -1772,6 +1888,7 @@ inferences_simulation <- function(
     # Build globals list dynamically based on fast/slow path
     globals_list <- c(
       "model",
+      "model_chk",
       "beta_draws",
       "newdata_pred",
       "times",
@@ -1790,7 +1907,7 @@ inferences_simulation <- function(
       "by"
     )
     if (use_fast_path) {
-      globals_list <- c(globals_list, "components", "C_list")
+      globals_list <- c(globals_list, "components")
     }
 
     sim_results <- furrr::future_map(
@@ -1871,20 +1988,21 @@ inferences_simulation <- function(
   final_result
 }
 
-#' Generate One-Step Score-Bootstrap Draws for `robcov_vglm` Models
+#' Generate One-Step Score-Bootstrap Draws
 #'
 #' Computes simulation draws using cluster-level score perturbations and a
 #' one-step Newton approximation. Also returns patient-level averaging weights
 #' (shared with score perturbations) for `avg_sops` marginalization.
 #'
 #' @param model A `robcov_vglm` object with stored `scores`, `bread`, and
-#'   `cluster` components. The `bread` component is the model-based covariance
-#'   matrix returned by `vcov()` for the original `vglm` fit.
+#'   `cluster` components, or an `orm` object fitted with `x = TRUE, y = TRUE`.
+#'   For `orm`, `cluster` must be supplied.
 #' @param baseline_data Baseline data (one row per patient).
 #' @param id_var Name of patient ID variable in `baseline_data`.
 #' @param n_sim Number of simulation draws.
 #' @param score_weight_dist Cluster weight distribution. Currently only
 #'   `"exponential"` is supported.
+#' @param cluster Optional row-level cluster vector for `orm` models.
 #'
 #' @return A list with:
 #'   \itemize{
@@ -1899,40 +2017,30 @@ generate_score_bootstrap_draws <- function(
   baseline_data,
   id_var,
   n_sim,
-  score_weight_dist = "exponential"
+  score_weight_dist = "exponential",
+  cluster = NULL
 ) {
-  if (!inherits(model, "robcov_vglm")) {
+  if (!inherits(model, "robcov_vglm") && !inherits(model, "orm")) {
     stop(
-      "`engine = \"score_bootstrap\"` requires a 'robcov_vglm' model. ",
-      "Wrap your vglm fit with robcov_vglm(fit, cluster = <id>)."
+      "`engine = \"score_bootstrap\"` requires a 'robcov_vglm' model ",
+      "or an 'orm' model with `cluster` supplied. Wrap vglm fits with ",
+      "robcov_vglm(fit, cluster = <id>), or call inferences(..., ",
+      "engine = \"score_bootstrap\", cluster = <id>) for orm fits."
     )
   }
 
   score_weight_dist <- match.arg(score_weight_dist, choices = "exponential")
 
-  required <- c("coefficients", "bread", "scores", "cluster")
-  missing_required <- required[vapply(
-    required,
-    function(x) is.null(model[[x]]),
-    logical(1)
-  )]
-  if (length(missing_required) > 0) {
-    stop(
-      "The supplied robcov_vglm model is missing required components for ",
-      "score bootstrap: ",
-      paste(missing_required, collapse = ", "),
-      ". Refit with robcov_vglm()."
-    )
-  }
-
   if (!id_var %in% names(baseline_data)) {
     stop("ID variable '", id_var, "' not found in baseline data.")
   }
 
-  beta_hat <- model$coefficients
-  bread <- model$bread
-  scores <- model$scores
-  cluster <- model$cluster
+  components <- score_bootstrap_components(model, cluster = cluster)
+  beta_hat <- components$coefficients
+  bread <- components$bread
+  scores <- components$scores
+  cluster <- components$cluster
+
   if (!is.matrix(scores)) {
     stop("`model$scores` must be a matrix for score bootstrap.")
   }
@@ -2041,6 +2149,156 @@ generate_score_bootstrap_draws <- function(
   }
 
   list(beta_draws = beta_draws, baseline_weights = baseline_weights)
+}
+
+score_bootstrap_components <- function(model, cluster = NULL) {
+  if (inherits(model, "robcov_vglm")) {
+    required <- c("coefficients", "bread", "scores", "cluster")
+    missing_required <- required[vapply(
+      required,
+      function(x) is.null(model[[x]]),
+      logical(1)
+    )]
+    if (length(missing_required) > 0) {
+      stop(
+        "The supplied robcov_vglm model is missing required components for ",
+        "score bootstrap: ",
+        paste(missing_required, collapse = ", "),
+        ". Refit with robcov_vglm()."
+      )
+    }
+
+    return(list(
+      coefficients = model$coefficients,
+      bread = model$bread,
+      scores = model$scores,
+      cluster = model$cluster
+    ))
+  }
+
+  if (!inherits(model, "orm")) {
+    stop("score_bootstrap_components() supports robcov_vglm and orm models.")
+  }
+
+  if (is.null(cluster)) {
+    stop(
+      "`cluster` is required for orm score-bootstrap inference. ",
+      "Supply the row-level patient ID vector used to fit the orm model, ",
+      "for example `cluster = data$id`."
+    )
+  }
+
+  scores <- compute_scores_orm(model)
+  cluster <- align_cluster_orm(model, cluster, nrow(scores))
+  bread <- get_orm_model_vcov(model)
+
+  list(
+    coefficients = stats::coef(model),
+    bread = bread,
+    scores = scores,
+    cluster = cluster
+  )
+}
+
+compute_scores_orm <- function(model) {
+  if (!inherits(model, "orm")) {
+    stop("'model' must be an orm object.")
+  }
+  if (is.null(model$x) || is.null(model$y)) {
+    stop(
+      "orm score bootstrap requires the model to be fitted with ",
+      "`x = TRUE, y = TRUE`."
+    )
+  }
+
+  beta <- stats::coef(model)
+  Gamma <- get_effective_coefs(model, beta = beta)
+  X <- cbind("(Intercept)" = 1, as.matrix(model$x))
+  X <- X[, colnames(Gamma), drop = FALSE]
+
+  eta <- X %*% t(Gamma)
+  cum_probs <- stats::plogis(eta)
+  probs <- lp_to_probs(eta, nrow(Gamma))
+  probs <- pmax(probs, .Machine$double.eps)
+
+  y_levels <- as_state_labels(model$yunique)
+  y_idx <- match(as_state_labels(model$y), y_levels)
+  if (anyNA(y_idx)) {
+    stop("Could not match orm response values to fitted outcome levels.")
+  }
+
+  n <- nrow(X)
+  M <- nrow(Gamma)
+  d_eta <- matrix(0, nrow = n, ncol = M)
+
+  for (i in seq_len(n)) {
+    k <- y_idx[i]
+    if (k == 1L) {
+      d_eta[i, 1L] <- -cum_probs[i, 1L] * (1 - cum_probs[i, 1L]) /
+        probs[i, 1L]
+    } else if (k == M + 1L) {
+      d_eta[i, M] <- cum_probs[i, M] * (1 - cum_probs[i, M]) /
+        probs[i, M + 1L]
+    } else {
+      d_eta[i, k - 1L] <- cum_probs[i, k - 1L] *
+        (1 - cum_probs[i, k - 1L]) / probs[i, k]
+      d_eta[i, k] <- -cum_probs[i, k] *
+        (1 - cum_probs[i, k]) / probs[i, k]
+    }
+  }
+
+  intercept_scores <- d_eta
+  slope_scores <- as.matrix(model$x) * rowSums(d_eta)
+  scores <- cbind(intercept_scores, slope_scores)
+  colnames(scores) <- names(beta)
+  scores
+}
+
+align_cluster_orm <- function(model, cluster, n_scores) {
+  if (inherits(cluster, "formula")) {
+    stop("`cluster` for orm score bootstrap must be a row-level vector.")
+  }
+
+  if (length(cluster) == n_scores) {
+    return(cluster)
+  }
+
+  na_action <- model$na.action
+  if (!is.null(na_action) && length(cluster) > n_scores) {
+    keep <- seq_along(cluster)
+    keep <- keep[-as.integer(na_action)]
+    if (length(keep) == n_scores) {
+      return(cluster[keep])
+    }
+  }
+
+  stop(
+    "Length of `cluster` (",
+    length(cluster),
+    ") does not match the number of orm score rows (",
+    n_scores,
+    "). Supply the row-level patient ID vector used to fit the model."
+  )
+}
+
+get_orm_model_vcov <- function(model) {
+  beta <- stats::coef(model)
+
+  if (!is.null(model$orig.var)) {
+    return(validate_coef_vcov(beta, model$orig.var, arg = "orm model vcov"))
+  }
+
+  if (requireNamespace("rms", quietly = TRUE)) {
+    robust <- rms::robcov(model)
+    if (!is.null(robust$orig.var)) {
+      return(validate_coef_vcov(beta, robust$orig.var, arg = "orm model vcov"))
+    }
+  }
+
+  stop(
+    "Could not obtain a full model-based covariance matrix for the orm fit. ",
+    "Refit with rms::orm(..., x = TRUE, y = TRUE)."
+  )
 }
 
 
@@ -2744,6 +3002,8 @@ get_draws <- function(object) {
 #' @param t_covs Time-dependent covariate lookup (optional)
 #' @param times Time points to predict
 #' @param ylevels State labels
+#' @param absorb Absorbing state(s). These transition matrices are not needed
+#'   because absorbing states keep their prior probability mass.
 #' @param tvarname Name of time variable
 #' @param pvarname Name of previous state variable
 #' @param ... Ignored
@@ -2757,14 +3017,21 @@ markov_msm_build <- function(
   t_covs = NULL,
   times = NULL,
   ylevels = 1:6,
+  absorb = NULL,
   tvarname = "time",
   pvarname = "yprev",
   ...
 ) {
   n_pat <- nrow(data)
   ylevel_names <- as_state_labels(ylevels)
+  absorb_names <- as_state_labels(absorb)
   n_states <- length(ylevel_names)
   M <- n_states - 1
+  absorb_idx <- if (length(absorb_names)) {
+    which(ylevel_names %in% absorb_names)
+  } else {
+    integer(0)
+  }
 
   if (is.null(times)) {
     times <- if (!is.null(t_covs)) {
@@ -2792,26 +3059,41 @@ markov_msm_build <- function(
     data[[tvarname]] <- times[1]
   }
 
+  is_vglm <- inherits(model, "vglm")
+  is_orm <- inherits(model, "orm")
+
   # Terms object
-  tt <- stats::terms(model)
-  tt <- stats::delete.response(tt)
-  contrasts_arg <- if (inherits(model, "vglm") && length(model@contrasts)) {
-    model@contrasts
+  if (is_vglm) {
+    tt <- stats::terms(model)
+    tt <- stats::delete.response(tt)
+    contrasts_arg <- if (length(model@contrasts)) {
+      model@contrasts
+    } else {
+      NULL
+    }
+    xlev_arg <- model@xlevels
+  } else if (is_orm) {
+    tt <- NULL
+    contrasts_arg <- NULL
+    xlev_arg <- NULL
   } else {
-    NULL
+    stop("markov_msm_build() supports only vglm and orm models.")
   }
-  xlev_arg <- if (inherits(model, "vglm")) model@xlevels else NULL
 
   # Helper to get design matrix columns used by the effective coefficient
   # matrix. For inline transforms such as rms::rcs(), model.matrix() uses the
   # fitted terms object's predvars, including stored knot locations.
   get_X <- function(d) {
-    X <- stats::model.matrix(
-      tt,
-      data = d,
-      contrasts.arg = contrasts_arg,
-      xlev = xlev_arg
-    )
+    if (is_orm) {
+      X <- orm_model_matrix(model, d, include_intercept = TRUE)
+    } else {
+      X <- stats::model.matrix(
+        tt,
+        data = d,
+        contrasts.arg = contrasts_arg,
+        xlev = xlev_arg
+      )
+    }
     common <- intersect(colnames(X), common_cols)
     if (length(common) == 0) {
       return(NULL)
@@ -2860,6 +3142,11 @@ markov_msm_build <- function(
     d_time <- set_time(data, time_idx)
 
     for (k in seq_len(n_states)) {
+      if (k %in% absorb_idx) {
+        X_transition[[time_idx]][[k]] <- NULL
+        next
+      }
+
       d_k <- d_time
       d_k[[pvarname]] <- make_previous_state_column(
         states = ylevel_names[k],

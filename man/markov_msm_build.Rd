@@ -10,6 +10,7 @@ markov_msm_build(
   t_covs = NULL,
   times = NULL,
   ylevels = 1:6,
+  absorb = NULL,
   tvarname = "time",
   pvarname = "yprev",
   ...
@@ -25,6 +26,9 @@ markov_msm_build(
 \item{times}{Time points to predict}
 
 \item{ylevels}{State labels}
+
+\item{absorb}{Absorbing state(s). These transition matrices are not needed
+because absorbing states keep their prior probability mass.}
 
 \item{tvarname}{Name of time variable}
 

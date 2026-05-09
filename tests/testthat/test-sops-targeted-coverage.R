@@ -272,7 +272,14 @@ test_that("get_draws() joins metadata with base merge", {
 })
 
 test_that("markov_msm_build() covers default columns and missing design columns", {
-  model <- stats::lm(y ~ x, data = data.frame(y = 1:3, x = 1:3))
+  model <- VGAM::vglm(
+    y ~ x,
+    family = VGAM::binomialff,
+    data = data.frame(
+      y = c(0, 1, 1, 0, 0, 1),
+      x = c(0, 0.2, 0.4, 0.6, 0.8, 1)
+    )
+  )
   data <- data.frame(id = 1:2, x = c(0, 1))
 
   with_mocked_bindings(

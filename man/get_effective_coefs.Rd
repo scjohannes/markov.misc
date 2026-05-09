@@ -4,10 +4,13 @@
 \alias{get_effective_coefs}
 \title{Calculate Effective Coefficients for Fast Prediction}
 \usage{
-get_effective_coefs(model)
+get_effective_coefs(model, beta = NULL)
 }
 \arguments{
-\item{model}{A fitted \code{vglm} object.}
+\item{model}{A fitted \code{vglm} or \code{orm} object.}
+
+\item{beta}{Optional coefficient vector to use instead of \code{coef(model)}.
+This is used internally for simulation draws.}
 }
 \value{
 A matrix with dimensions \verb{[M x P]}, where:
@@ -15,16 +18,21 @@ A matrix with dimensions \verb{[M x P]}, where:
 \item{P}{Number of columns in the small design matrix (covariates)}
 }
 \description{
-Computes the "effective coefficients" matrix for a fitted vglm model.
-This matrix combines the raw coefficients with the constraint matrices,
-allowing for fast linear predictor calculation via simple matrix multiplication
-with the "small" (unexpanded) design matrix.
+Computes the "effective coefficients" matrix for a fitted ordinal model.
+For \code{vglm} objects, this matrix combines the raw coefficients with the
+constraint matrices. For \code{orm} objects, threshold coefficients are stored in
+the intercept column and slope coefficients are replicated across
+thresholds. In both cases this allows fast linear predictor calculation via
+simple matrix multiplication with the "small" design matrix.
 }
 \details{
-For a term \eqn{j} with constraint matrix \eqn{C_j} and coefficient vector \eqn{\beta_j},
-the contribution to the linear predictor vector \eqn{\eta} is \eqn{x_j \cdot (C_j \times \beta_j)}.
-This function pre-calculates \eqn{\Gamma_j = C_j \times \beta_j} for all terms and
-assembles them into a single matrix \eqn{\Gamma}.
+For a \code{vglm} term \eqn{j} with constraint matrix \eqn{C_j} and coefficient
+vector \eqn{\beta_j}, the contribution to the linear predictor vector
+\eqn{\eta} is \eqn{x_j \cdot (C_j \times \beta_j)}. This function
+pre-calculates \eqn{\Gamma_j = C_j \times \beta_j} for all terms and
+assembles them into a single matrix \eqn{\Gamma}. For \code{orm} models, only full
+proportional odds models are supported, so each slope coefficient contributes
+equally to every threshold-specific linear predictor.
 
 Then, prediction for a new observation with design vector \eqn{x} is simply:
 \eqn{\eta = \Gamma \times x^T}
