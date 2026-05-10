@@ -55,7 +55,6 @@
 #' plot_sops(trajectories, time_var = "day", y_var = "state", facet_var = "treatment")
 #' }
 #' @importFrom ggplot2 ggplot aes geom_bar geom_line facet_wrap vars labs
-#' @importFrom dplyr group_by summarise mutate ungroup n across all_of
 #' @importFrom rlang .data
 #'
 #' @export
@@ -96,12 +95,23 @@ plot_sops <- function(
     }
     group_vars <- unique(group_vars)
 
-    # Compute proportions by group variables and time
-    data_summary <- data |>
-      dplyr::group_by(dplyr::across(dplyr::all_of(group_vars))) |>
-      dplyr::summarise(n = dplyr::n(), .groups = "drop_last") |>
-      dplyr::mutate(prob = n / sum(n)) |>
-      dplyr::ungroup()
+    # Compute proportions by group variables and time.
+    data_summary <- stats::aggregate(
+      rep(1L, nrow(data)),
+      data[, group_vars, drop = FALSE],
+      length
+    )
+    names(data_summary)[ncol(data_summary)] <- "n"
+    denom_vars <- setdiff(group_vars, y_var)
+    denom <- stats::aggregate(
+      data_summary$n,
+      data_summary[, denom_vars, drop = FALSE],
+      sum
+    )
+    names(denom)[ncol(denom)] <- "denom"
+    data_summary <- left_join_preserve_order(data_summary, denom, by = denom_vars)
+    data_summary$prob <- data_summary$n / data_summary$denom
+    data_summary$denom <- NULL
 
     # Build base aesthetic mapping
     aes_mapping <- ggplot2::aes(
@@ -333,8 +343,6 @@ plot_results <- function(
 #' }
 #'
 #' @importFrom ggplot2 ggplot aes geom_line geom_ribbon labs facet_wrap vars
-#' @importFrom dplyr group_by summarise across all_of
-#' @importFrom tidyr pivot_longer starts_with
 #' @importFrom rlang .data
 #'
 #' @export
@@ -352,13 +360,7 @@ plot_bootstrap_sops <- function(
   upper_q <- 1 - alpha / 2
 
   # Reshape to long format
-  sops_long <- bootstrap_data |>
-    tidyr::pivot_longer(
-      cols = tidyr::starts_with("state_"),
-      names_to = "state",
-      values_to = "probability",
-      names_prefix = "state_"
-    )
+  sops_long <- pivot_state_columns_long(bootstrap_data)
 
   # Determine grouping variables for summarization
   group_vars <- c(time_var, "state")
@@ -370,15 +372,19 @@ plot_bootstrap_sops <- function(
   }
   group_vars <- unique(group_vars)
 
-  # Compute confidence intervals
-  ci_bands <- sops_long |>
-    dplyr::group_by(dplyr::across(dplyr::all_of(group_vars))) |>
-    dplyr::summarise(
-      lower = quantile(.data[["probability"]], lower_q),
-      median = median(.data[["probability"]]),
-      upper = quantile(.data[["probability"]], upper_q),
-      .groups = "drop"
-    )
+  # Compute confidence intervals.
+  group_key <- do.call(
+    interaction,
+    c(sops_long[, group_vars, drop = FALSE], drop = TRUE, sep = "\r")
+  )
+  ci_bands <- bind_rows_fill(lapply(split(seq_len(nrow(sops_long)), group_key), function(idx) {
+    group_data <- sops_long[idx, , drop = FALSE]
+    out <- group_data[1, group_vars, drop = FALSE]
+    out$lower <- as.numeric(stats::quantile(group_data$probability, lower_q))
+    out$median <- stats::median(group_data$probability)
+    out$upper <- as.numeric(stats::quantile(group_data$probability, upper_q))
+    out
+  }))
 
   # Build base aesthetic mapping
   aes_mapping <- ggplot2::aes(

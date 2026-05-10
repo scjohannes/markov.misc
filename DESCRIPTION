@@ -11,7 +11,6 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Imports: 
     arrow,
-    dplyr,
     furrr,
     future,
     future.callr,
@@ -24,18 +23,18 @@ Imports:
     rms,
     sdprisk,
     stats,
-    tibble,
-    tidyr,
-    purrr,
     VGAM
 Depends: 
     R (>= 4.1.0)
 LazyData: true
 Suggests: 
+    dplyr,
     knitr,
     ordinal,
     rmarkdown,
     survival,
+    tibble,
+    tidyr,
     testthat (>= 3.0.0),
     withr
 Config/testthat/edition: 3

@@ -41,7 +41,6 @@
 #' }
 #'
 #' @importFrom arrow open_dataset
-#' @importFrom dplyr filter select distinct collect pull
 #'
 #' @export
 sample_from_arrow <- function(
@@ -56,20 +55,18 @@ sample_from_arrow <- function(
 
   ds <- arrow::open_dataset(data_path)
 
-  # Get unique IDs by treatment group
-  tx_ids <- ds |>
-    dplyr::filter(tx == 1) |>
-    dplyr::select(id) |>
-    dplyr::distinct() |>
-    dplyr::collect() |>
-    dplyr::pull(id)
+  # Get unique IDs by treatment group without loading all columns into memory.
+  tx_ids <- unique(arrow_collect_dataset(
+    ds,
+    filter = arrow_equal_expr("tx", 1),
+    cols = "id"
+  )$id)
 
-  soc_ids <- ds |>
-    dplyr::filter(tx == 0) |>
-    dplyr::select(id) |>
-    dplyr::distinct() |>
-    dplyr::collect() |>
-    dplyr::pull(id)
+  soc_ids <- unique(arrow_collect_dataset(
+    ds,
+    filter = arrow_equal_expr("tx", 0),
+    cols = "id"
+  )$id)
 
   # Sample IDs based on allocation ratio
   n_tx <- round(allocation_ratio * sample_size)
@@ -80,9 +77,10 @@ sample_from_arrow <- function(
   selected_ids <- c(tx_sample, soc_sample)
 
   # Load only selected patients
-  result <- ds |>
-    dplyr::filter(id %in% selected_ids) |>
-    dplyr::collect()
+  result <- arrow_collect_dataset(
+    ds,
+    filter = arrow_in_expr("id", selected_ids)
+  )
 
   return(result)
 }
@@ -148,8 +146,6 @@ sample_from_arrow <- function(
 #' tidy_po(fit, alternative = "less")  # One-sided: H₁: β < 0
 #' }
 #'
-#' @importFrom dplyr case_when mutate filter
-#' @importFrom tibble tibble as_tibble
 #' @importFrom stats coef vcov pnorm confint
 #'
 #' @export
@@ -176,11 +172,14 @@ tidy_po <- function(
     # Filter to non-intercept terms
     non_intercepts <- !grepl("\\(Intercept\\)", names(coefs))
 
-    result <- tibble::tibble(
+    estimate <- unname(coefs[non_intercepts])
+    std_error <- unname(ses[non_intercepts])
+    result <- data.frame(
       term = names(coefs)[non_intercepts],
-      estimate = coefs[non_intercepts],
-      std_error = ses[non_intercepts],
-      statistic = estimate / std_error
+      estimate = estimate,
+      std_error = std_error,
+      statistic = estimate / std_error,
+      check.names = FALSE
     )
 
     # --- rms::orm method ---
@@ -196,11 +195,14 @@ tidy_po <- function(
       ses <- sqrt(diag(vcov_matrix))
       non_intercepts <- !grepl("^y>=", names(coefs))
 
-      result <- tibble::tibble(
+      estimate <- unname(coefs[non_intercepts])
+      std_error <- unname(ses[non_intercepts])
+      result <- data.frame(
         term = names(coefs)[non_intercepts],
-        estimate = coefs[non_intercepts],
-        std_error = ses[non_intercepts],
-        statistic = estimate / std_error
+        estimate = estimate,
+        std_error = std_error,
+        statistic = estimate / std_error,
+        check.names = FALSE
       )
     } else {
       # Naive SEs
@@ -211,11 +213,14 @@ tidy_po <- function(
       # and exclude intercepts
       non_intercept_names <- vcov_names[!grepl("^y>=", vcov_names)]
 
-      result <- tibble::tibble(
+      estimate <- unname(coefs[non_intercept_names])
+      std_error <- unname(sqrt(diag(vcov_matrix))[non_intercept_names])
+      result <- data.frame(
         term = non_intercept_names,
-        estimate = coefs[non_intercept_names],
-        std_error = sqrt(diag(vcov_matrix))[non_intercept_names],
-        statistic = estimate / std_error
+        estimate = estimate,
+        std_error = std_error,
+        statistic = estimate / std_error,
+        check.names = FALSE
       )
     }
 
@@ -224,14 +229,16 @@ tidy_po <- function(
     summ <- summary(fit)
     coef_table <- summ$coefficients
 
-    result <- tibble::as_tibble(coef_table, rownames = "term") |>
-      dplyr::filter(!grepl("\\|", term)) |>
-      dplyr::mutate(
-        estimate = Estimate,
-        std_error = `Std. Error`,
-        statistic = `z value`
-      ) |>
-      dplyr::select(term, estimate, std_error, statistic)
+    coef_df <- as.data.frame(coef_table, optional = TRUE)
+    coef_df$term <- rownames(coef_table)
+    coef_df <- coef_df[!grepl("\\|", coef_df$term), , drop = FALSE]
+    result <- data.frame(
+      term = coef_df$term,
+      estimate = coef_df[["Estimate"]],
+      std_error = coef_df[["Std. Error"]],
+      statistic = coef_df[["z value"]],
+      check.names = FALSE
+    )
 
     # --- survival::coxph method (Supports Fine-Gray) ---
   } else if (inherits(fit, "coxph")) {
@@ -246,11 +253,14 @@ tidy_po <- function(
     vcov_mat <- stats::vcov(fit)
     ses <- sqrt(diag(vcov_mat))
 
-    result <- tibble::tibble(
+    estimate <- unname(coefs)
+    std_error <- unname(ses)
+    result <- data.frame(
       term = names(coefs),
-      estimate = coefs,
-      std_error = ses,
-      statistic = estimate / std_error
+      estimate = estimate,
+      std_error = std_error,
+      statistic = estimate / std_error,
+      check.names = FALSE
     )
     # --- stats::glm method ---
   } else if (inherits(fit, "glm")) {
@@ -260,11 +270,14 @@ tidy_po <- function(
     # Filter out Intercepts
     non_intercepts <- !grepl("\\(Intercept\\)", names(coefs))
 
-    result <- tibble::tibble(
+    estimate <- unname(coefs[non_intercepts])
+    std_error <- unname(ses[non_intercepts])
+    result <- data.frame(
       term = names(coefs)[non_intercepts],
-      estimate = coefs[non_intercepts],
-      std_error = ses[non_intercepts],
-      statistic = estimate / std_error
+      estimate = estimate,
+      std_error = std_error,
+      statistic = estimate / std_error,
+      check.names = FALSE
     )
   } else {
     stop("fit must be a vglm, orm, clm, coxph, or glm object")
@@ -273,26 +286,17 @@ tidy_po <- function(
   # --- Common Calculation for P-values and CIs ---
   # Apply to the 'result' tibble regardless of which method generated it
   if (alternative == "two.sided") {
-    result <- result |>
-      dplyr::mutate(
-        p_value = 2 * stats::pnorm(-abs(statistic)),
-        conf_low = estimate - z_crit * std_error,
-        conf_high = estimate + z_crit * std_error
-      )
+    result$p_value <- 2 * stats::pnorm(-abs(result$statistic))
+    result$conf_low <- result$estimate - z_crit * result$std_error
+    result$conf_high <- result$estimate + z_crit * result$std_error
   } else if (alternative == "greater") {
-    result <- result |>
-      dplyr::mutate(
-        p_value = stats::pnorm(statistic, lower.tail = FALSE),
-        conf_low = estimate - z_crit * std_error,
-        conf_high = Inf
-      )
+    result$p_value <- stats::pnorm(result$statistic, lower.tail = FALSE)
+    result$conf_low <- result$estimate - z_crit * result$std_error
+    result$conf_high <- Inf
   } else {
-    result <- result |>
-      dplyr::mutate(
-        p_value = stats::pnorm(statistic),
-        conf_low = -Inf,
-        conf_high = estimate + z_crit * std_error
-      )
+    result$p_value <- stats::pnorm(result$statistic)
+    result$conf_low <- -Inf
+    result$conf_high <- result$estimate + z_crit * result$std_error
   }
 
   return(result)
@@ -494,8 +498,6 @@ tidy_po <- function(
 #' )
 #' }
 #'
-#' @importFrom dplyr bind_rows
-#'
 #' @export
 assess_operating_characteristics <- function(
   iter_num,
@@ -613,7 +615,7 @@ assess_operating_characteristics <- function(
     results_list[[analysis_name]] <- results[[1]]
   }
 
-  dplyr::bind_rows(results_list)
+  bind_rows_fill(results_list)
 }
 
 #' @rdname assess_operating_characteristics
@@ -682,37 +684,46 @@ run_power_iteration <- assess_operating_characteristics
 #' )
 #' }
 #'
-#' @importFrom dplyr group_by summarise ungroup mutate
-#'
 #' @export
 summarize_oc_results <- function(results, true_value = NULL, alpha = 0.05) {
   if (!is.null(true_value)) {
     # Calculate coverage before summarizing
-    results <- results |>
-      dplyr::mutate(
-        covers_truth = conf_low <= true_value & conf_high >= true_value
-      )
+    results$covers_truth <- results$conf_low <= true_value &
+      results$conf_high >= true_value
   }
 
-  summary <- results |>
-    dplyr::group_by(analysis, term) |>
-    dplyr::summarise(
-      mean_estimate = mean(estimate),
-      mean_se = mean(std_error),
-      sd_estimate = sd(estimate),
-      power = mean(p_value < alpha),
-      power_mcse = jackknife_mcse(p_value < alpha),
-      coverage = if (!is.null(true_value)) mean(covers_truth) else NA_real_,
-      n_iters = n(),
-      .groups = "drop"
+  group_key <- interaction(results$analysis, results$term, drop = TRUE, sep = "\r")
+  rows <- split(seq_len(nrow(results)), group_key)
+
+  summary <- bind_rows_fill(lapply(rows, function(idx) {
+    group_data <- results[idx, , drop = FALSE]
+    data.frame(
+      analysis = group_data$analysis[1],
+      term = group_data$term[1],
+      mean_estimate = mean(group_data$estimate),
+      mean_se = mean(group_data$std_error),
+      sd_estimate = stats::sd(group_data$estimate),
+      power = mean(group_data$p_value < alpha),
+      power_mcse = jackknife_mcse(group_data$p_value < alpha),
+      coverage = if (!is.null(true_value)) {
+        mean(group_data$covers_truth)
+      } else {
+        NA_real_
+      },
+      n_iters = nrow(group_data),
+      check.names = FALSE
     )
+  }))
 
   if (!is.null(true_value)) {
-    summary <- summary |>
-      dplyr::mutate(
-        bias = mean_estimate - true_value,
-        .after = mean_estimate
-      )
+    summary$bias <- summary$mean_estimate - true_value
+    summary <- summary[, c(
+      "analysis",
+      "term",
+      "mean_estimate",
+      "bias",
+      setdiff(names(summary), c("analysis", "term", "mean_estimate", "bias"))
+    ), drop = FALSE]
   }
 
   summary

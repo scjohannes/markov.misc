@@ -822,12 +822,7 @@ time_in_state <- function(sops, target_states = 1) {
     colnames(res_wide)[colnames(res_wide) == "prob_ctrl"] <- "SOP_ctrl"
     res_wide$delta <- res_wide$SOP_tx - res_wide$SOP_ctrl
 
-    # Return tibble if tibble package is available, otherwise DF
-    if (requireNamespace("tibble", quietly = TRUE)) {
-      return(tibble::as_tibble(res_wide))
-    } else {
-      return(res_wide)
-    }
+    return(res_wide)
   }
 
   # =========================================================================
@@ -1916,7 +1911,7 @@ inferences_simulation <- function(
       .options = furrr::furrr_options(
         seed = TRUE,
         globals = globals_list,
-        packages = c("rms", "VGAM", "dplyr", "stats", "markov.misc")
+        packages = c("rms", "VGAM", "stats", "markov.misc")
       ),
       .progress = FALSE
     )
@@ -1935,7 +1930,7 @@ inferences_simulation <- function(
   for (i in seq_along(sim_results)) {
     sim_results[[i]]$draw_id <- i
   }
-  draws_df <- dplyr::bind_rows(sim_results)
+  draws_df <- bind_rows_fill(sim_results)
 
   # --- 7. Compute Confidence Intervals ---
   if (is_avg) {
@@ -2369,10 +2364,7 @@ inferences_bootstrap <- function(
   # --- 2. Validate Data is Longitudinal (Not Just Baseline) ---
   # Check if tvarname exists and has multiple time points per patient
   if (tvarname %in% names(newdata_orig)) {
-    rows_per_patient <- newdata_orig |>
-      dplyr::group_by(!!rlang::sym(id_var)) |>
-      dplyr::summarise(n_rows = dplyr::n(), .groups = "drop") |>
-      dplyr::pull(n_rows)
+    rows_per_patient <- tabulate(match(newdata_orig[[id_var]], unique(newdata_orig[[id_var]])))
 
     if (all(rows_per_patient == 1)) {
       stop(
@@ -2521,7 +2513,7 @@ inferences_bootstrap <- function(
       result_list[[cf_i]] <- df
     }
 
-    dplyr::bind_rows(result_list)
+    bind_rows_fill(result_list)
   }
 
   # --- 5. Apply to Bootstrap Samples ---
@@ -2531,7 +2523,7 @@ inferences_bootstrap <- function(
     data = newdata_orig,
     id_var = id_var,
     workers = workers,
-    packages = c("rms", "VGAM", "Hmisc", "dplyr", "stats"),
+    packages = c("rms", "VGAM", "Hmisc", "stats"),
     globals = c(
       "model",
       "variables",
@@ -2560,7 +2552,7 @@ inferences_bootstrap <- function(
   for (i in seq_along(boot_results)) {
     boot_results[[i]]$draw_id <- i
   }
-  boot_df <- dplyr::bind_rows(boot_results)
+  boot_df <- bind_rows_fill(boot_results)
 
   # Compute confidence intervals
   group_cols <- c("time", "state", names(variables))
@@ -2708,7 +2700,7 @@ marginalize_sops_array <- function(
     result_list[[cf_i]] <- df
   }
 
-  dplyr::bind_rows(result_list)
+  bind_rows_fill(result_list)
 }
 
 

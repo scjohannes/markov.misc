@@ -79,7 +79,6 @@
 #' fit <- clm(y ~ tx + time + yprev, data = model_data)
 #' }
 #'
-#' @importFrom dplyr filter mutate
 #' @importFrom stats setNames aggregate model.matrix predict
 #' @importFrom utils modifyList
 #' @importFrom methods slot
@@ -92,18 +91,15 @@ prepare_markov_data <- function(
   factor_previous = TRUE
 ) {
   if (!is.null(absorbing_state)) {
-    data <- data |>
-      dplyr::filter(!yprev %in% absorbing_state)
+    data <- data[!data$yprev %in% absorbing_state, , drop = FALSE]
   }
 
   if (factor_previous) {
-    data <- data |>
-      dplyr::mutate(yprev = factor(yprev))
+    data$yprev <- factor(data$yprev)
   }
 
   if (ordered_response) {
-    data <- data |>
-      dplyr::mutate(y = ordered(y))
+    data$y <- ordered(data$y)
   }
 
   data
@@ -382,8 +378,6 @@ jackknife_mcse <- function(estimates, statistic = mean) {
 #' t_data <- states_to_ttest(trajectories, target_state = 1)
 #' }
 #'
-#' @importFrom dplyr group_by summarise first
-#'
 #' @export
 states_to_ttest <- function(data, target_state = 1) {
   # Input validation
@@ -393,14 +387,16 @@ states_to_ttest <- function(data, target_state = 1) {
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  # Base summary
-  result <- data |>
-    dplyr::group_by(id) |>
-    dplyr::summarise(
-      y = sum(y == target_state),
-      tx = dplyr::first(tx),
-      .groups = "drop"
+  ids <- unique(data$id)
+  result <- bind_rows_fill(lapply(ids, function(id) {
+    rows <- data$id == id
+    data.frame(
+      id = id,
+      y = sum(data$y[rows] == target_state),
+      tx = data$tx[rows][1],
+      check.names = FALSE
     )
+  }))
 
   return(result)
 }
@@ -453,8 +449,6 @@ states_to_ttest <- function(data, target_state = 1) {
 #'                           covariates = c("age", "sofa", "baseline_severity"))
 #' }
 #'
-#' @importFrom dplyr group_by arrange summarise if_else select across all_of left_join mutate
-#'
 #' @export
 states_to_drs <- function(
   data,
@@ -470,33 +464,33 @@ states_to_drs <- function(
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  # Calculate DRS
-  result <- data |>
-    dplyr::group_by(id) |>
-    dplyr::arrange(time) |>
-    dplyr::summarise(
-      last_not_home = max(0, which(y != target_state)),
-      dead = any(y == death_state),
-      tx = dplyr::first(tx),
-      .groups = "drop"
-    ) |>
-    dplyr::mutate(
-      drs = dplyr::if_else(dead, -1, follow_up_time - last_not_home)
-    ) |>
-    dplyr::select(id, tx, drs)
+  ids <- unique(data$id)
+  result <- bind_rows_fill(lapply(ids, function(id) {
+    group_data <- data[data$id == id, , drop = FALSE]
+    group_data <- group_data[order(group_data$time), , drop = FALSE]
+    last_not_home <- max(0, which(group_data$y != target_state))
+    dead <- any(group_data$y == death_state)
+    data.frame(
+      id = id,
+      tx = group_data$tx[1],
+      drs = if (dead) -1 else follow_up_time - last_not_home,
+      check.names = FALSE
+    )
+  }))
 
   # Add covariates if specified
   if (!is.null(covariates)) {
     available_covs <- intersect(covariates, names(data))
     if (length(available_covs) > 0) {
-      cov_data <- data |>
-        dplyr::group_by(id) |>
-        dplyr::summarise(
-          dplyr::across(dplyr::all_of(available_covs), dplyr::first),
-          .groups = "drop"
-        )
-      result <- result |>
-        dplyr::left_join(cov_data, by = "id")
+      cov_data <- bind_rows_fill(lapply(ids, function(id) {
+        group_data <- data[data$id == id, , drop = FALSE]
+        out <- data.frame(id = id, check.names = FALSE)
+        for (cov in available_covs) {
+          out[[cov]] <- group_data[[cov]][1]
+        }
+        out
+      }))
+      result <- left_join_preserve_order(result, cov_data, by = "id")
     }
   }
 
@@ -528,8 +522,6 @@ states_to_drs <- function(
 #' Each event change within a participant concludes a time interval indicated by
 #' start and stop and the state at the end of the interval. Columns given in
 #' covariates will be kept in the output.
-#'
-#' @importFrom dplyr group_by arrange summarise if_else select across all_of left_join mutate
 #'
 #' @export
 states_to_tte_old <- function(
@@ -612,7 +604,6 @@ states_to_tte_old <- function(
 #' # With different covariates
 #' tte_data <- states_to_tte(trajectories, covariates = c("age", "sofa", "baseline_severity"))
 #' }
-#' @importFrom dplyr arrange group_by mutate lag summarize first select any_of everything
 #' @export
 states_to_tte <- function(
   data,
@@ -626,43 +617,34 @@ states_to_tte <- function(
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  # 2. Logic: Collapse consecutive runs of identical states
-  # We cannot just filter; we must aggregate.
-  result <- data |>
-    dplyr::filter(yprev != absorbing_state) |>
-    dplyr::arrange(id, time) |>
-    dplyr::group_by(id) |>
-    dplyr::mutate(
-      # Define the raw interval for every single row
-      # If time is 1, interval is 0 -> 1.
-      raw_start = dplyr::lag(time, default = 0),
-      raw_stop = time,
+  data <- data[data$yprev != absorbing_state, , drop = FALSE]
+  data <- data[order(data$id, data$time), , drop = FALSE]
+  available_covs <- intersect(covariates, names(data))
 
-      # Create a unique ID for every "run" of identical states
-      # If y changes, we increment the ID.
-      state_change = y != dplyr::lag(y, default = -999),
-      run_id = cumsum(state_change)
-    ) |>
-    # Collapse: Squash all rows in the same run into one interval
-    dplyr::group_by(id, run_id) |>
-    dplyr::summarize(
-      # Variables that are constant for the run
-      y = dplyr::first(y),
-      tx = dplyr::first(tx),
-      yprev = dplyr::first(yprev),
+  result <- bind_rows_fill(lapply(unique(data$id), function(id) {
+    group_data <- data[data$id == id, , drop = FALSE]
+    raw_start <- c(0, utils::head(group_data$time, -1))
+    raw_stop <- group_data$time
+    state_change <- c(TRUE, group_data$y[-1] != utils::head(group_data$y, -1))
+    run_id <- cumsum(state_change)
 
-      # The interval becomes the Min Start to the Max Stop of the run
-      start = min(raw_start),
-      stop = max(raw_stop),
-
-      # Capture covariates (taking the value at the start of the run)
-      dplyr::across(dplyr::any_of(covariates), dplyr::first),
-
-      .groups = "drop"
-    ) |>
-    # Clean up and reorder
-    dplyr::select(-run_id) |>
-    dplyr::select(id, tx, start, stop, y, yprev, dplyr::everything())
+    bind_rows_fill(lapply(unique(run_id), function(run) {
+      rows <- run_id == run
+      out <- data.frame(
+        id = id,
+        tx = group_data$tx[rows][1],
+        start = min(raw_start[rows]),
+        stop = max(raw_stop[rows]),
+        y = group_data$y[rows][1],
+        yprev = group_data$yprev[rows][1],
+        check.names = FALSE
+      )
+      for (cov in available_covs) {
+        out[[cov]] <- group_data[[cov]][rows][1]
+      }
+      out
+    }))
+  }))
 
   return(result)
 }
@@ -1026,8 +1008,6 @@ calc_time_in_state_diff <- function(
 #'          statistic, p_value, conf_low, conf_high)
 #' }
 #'
-#' @importFrom dplyr select across summarise everything
-#' @importFrom tidyr pivot_longer
 #' @importFrom stats quantile median
 #'
 #' @export
@@ -1066,57 +1046,22 @@ tidy_bootstrap_coefs <- function(
   # Ensure probs are sorted
   probs <- sort(probs)
 
-  # Remove the ID column and summarize
-  result <- boot_coefs |>
-    dplyr::select(-dplyr::all_of(id_col)) |>
-    dplyr::summarise(
-      dplyr::across(
-        dplyr::everything(),
-        list(
-          estimate = ~ if (!is.null(estimate)) {
-            if (estimate == "median") {
-              median(.x, na.rm = na.rm)
-            } else {
-              mean(.x, na.rm = na.rm)
-            }
-          } else {
-            NA_real_
-          },
-          lower = ~ quantile(.x, probs[1], na.rm = na.rm),
-          upper = ~ quantile(.x, probs[2], na.rm = na.rm),
-          n_iter = ~ n()
-        ),
-        .names = "{.col}___{.fn}"
-      )
-    )
-
-  # Reshape to long format
-  result_long <- result |>
-    tidyr::pivot_longer(
-      cols = dplyr::everything(),
-      names_to = c("term", "statistic"),
-      names_sep = "___",
-      values_to = "value"
-    ) |>
-    tidyr::pivot_wider(
-      names_from = statistic,
-      values_from = value
-    )
-
-  # Remove estimate column if it's all NA (when estimate = NULL)
-  if ("estimate" %in% names(result_long) && all(is.na(result_long$estimate))) {
-    result_long <- result_long |>
-      dplyr::select(-estimate)
-  }
-
-  # Reorder columns: term, estimate (if present), lower, upper
-  if ("estimate" %in% names(result_long)) {
-    result_long <- result_long |>
-      dplyr::select(term, estimate, lower, upper, n_iter)
-  } else {
-    result_long <- result_long |>
-      dplyr::select(term, lower, upper, n_iter)
-  }
+  coef_cols <- setdiff(names(boot_coefs), id_col)
+  result_long <- bind_rows_fill(lapply(coef_cols, function(term) {
+    x <- boot_coefs[[term]]
+    out <- data.frame(term = term, check.names = FALSE)
+    if (!is.null(estimate)) {
+      out$estimate <- if (estimate == "median") {
+        stats::median(x, na.rm = na.rm)
+      } else {
+        mean(x, na.rm = na.rm)
+      }
+    }
+    out$lower <- as.numeric(stats::quantile(x, probs[1], na.rm = na.rm))
+    out$upper <- as.numeric(stats::quantile(x, probs[2], na.rm = na.rm))
+    out$n_iter <- length(x)
+    out
+  }))
 
   return(result_long)
 }
@@ -1177,7 +1122,6 @@ tidy_bootstrap_coefs <- function(
 #' fg_ready <- format_competing_risks(tte, event_status = 1, death_status = 6)
 #' }
 #'
-#' @importFrom dplyr arrange group_by mutate lead filter ungroup select everything
 #' @export
 format_competing_risks <- function(
   data,
@@ -1193,45 +1137,23 @@ format_competing_risks <- function(
   }
 
   if (!version_old) {
-    data <- data |>
-      dplyr::arrange(id, start) |>
-      dplyr::group_by(id) |>
-      dplyr::mutate(
-        # Look at the NEXT state to see if an event happens at the end of THIS interval
-        next_y = dplyr::lead(y),
-
-        # Assign Status to the interval PRECEDING the event
-        # E.g., 1 = Discharge, 2 = Death, 0 = Censored (no event or loss to follow up)
-        status = dplyr::case_when(
-          next_y == event_status ~ 1L,
-          next_y == death_status ~ 2L,
-          TRUE ~ 0L
-        ),
-        # 2. Drop all rows appearing AFTER the first event
-        # Calculate cumulative events.
-        # Once this hits 1, the current row is the event.
-        cum_events = cumsum(status > 0),
-
-        # We want to remove rows where the event occurred PREVIOUSLY.
-        # lag(cum_events, default=0) will be 0 for the event row,
-        # but 1 for all subsequent rows.
-        prev_events = dplyr::lag(cum_events, default = 0)
-      ) |>
-      # Keep rows where no event has happened in the past
-      dplyr::filter(prev_events == 0) |>
-      dplyr::ungroup() |>
-      dplyr::select(
-        id,
-        tx,
-        start,
-        stop,
-        status,
-        y,
-        dplyr::everything(),
-        -next_y,
-        -cum_events,
-        -prev_events
+    data <- data[order(data$id, data$start), , drop = FALSE]
+    data <- bind_rows_fill(lapply(unique(data$id), function(id) {
+      group_data <- data[data$id == id, , drop = FALSE]
+      next_y <- c(group_data$y[-1], NA)
+      status <- ifelse(
+        next_y == event_status,
+        1L,
+        ifelse(next_y == death_status, 2L, 0L)
       )
+      status[is.na(status)] <- 0L
+      cum_events <- cumsum(status > 0)
+      prev_events <- c(0, utils::head(cum_events, -1))
+      group_data$status <- status
+      group_data <- group_data[prev_events == 0, , drop = FALSE]
+      group_data
+    }))
+    data <- reorder_columns(data, c("id", "tx", "start", "stop", "status", "y"))
     return(data)
   }
 
