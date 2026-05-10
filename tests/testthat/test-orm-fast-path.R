@@ -92,6 +92,148 @@ test_that("orm fast path agrees with predict.orm for numeric previous state", {
   expect_equal(unname(direct), unname(predicted), tolerance = 1e-12)
 })
 
+test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
+  skip_if_not_installed("rms")
+  skip_if_not_installed("mvtnorm")
+
+  data <- make_test_data(n_patients = 45, follow_up_time = 6, seed = 6105)
+  data <- add_test_age(data)
+  local_orm_datadist(data)
+
+  fit_default <- rms::orm(
+    y ~ rms::rcs(time, 3) * tx + yprev + age,
+    data = data,
+    x = TRUE,
+    y = TRUE
+  )
+  fit_scaled <- rms::orm(
+    y ~ rms::rcs(time, 3) * tx + yprev + age,
+    data = data,
+    x = TRUE,
+    y = TRUE,
+    scale = TRUE
+  )
+  baseline <- data[!duplicated(data$id), ]
+
+  predict_scaled <- stats::predict(
+    fit_scaled,
+    newdata = baseline,
+    type = "fitted.ind"
+  )
+  fast_scaled <- markov.misc:::predict_orm_response_markov(
+    fit_scaled,
+    baseline
+  )
+  expect_equal(unname(fast_scaled), unname(predict_scaled), tolerance = 1e-12)
+
+  sops_default <- markov.misc::sops(
+    fit_default,
+    baseline,
+    times = 1:4,
+    ylevels = fit_default$yunique,
+    absorb = "6"
+  )
+  sops_scaled <- markov.misc::sops(
+    fit_scaled,
+    baseline,
+    times = 1:4,
+    ylevels = fit_scaled$yunique,
+    absorb = "6"
+  )
+  expect_equal(sops_scaled$estimate, sops_default$estimate, tolerance = 1e-10)
+
+  robust_default <- rms::robcov(fit_default, cluster = data$id)
+  robust_scaled <- rms::robcov(fit_scaled, cluster = data$id)
+  avg_default <- markov.misc::avg_sops(
+    robust_default,
+    newdata = baseline,
+    variables = "tx",
+    times = 1:4,
+    ylevels = fit_default$yunique,
+    absorb = "6",
+    id_var = "id"
+  )
+  avg_scaled <- markov.misc::avg_sops(
+    robust_scaled,
+    newdata = baseline,
+    variables = "tx",
+    times = 1:4,
+    ylevels = fit_scaled$yunique,
+    absorb = "6",
+    id_var = "id"
+  )
+  expect_equal(avg_scaled$estimate, avg_default$estimate, tolerance = 1e-10)
+
+  withr::local_seed(61051)
+  mvn_default <- markov.misc::inferences(
+    avg_default,
+    method = "simulation",
+    engine = "mvn",
+    n_sim = 2,
+    return_draws = TRUE
+  )
+  withr::local_seed(61051)
+  mvn_scaled <- markov.misc::inferences(
+    avg_scaled,
+    method = "simulation",
+    engine = "mvn",
+    n_sim = 2,
+    return_draws = TRUE
+  )
+  expect_equal(mvn_scaled$conf.low, mvn_default$conf.low, tolerance = 1e-8)
+  expect_equal(mvn_scaled$conf.high, mvn_default$conf.high, tolerance = 1e-8)
+
+  withr::local_seed(61052)
+  score_default <- markov.misc::inferences(
+    avg_default,
+    method = "simulation",
+    engine = "score_bootstrap",
+    cluster = data$id,
+    n_sim = 2,
+    return_draws = TRUE
+  )
+  withr::local_seed(61052)
+  score_scaled <- markov.misc::inferences(
+    avg_scaled,
+    method = "simulation",
+    engine = "score_bootstrap",
+    cluster = data$id,
+    n_sim = 2,
+    return_draws = TRUE
+  )
+  expect_equal(
+    score_scaled$conf.low,
+    score_default$conf.low,
+    tolerance = 1e-8
+  )
+  expect_equal(
+    score_scaled$conf.high,
+    score_default$conf.high,
+    tolerance = 1e-8
+  )
+
+  avg_scaled_full <- markov.misc::avg_sops(
+    fit_scaled,
+    newdata = data,
+    variables = "tx",
+    times = 1:4,
+    ylevels = fit_scaled$yunique,
+    absorb = "6",
+    id_var = "id"
+  )
+  withr::local_seed(61053)
+  boot_scaled <- markov.misc::inferences(
+    avg_scaled_full,
+    method = "bootstrap",
+    n_sim = 1,
+    update_datadist = FALSE,
+    return_draws = TRUE
+  )
+  expect_equal(attr(boot_scaled, "method"), "bootstrap")
+  expect_equal(attr(boot_scaled, "n_successful"), 1L)
+  expect_false(anyNA(boot_scaled$conf.low))
+})
+
 test_that("orm supports MVN and score-bootstrap inference", {
   skip_if_not_installed("rms")
   skip_if_not_installed("mvtnorm")
