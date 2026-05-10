@@ -27,12 +27,13 @@ library(markov.misc)
 library(rms)
 library(ggplot2)
 
+WORKERS <- 1
 N_PATIENTS <- 400
-N_SIM <- 100
-SEED <- 237567
-FOLLOW_UP <- 30
-STATE_LEVELS <- 1:6
-ABSORB <- "6"
+N_SIM <- 30
+SEED <- 23756789
+FOLLOW_UP <- 28
+STATE_LEVELS <- 1:8
+ABSORB <- "8"
 METHOD_LEVELS <- c("Bootstrap", "MVN simulation", "Score bootstrap")
 ```
 
@@ -47,11 +48,10 @@ mechanism, but including it in the fitted model illustrates standardization over
 an additional baseline covariate.
 
 ```{r superpop}
-markov_data <- sim_trajectories_brownian_gap(
+markov_data <- sim_actt2_brownian(
   n_patients = N_PATIENTS,
   follow_up_time = FOLLOW_UP,
   treatment_prob = 0.5,
-  absorbing_state = 6,
   seed = SEED,
   mu_treatment_effect = 0
 )
@@ -88,7 +88,7 @@ plot_sops(
 ```
 
 ```{r empirical-time-in-state}
-calc_time_in_state_diff(markov_data, target_state = 1)
+calc_time_in_state_diff(markov_data)
 ```
 
 ## Step 2: Prepare Markov Data
@@ -98,7 +98,7 @@ Markov model. The model uses `rms::orm()` only, with a full proportional-odds
 specification and an inline restricted cubic spline for time.
 
 ```{r prepare-data}
-data <- prepare_markov_data(markov_data, absorbing_state = 6)
+data <- prepare_markov_data(markov_data, absorbing_state = 8)
 baseline_data <- data[!duplicated(data$id), , drop = FALSE]
 
 c(
@@ -126,11 +126,6 @@ fit_orm <- orm(
 )
 
 fit_orm_robust <- robcov(fit_orm, cluster = data$id)
-
-c(
-  log_likelihood = as.numeric(logLik(fit_orm)),
-  max_deriv = unname(fit_orm$stats["Max Deriv"])
-)
 ```
 
 ## Step 4: Compute Marginal SOP Uncertainty
@@ -177,7 +172,7 @@ time_bootstrap <- system.time({
     avg_for_bootstrap,
     method = "bootstrap",
     n_sim = N_SIM,
-    workers = 1,
+    workers = WORKERS,
     conf_level = 0.95,
     return_draws = TRUE
   )
@@ -190,7 +185,7 @@ time_mvn <- system.time({
     method = "simulation",
     engine = "mvn",
     n_sim = N_SIM,
-    workers = 1,
+    workers = WORKERS,
     conf_level = 0.95,
     return_draws = TRUE
   )
@@ -204,7 +199,7 @@ time_score <- system.time({
     engine = "score_bootstrap",
     cluster = data$id,
     n_sim = N_SIM,
-    workers = 1,
+    workers = WORKERS,
     conf_level = 0.95,
     return_draws = TRUE
   )
