@@ -1,8 +1,8 @@
 ---
-title: "Nonlinear Previous-State Effects"
+title: "Quasi-Continuous Outcomes with a Previous-State Spline"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Nonlinear Previous-State Effects}
+  %\VignetteIndexEntry{Quasi-Continuous Outcomes with a Previous-State Spline}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -10,7 +10,12 @@ vignette: >
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
-  comment = "#>"
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  out.width = "100%",
+  fig.align = "center",
+  dpi = 300
 )
 ```
 
@@ -18,186 +23,254 @@ knitr::opts_chunk$set(
 library(markov.misc)
 library(dplyr)
 library(ggplot2)
-library(VGAM)
 library(rms)
+
+N_PATIENTS <- 500L
+FOLLOW_UP <- 28L
+QOL_LEVELS <- 1:100
+DEATH_STATE <- 101L
+STATE_LEVELS <- c(QOL_LEVELS, DEATH_STATE)
+SEED <- 20260511L
 ```
 
-The previous state can be modeled categorically, linearly, or with a nonlinear
-numeric basis. The default remains categorical for backward compatibility:
+Ordinal Markov models are not limited to a handful of clinical states. This
+vignette uses a deliberately hypothetical 100-level quality-of-life state scale,
+coded here so larger values are worse, and adds one absorbing death state as
+state 101. Death is intentionally rare: about 1% of patients enter the absorbing
+state over 28 discrete weeks.
 
-```{r categorical-prep}
-set.seed(20260505)
+The example has one purpose: show that the same Markov-model workflow can handle
+a quasi-continuous ordinal outcome when the previous state is kept numeric and
+modeled flexibly with `rms::rcs(yprev, 6)`.
+
+## Simulate a Hypothetical 101-State Outcome
+
+We use `sim_trajectories_brownian()` to generate plausible longitudinal movement
+on a fine ordinal scale. The thresholds divide most of the latent normal range
+into 100 living quality-of-life states, then place death in a far upper tail so
+that the absorbing state is rare. Patients start in worse living states only,
+then improve until approximately week 15 before deteriorating again. The
+treatment effect is a small additional negative drift, which shifts patients
+toward better living states under this coding.
+
+```{r simulate}
+qol_thresholds <- c(
+  stats::qnorm(seq(0.005, 0.995, length.out = 99L)),
+  5
+)
 
 raw_data <- sim_trajectories_brownian(
-  n_patients = 200,
-  follow_up_time = 8,
-  n_states = 20,
-  thresholds = seq(-3, 3, length.out = 19),
-  allowed_start_state = as.integer(2:19),
-  absorbing_state = 20,
-  x0_sd = 2,
-  sigma_rw = 0.25,
-  seed = 20260505
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  n_states = length(STATE_LEVELS),
+  thresholds = qol_thresholds,
+  allowed_start_state = as.integer(45:100),
+  absorbing_state = DEATH_STATE,
+  x0_sd = 1.2,
+  sigma_rw = 0.18,
+  mu_drift = -0.09,
+  mu_quad = 0.006,
+  mu_treatment_effect = -0.01,
+  treatment_prob = 0.5,
+  drift_change_times = NULL,
+  latent_dist = "normal",
+  seed = SEED
 )
 
-categorical_data <- prepare_markov_data(raw_data, absorbing_state = 20)
-is.factor(categorical_data$yprev)
+raw_data |>
+  summarise(
+    patients = n_distinct(id),
+    follow_up_weeks = max(time),
+    start_min = min(yprev[time == 1]),
+    start_max = max(yprev[time == 1]),
+    mean_week_1 = mean(y[time == 1 & y != DEATH_STATE]),
+    mean_week_15 = mean(y[time == 15 & y != DEATH_STATE]),
+    mean_week_28 = mean(y[time == FOLLOW_UP & y != DEATH_STATE]),
+    observed_outcome_levels = n_distinct(y),
+    death_trajectories = n_distinct(id[y == DEATH_STATE]),
+    death_risk = death_trajectories / patients
+  )
 ```
 
-For high-cardinality ordinal states, a categorical previous-state effect can use
-too many degrees of freedom. Set `factor_previous = FALSE` to keep `yprev`
-numeric and use a linear or spline effect instead:
+## Fit a Fast `orm()` Markov Model
 
-```{r numeric-prep}
-numeric_data <- prepare_markov_data(
+`prepare_markov_data()` removes transitions after death, but the incident death
+rows remain in the response. Setting `factor_previous = FALSE` is the important
+step for a high-cardinality previous state: it keeps `yprev` numeric so the
+model can use a low-dimensional spline instead of 100 indicator terms.
+
+```{r prepare-data}
+model_data <- prepare_markov_data(
   raw_data,
-  absorbing_state = 20,
+  absorbing_state = DEATH_STATE,
   factor_previous = FALSE
 )
+model_data$y <- ordered(model_data$y, levels = STATE_LEVELS)
 
-is.numeric(numeric_data$yprev)
-```
-
-A linear previous-state effect uses one degree of freedom:
-
-```{r linear-fit}
-fit_linear <- vglm.markov(
-  ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
-  family = cumulative(reverse = TRUE, parallel = TRUE),
-  data = numeric_data
+data.frame(
+  transition_rows = nrow(model_data),
+  outcome_levels = length(levels(model_data$y)),
+  previous_state_is_numeric = is.numeric(model_data$yprev)
 )
 ```
 
-A restricted cubic spline allows nonlinear transition effects while still using
-far fewer degrees of freedom than a full categorical previous-state model:
+The outcome has 101 ordered states, so the model has many intercepts while death
+is deliberately sparse. The small ridge penalty and higher iteration cap make
+this vignette fit stable; the Markov-model piece is still the ordinary
+`rms::orm()` fast path with stored `x` and `y`.
 
-```{r spline-fit}
-fit_spline <- vglm.markov(
-  ordered(y) ~ rms::rcs(time, 4) + tx + rms::rcs(yprev, 6),
-  family = cumulative(reverse = TRUE, parallel = TRUE),
-  data = numeric_data
+```{r fit-model}
+dd <- datadist(model_data)
+options(datadist = "dd")
+
+fit_orm <- orm(
+  y ~ rms::rcs(time, 4) + tx + rms::rcs(yprev, 6),
+  data = model_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE,
+  maxit = 100,
+  penalty = 0.1
 )
+
+fit_orm_robust <- robcov(fit_orm, cluster = model_data$id)
+robust_vcov <- as.matrix(fit_orm_robust$var)
 ```
 
-The same SOP workflow then applies. `vglm.markov()` stores the design-matrix
-metadata needed for the fast simulation path when inline spline terms are used.
-For inference, wrap the model in `robcov_vglm()` and pass the `avg_sops()`
-result to `inferences()`:
+## State Occupation Probabilities
 
-```{r sops}
-baseline <- numeric_data[numeric_data$time == 1, , drop = FALSE]
-fit_spline_robust <- robcov_vglm(fit_spline, cluster = numeric_data$id)
+For the standardization target, we use one observed row for each living previous
+state. This keeps the vignette fast while still asking `avg_sops()` to propagate
+probability over all 101 outcome states.
 
-avg <- avg_sops(
-  fit_spline_robust,
-  newdata = baseline,
+```{r avg-sops}
+standardization_data <- model_data |>
+  filter(yprev %in% QOL_LEVELS) |>
+  arrange(yprev, id, time) |>
+  distinct(yprev, .keep_all = TRUE)
+
+qol_sops <- avg_sops(
+  fit_orm_robust,
+  newdata = standardization_data,
   variables = list(tx = c(0, 1)),
-  times = 1:8,
-  ylevels = 1:20,
-  absorb = "20",
+  times = seq_len(FOLLOW_UP),
+  ylevels = as.character(STATE_LEVELS),
+  absorb = as.character(DEATH_STATE),
   pvarname = "yprev",
   id_var = "id"
 )
 
-head(avg)
+qol_sops |>
+  group_by(tx, time) |>
+  summarise(total_probability = sum(estimate), .groups = "drop") |>
+  summarise(
+    min_total_probability = min(total_probability),
+    max_total_probability = max(total_probability)
+  )
 ```
 
-```{r sops-inference}
-set.seed(20260506)
+The same object can be passed to `inferences()`. We use only 10 multivariate
+normal simulations so the vignette remains quick; a real analysis should use
+many more draws.
 
-avg_mvn <- inferences(
-  avg,
+```{r mvn-inference}
+set.seed(SEED + 1L)
+
+qol_sops_mvn <- inferences(
+  qol_sops,
   method = "simulation",
   engine = "mvn",
-  n_sim = 50,
+  n_sim = 10,
+  vcov = robust_vcov,
   return_draws = FALSE
 )
 
-head(avg_mvn)
+qol_sops_mvn |>
+  filter(
+    time == FOLLOW_UP,
+    state %in% c("25", "50", "75", as.character(DEATH_STATE))
+  ) |>
+  select(tx, time, state, estimate, conf.low, conf.high)
 ```
 
-The model-based SOPs should be compared with empirical SOPs from the raw
-longitudinal trajectories, before `prepare_markov_data()` creates transition
-rows. This keeps absorbing states carried forward in the observed trajectory:
+The raw simulated trajectories also give empirical SOPs. These are arm-specific
+observed proportions, while the model-derived SOPs above are standardized over
+the common previous-state distribution in `standardization_data`.
 
-```{r stacked-sops, fig.width = 7, fig.height = 5}
+```{r empirical-sops}
 empirical_sops <- raw_data |>
-  filter(time %in% 1:8) |>
   count(tx, time, state = y, name = "n") |>
   group_by(tx, time) |>
-  mutate(
-    estimate = n / sum(n),
-    source = "Empirical"
-  ) |>
+  mutate(estimate = n / sum(n)) |>
   ungroup() |>
-  select(tx, time, state, estimate, source)
+  select(tx, time, state, estimate)
 
-model_sops <- avg_mvn |>
-  mutate(
-    state = as.integer(as.character(state)),
-    source = "Spline model"
-  ) |>
-  select(tx, time, state, estimate, source)
+state_fill_values <- c(
+  stats::setNames(
+    grDevices::hcl.colors(length(QOL_LEVELS), "Viridis"),
+    as.character(QOL_LEVELS)
+  ),
+  stats::setNames("#2B2B2B", as.character(DEATH_STATE))
+)
 
-bind_rows(empirical_sops, model_sops) |>
+state_fill_scale <- function() {
+  scale_fill_manual(
+    values = state_fill_values,
+    breaks = c("1", "25", "50", "75", "100", as.character(DEATH_STATE)),
+    labels = c("1", "25", "50", "75", "100", "Death"),
+    name = "State",
+    drop = FALSE
+  )
+}
+```
+
+With 101 states, separate lines for each state are not helpful. A stacked bar
+chart keeps the full state-occupation distribution visible at each time point.
+Both panels use the same fill scale: living quality-of-life states are shown on
+one gradient, and death is a separate dark level so it remains easy to spot.
+
+```{r stacked-sops}
+bind_rows(
+  empirical_sops |>
+    mutate(
+      state = as.character(state),
+      source = "Empirical"
+    ),
+  qol_sops_mvn |>
+    select(tx, time, state, estimate) |>
+    mutate(
+      state = as.character(state),
+      source = "Model derived"
+    )
+) |>
   mutate(
     tx = factor(tx, levels = c(0, 1), labels = c("Control", "Treatment")),
-    state = factor(state, levels = 1:20)
+    source = factor(source, levels = c("Empirical", "Model derived")),
+    state = factor(as.character(state), levels = as.character(STATE_LEVELS))
   ) |>
-  ggplot(aes(x = time, y = estimate, fill = state)) +
+  ggplot(aes(x = time, y = estimate, group = state, fill = state)) +
   geom_col(width = 0.85) +
   facet_grid(tx ~ source) +
-  scale_y_continuous(labels = function(x) paste0(round(100 * x), "%")) +
-  scale_fill_viridis_d() +
-  labs(
-    x = "Time",
-    y = "State occupation probability",
-    fill = "State"
-  )
-```
-
-For uncertainty, plot selected state-specific trajectories with their simulated
-confidence intervals and the matching empirical SOPs as points:
-
-```{r inference-plot, fig.width = 7, fig.height = 5}
-states_to_plot <- c(1, 5, 10)
-
-empirical_selected <- empirical_sops |>
-  filter(state %in% states_to_plot) |>
-  mutate(state = factor(state, levels = states_to_plot))
-
-avg_mvn |>
-  mutate(state = as.integer(as.character(state))) |>
-  filter(state %in% states_to_plot) |>
-  mutate(
-    tx = factor(tx, levels = c(0, 1), labels = c("Control", "Treatment")),
-    state = factor(state, levels = states_to_plot)
-  ) |>
-  ggplot(aes(x = time, y = estimate, color = state, fill = state)) +
-  geom_ribbon(aes(ymin = conf.low, ymax = conf.high), alpha = 0.15, color = NA) +
-  geom_line(linewidth = 0.7) +
-  geom_point(
-    data = empirical_selected |>
-      mutate(
-        tx = factor(tx, levels = c(0, 1), labels = c("Control", "Treatment")),
-        state = factor(state, levels = states_to_plot)
-      ),
-    aes(x = time, y = estimate),
-    shape = 21,
-    color = "black",
-    size = 1.8,
-    inherit.aes = FALSE
+  scale_x_continuous(breaks = c(1, 7, 15, 21, 28)) +
+  scale_y_continuous(
+    labels = function(x) paste0(round(100 * x), "%"),
+    expand = expansion(mult = c(0, 0.01))
   ) +
-  facet_wrap(vars(tx)) +
-  scale_y_continuous(labels = function(x) paste0(round(100 * x), "%")) +
+  state_fill_scale() +
   labs(
-    x = "Time",
-    y = "State occupation probability",
-    color = "State",
-    fill = "State"
+    x = "Week",
+    y = "State occupation probability"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    legend.position = "bottom"
   )
 ```
 
-The same pattern scales to larger ordinal outcomes: keep `yprev` numeric with
-`factor_previous = FALSE`, then include the desired numeric basis in the model
-formula.
+The key pattern is the same as for a smaller ordinal state space: fit an ordinal
+transition model, identify the absorbing state, then let `avg_sops()` iterate the
+transition probabilities forward. For quasi-continuous outcomes, the practical
+change is to keep `yprev` numeric and use a compact basis such as
+`rms::rcs(yprev, 6)`.
