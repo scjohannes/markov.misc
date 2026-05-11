@@ -72,7 +72,7 @@ The `soprob_markov` function (`R/sops.R`) is the workhorse for estimating probab
 -   **Logic**: It iterates a transition matrix forward in time using the Law of Total Probability.
     -   $P(S_t = k) = \sum_j P(S_{t-1} = j) \times P(S_t = k | S_{t-1} = j)$
 -   **Vectorization**: The implementation is highly vectorized. It constructs an "expanded" dataset containing all possible transitions for all patients at a given time step, allowing a single `predict()` call to generate the entire transition matrix.
--   **Fast Path**: For `vglm` models, `markov_msm_build` and `markov_msm_run` utilize pre-computed design matrix decompositions (`R/vgam_helpers.R`) to bypass the slow `predict()` method during simulation-based inference, offering significant speedups.
+-   **Fast Path**: For `vglm` and full proportional-odds `orm` models, `markov_msm_build` and `markov_msm_run` pre-compute design matrices by time point and previous state to bypass slow package prediction methods during simulation-based inference. Inline transforms such as `rms::rcs(time, 4)` and `rms::rcs(yprev, 6)` reuse the fitted model terms, while explicit precomputed time-basis columns can still be supplied via `t_covs`. Previous-state expansion preserves the fitted column type, so `yprev` can be categorical, linear numeric, or spline numeric.
 
 ### 4. Marginalization & G-Computation
 
@@ -89,7 +89,7 @@ The `inferences()` function serves as a unified entry point for estimating uncer
 ### Method A: Simulation Engines (No Refit)
 
 -   **MVN Engine** (`engine = "mvn"`): Draws coefficient vectors from a Multivariate Normal distribution $\beta^* \sim N(\hat{\beta}, \Sigma_{robust})`.
--   **Score-Bootstrap Engine** (`engine = "score_bootstrap"`): Uses cluster-level multiplier perturbations of score contributions with a one-step Newton update for coefficients. In v1, this is implemented for `robcov_vglm` objects in `avg_sops() |> inferences()` pipelines.
+-   **Score-Bootstrap Engine** (`engine = "score_bootstrap"`): Uses cluster-level multiplier perturbations of score contributions with a one-step Newton update for coefficients. It supports `robcov_vglm` objects and full proportional-odds `orm` objects in `avg_sops() |> inferences()` pipelines; `orm` workflows supply the row-level cluster vector through `inferences(..., cluster = <id>)`.
 -   **Efficiency**: Both engines reuse the "Fast Path" (see above) to update predictions without refitting the model or reconstructing design matrices.
 -   **Use Case**: Primary method for interactive analysis; score-bootstrap captures uncertainty from both coefficients and empirical patient mix in marginal (`avg_sops`) inference.
 

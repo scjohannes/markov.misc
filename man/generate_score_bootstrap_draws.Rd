@@ -2,19 +2,21 @@
 % Please edit documentation in R/sops.R
 \name{generate_score_bootstrap_draws}
 \alias{generate_score_bootstrap_draws}
-\title{Generate One-Step Score-Bootstrap Draws for \code{robcov_vglm} Models}
+\title{Generate One-Step Score-Bootstrap Draws}
 \usage{
 generate_score_bootstrap_draws(
   model,
   baseline_data,
   id_var,
   n_sim,
-  score_weight_dist = "exponential"
+  score_weight_dist = "exponential",
+  cluster = NULL
 )
 }
 \arguments{
 \item{model}{A \code{robcov_vglm} object with stored \code{scores}, \code{bread}, and
-\code{cluster} components.}
+\code{cluster} components, or an \code{orm} object fitted with \verb{x = TRUE, y = TRUE}.
+For \code{orm}, \code{cluster} must be supplied.}
 
 \item{baseline_data}{Baseline data (one row per patient).}
 
@@ -24,6 +26,8 @@ generate_score_bootstrap_draws(
 
 \item{score_weight_dist}{Cluster weight distribution. Currently only
 \code{"exponential"} is supported.}
+
+\item{cluster}{Optional row-level cluster vector for \code{orm} models.}
 }
 \value{
 A list with:

@@ -59,14 +59,13 @@
 #' The returned tibble can be used to compute confidence intervals using
 #' quantile-based methods (percentile or BCa intervals).
 #'
-#' \strong{Important:} Factor variables (like \code{yprev}) should be factors
-#' before fitting the model for proper handling of factor levels.
+#' \strong{Previous-state type:} \code{yprev} may be a factor for categorical
+#' previous-state effects or numeric for linear/spline effects. Bootstrap
+#' releveling preserves the column type used to fit the original model.
 #'
 #' @keywords bootstrap coefficients confidence intervals
 #'
-#' @importFrom tibble tibble
 #' @importFrom stats update coef
-#' @importFrom tidyr unnest_wider
 #'
 #' @examples
 #' \dontrun{
@@ -135,16 +134,10 @@ bootstrap_model_coefs <- function(
     stop("id_var '", id_var, "' not found in data")
   }
 
-  # Check for yprev variable and warn if not a factor
-  if ("yprev" %in% names(data) && !is.factor(data$yprev)) {
-    warning(
-      "Variable 'yprev' should be a factor but is not. Converting to factor."
-    )
-    data$yprev <- factor(data$yprev)
-  }
-
-  # Identify factor columns
-  factor_cols <- names(data)[sapply(data, is.factor)]
+  # Identify state columns that may need releveling in bootstrap samples.
+  # Numeric yprev is preserved for linear/spline previous-state models.
+  factor_cols <- unique(c(names(data)[sapply(data, is.factor)], "yprev"))
+  factor_cols <- intersect(factor_cols, names(data))
 
   # Generate bootstrap ID samples using fast helper (memory-efficient JIT approach)
   boot_ids <- fast_group_bootstrap(
@@ -185,19 +178,15 @@ bootstrap_model_coefs <- function(
     data = data,
     id_var = id_var,
     workers = workers,
-    packages = c("rms", "VGAM", "stats", "dplyr"),
+    packages = c("rms", "VGAM", "stats"),
     globals = c(
       "model",
       "factor_cols"
     )
   )
 
-  # Convert to tibble with boot_id and unnest coefficients
-  result <- tibble::tibble(
-    boot_id = seq_len(n_boot),
-    coefs = bs_coefs_list
-  ) |>
-    tidyr::unnest_wider(coefs)
+  # Convert to a data frame with boot_id and one column per coefficient.
+  result <- named_list_to_wide(bs_coefs_list, id = seq_len(n_boot))
 
   return(result)
 }
@@ -294,9 +283,7 @@ bootstrap_model_coefs <- function(
 #'
 #' @keywords bootstrap standardization state occupancy g-computation
 #'
-#' @importFrom tibble as_tibble
 #' @importFrom stats update
-#' @importFrom dplyr select bind_rows
 #'
 #' @examples
 #' \dontrun{
@@ -427,7 +414,10 @@ bootstrap_standardized_sops <- function(
     }
 
     # Get states present in original numbering (for mapping back later)
-    states_present <- setdiff(ylevels, as.numeric(missing_states))
+    ylevel_names <- as_state_labels(ylevels)
+    states_present <- ylevel_names[
+      !ylevel_names %in% as_state_labels(missing_states)
+    ]
 
     # Compute standardized SOPs on releveled states
     sop_result <- tryCatch(
@@ -494,7 +484,7 @@ bootstrap_standardized_sops <- function(
     data = data,
     id_var = varnames$id,
     workers = workers,
-    packages = c("rms", "VGAM", "Hmisc", "dplyr", "stats"),
+    packages = c("rms", "VGAM", "Hmisc", "stats"),
     globals = c(
       "model",
       "times",
@@ -515,36 +505,46 @@ bootstrap_standardized_sops <- function(
     sop_i <- boot_results[[i]][["sop_result"]]
 
     if (!is.null(sop_i)) {
-      # Convert treatment SOPs to tibble with time and state columns
-      tx_df <- tibble::as_tibble(sop_i$sop_tx)
+      # Convert treatment SOPs to data frame with time and state columns
+      tx_df <- as.data.frame(sop_i$sop_tx, optional = TRUE)
       colnames(tx_df) <- paste0("state_", ylevels)
       tx_df$time <- times
       tx_df$tx <- 1
       tx_df$boot_id <- i
 
-      # Convert control SOPs to tibble with time and state columns
-      ctrl_df <- tibble::as_tibble(sop_i$sop_ctrl)
+      # Convert control SOPs to data frame with time and state columns
+      ctrl_df <- as.data.frame(sop_i$sop_ctrl, optional = TRUE)
       colnames(ctrl_df) <- paste0("state_", ylevels)
       ctrl_df$time <- times
       ctrl_df$tx <- 0
       ctrl_df$boot_id <- i
 
       # Combine treatment and control
-      sop_result_list[[i]] <- dplyr::bind_rows(tx_df, ctrl_df)
+      sop_result_list[[i]] <- bind_rows_fill(list(tx_df, ctrl_df))
     }
   }
   # Combine all bootstrap iterations
-  sop_results <- dplyr::bind_rows(sop_result_list) |>
-    dplyr::select(boot_id, time, tx, dplyr::everything())
+  if (length(sop_result_list) > 0) {
+    sop_results <- bind_rows_fill(sop_result_list)
+    sop_results <- reorder_columns(sop_results, c("boot_id", "time", "tx"))
+  } else {
+    state_cols <- stats::setNames(
+      replicate(n_states, numeric(0), simplify = FALSE),
+      paste0("state_", ylevels)
+    )
+    sop_results <- data.frame(
+      boot_id = integer(0),
+      time = times[0],
+      tx = integer(0),
+      state_cols,
+      check.names = FALSE
+    )
+  }
 
   # Extract coefs from boot_results
   coefs <- lapply(boot_results, function(x) x[["coefs"]])
-  # Convert coefficients to tibble with boot_id and unnest coefficients
-  coefs_results <- tibble::tibble(
-    boot_id = seq_len(n_boot),
-    coefs = coefs
-  ) |>
-    tidyr::unnest_wider(coefs)
+  # Convert coefficients to data frame with boot_id and one column per coefficient.
+  coefs_results <- named_list_to_wide(coefs, id = seq_len(n_boot))
 
   return(
     list(sops = sop_results, coefs = coefs_results)

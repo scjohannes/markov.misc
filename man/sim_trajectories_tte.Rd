@@ -29,6 +29,9 @@ states will be assigned at baseline.}
 
 \item{prob}{Probabilities for each baseline_state.}
 
+\item{n}{Integer. Number of patients to simulate when \code{baseline_data} is
+\code{NULL}. Ignored when \code{baseline_data} is supplied.}
+
 \item{states}{Integer vector. Ordered states in the model (default: 1:6).
 States should be numbered consecutively.}
 

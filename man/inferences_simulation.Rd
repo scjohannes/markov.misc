@@ -10,6 +10,7 @@ inferences_simulation(
   score_weight_dist,
   n_sim,
   vcov,
+  cluster,
   conf_level,
   conf_type,
   workers,
@@ -26,6 +27,8 @@ inferences_simulation(
 \item{n_sim}{Number of simulation draws.}
 
 \item{vcov}{Custom variance-covariance matrix (optional, overrides model vcov).}
+
+\item{cluster}{Row-level cluster vector for orm score bootstrap.}
 
 \item{conf_level}{Confidence level.}
 

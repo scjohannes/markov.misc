@@ -10,8 +10,9 @@ robcov_vglm(fit, cluster = NULL, adjust = FALSE)
 \item{fit}{A fitted vglm object from the VGAM package.}
 
 \item{cluster}{Optional vector of cluster identifiers. If provided, computes
-cluster-robust standard errors. Must have the same length as the number of
-observations.}
+cluster-robust standard errors. Must have the same length as the fitted
+observations, or the same length as the original pre-NA data when the fitted
+model records omitted rows in \code{fit@na.action}.}
 
 \item{adjust}{Logical. If TRUE, applies small-sample correction factor
 G/(G-1) for clustered data, where G is the number of clusters. Default is
@@ -56,10 +57,12 @@ information plus robust covariance estimates:
 
 \strong{Sandwich components:}
 \item{scores}{Matrix of observation-level score contributions (n x p)}
-\item{influence_beta_obs}{Matrix of observation-level influence
-contributions for \eqn{\beta} (n x p), computed via \code{VGAM::Influence()}}
-\item{bread}{The "bread" matrix (scaled inverse Hessian)}
-\item{meat}{The "meat" matrix}
+\item{influence_beta_obs}{Optional matrix of observation-level influence
+contributions for \eqn{\beta} (n x p), computed via \code{VGAM::Influence()}
+when available}
+\item{bread}{The model-based covariance matrix, \code{vcov(fit)}}
+\item{meat}{The crossproduct of raw observation scores, or cluster-summed
+scores when \code{cluster} is supplied}
 
 \strong{Clustering information:}
 \item{cluster}{The cluster variable (if provided)}
@@ -74,17 +77,17 @@ functionality similar to \code{rms::robcov()} for vglm models.
 }
 \details{
 The sandwich estimator has the form:
-\deqn{V = B \cdot M \cdot B / n}
-where B is the "bread" (n times the inverse of the negative Hessian, i.e.,
-n * vcov(fit)) and M is the "meat" (the variance of the score contributions).
+\deqn{V = B \cdot M \cdot B}
+where B is the model-based covariance matrix returned by \code{vcov(fit)}, based
+on VGAM's final fitted information matrix, and M is the score crossproduct.
 
 For unclustered data, the meat matrix is:
-\deqn{M = \frac{1}{n} \sum_{i=1}^{n} \psi_i \psi_i'}
+\deqn{M = \sum_{i=1}^{n} \psi_i \psi_i'}
 where \eqn{\psi_i} is the score (gradient of log-likelihood) for observation i.
 
 For clustered data, scores are summed within clusters before computing the
 meat matrix:
-\deqn{M = \frac{1}{n} \sum_{g=1}^{G} \left(\sum_{i \in g} \psi_i\right)
+\deqn{M = \sum_{g=1}^{G} \left(\sum_{i \in g} \psi_i\right)
       \left(\sum_{i \in g} \psi_i\right)'}
 
 When \code{adjust = TRUE}, the meat matrix is multiplied by G/(G-1) for clustered
@@ -94,19 +97,19 @@ consistency.
 
 \strong{Z-statistics and p-values}: The returned object includes z-statistics
 computed as coefficients divided by robust standard errors, and two-sided
-p-values from the standard normal distribution. These can be used for
-inference that is robust to model misspecification or within-cluster
-correlation.
+p-values from the standard normal distribution. This approximation is
+asymptotic in the number of independent observations or clusters. With few
+clusters, p-values may be anti-conservative.
 
-\strong{Comparison with rms::robcov()}: This function produces nearly identical
-results to \code{rms::robcov()} when used with equivalent models:
-\itemize{
-\item For binary outcomes (vglm with binomialff vs orm), results match to
-numerical precision
-\item For ordinal outcomes (vglm with cumulative vs orm), small differences
-(~0.1-1.5\%) may occur due to different internal parameterizations, but
-the results are practically equivalent
-}
+\strong{Weights and aggregated responses}: Scores are computed at the fitted-row
+level. With prior or frequency weights, or with aggregated ordinal count
+responses, this treats each fitted row as the independent score contribution.
+That can differ from a sandwich estimator computed after expanding data to
+one row per independent individual.
+
+\strong{Comparison with rms::robcov()}: For equivalent models, results should be
+compared after accounting for parameterization, cutpoint direction, response
+coding, weights, and missing-data handling.
 }
 \examples{
 \dontrun{

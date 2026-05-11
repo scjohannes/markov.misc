@@ -252,7 +252,6 @@ taooh <- function(
 #'
 #' @keywords bootstrap time alive and out of hospital
 #'
-#' @importFrom tibble tibble
 #' @importFrom stats update
 #'
 #' @examples
@@ -370,7 +369,7 @@ taooh_bootstrap <- function(
     id_var = varnames$id,
     parallel = parallel,
     workers = workers,
-    packages = c("VGAM", "rms", "Hmisc", "stats", "dplyr"),
+    packages = c("VGAM", "rms", "Hmisc", "stats"),
     globals = c(
       "model",
       "times",
@@ -381,11 +380,12 @@ taooh_bootstrap <- function(
     )
   )
 
-  # Create result tibble matching original format
-  result <- tibble::tibble(
+  # Create result data frame matching original format
+  result <- data.frame(
     id = paste0("Bootstrap", sprintf("%02d", seq_len(n_boot))),
-    models = bs_estimates
+    check.names = FALSE
   )
+  result$models <- bs_estimates
 
   return(result)
 }

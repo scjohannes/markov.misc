@@ -37,8 +37,9 @@ uses the data used to fit the model.}
 
 \item{gap}{Name of the time gap variable (if used).}
 
-\item{t_covs}{Optional time-varying covariate lookup table, e.g., spline
-basis functions.}
+\item{t_covs}{Optional time-varying covariate lookup table for explicit
+basis columns. Inline terms such as \code{rms::rcs(time, 4)} can be used without
+supplying \code{t_covs}.}
 
 \item{by}{Optional character vector of variable names to stratify by. When
 provided, the function aggregates (averages) SOPs within each stratum

@@ -23,7 +23,7 @@ rates per subject). If missing, identifiers 1:n are generated where
 "Exponential" is supported (default).}
 
 \item{param}{Numeric. Parameter vector for the waiting-time distribution.
-The first element is taken as the baseline rate \u03bb (lambda) used to
+The first element is taken as the baseline rate lambda used to
 construct the per-event rates. Only \code{param[1]} is used by the current
 implementation.}
 
@@ -39,10 +39,6 @@ individual. If NULL (default) the function chooses a suitable \code{max_events}
 between 3 and 20 so that the probability of observing all events within
 \code{follow_up} is very small (threshold 1e-4). When provided, the function
 uses the given value.}
-
-\item{n}{Optional integer. Number of participants to simulate. If missing,
-\code{n} is set to \code{length(id)}. If both \code{id} and \code{n} are provided their
-lengths must match.}
 }
 \value{
 A two-column numeric matrix / data.frame with columns

@@ -102,9 +102,6 @@
 #'
 #' \code{\link{violet_baseline}} for the default baseline dataset
 #'
-#' @importFrom tibble rownames_to_column
-#' @importFrom tidyr pivot_longer
-#' @importFrom dplyr mutate arrange group_by lag ungroup filter left_join
 #' @importFrom stats plogis
 #'
 #' @export
@@ -257,27 +254,15 @@ sim_trajectories_markov <- function(
     state_matrix[active_idx, t + 1] <- y_new_active
   }
 
-  # Convert matrix to long format data frame
-  result <- as.data.frame(state_matrix) |>
-    tibble::rownames_to_column(var = "id") |>
-    tidyr::pivot_longer(
-      cols = -id,
-      names_to = "time",
-      values_to = "y"
-    ) |>
-    dplyr::mutate(
-      id = as.integer(id),
-      time = as.integer(time)
-    ) |>
-    dplyr::left_join(
-      baseline_data,
-      by = "id"
-    ) |>
-    dplyr::arrange(id, time) |>
-    dplyr::group_by(id) |>
-    dplyr::mutate(yprev = dplyr::lag(y)) |>
-    dplyr::ungroup() |>
-    dplyr::filter(time > 0) # Remove time 0 (initial state)
+  # Convert matrix to long format data frame.
+  result <- matrix_to_long(state_matrix, value_name = "y")
+  result$id <- as.integer(result$id)
+  result$time <- as.integer(result$time)
+  result <- left_join_preserve_order(result, baseline_data, by = "id")
+  result <- result[order(result$id, result$time), , drop = FALSE]
+  result$yprev <- ave(result$y, result$id, FUN = function(x) c(NA, utils::head(x, -1)))
+  result <- result[result$time > 0, , drop = FALSE] # Remove time 0.
+  rownames(result) <- NULL
 
   return(result)
 }
@@ -358,7 +343,8 @@ sim_trajectories_markov <- function(
 #' )
 #'
 #' # Probit model which approximates viral respiratory trajectories okay-ishly
-#' # Because standard normal is narrower than logistic, thresholds need to be closer together, drift smaller, varaince lower etc.
+#' # Because standard normal is narrower than logistic, use closer thresholds,
+#' # smaller drift, and lower variance.
 #' traj_norm <- sim_trajectories_brownian(n_patients = 1000,
 #'   latent_dist = "normal",
 #'   thresholds = c(-3, -1.0, 0.5, 2, 3),
@@ -378,9 +364,6 @@ sim_trajectories_markov <- function(
 #' }
 #'
 #' @importFrom stats rnorm plogis pnorm
-#' @importFrom tibble tibble
-#' @importFrom dplyr mutate left_join select arrange group_by ungroup filter
-#' @importFrom tidyr pivot_longer
 #'
 #' @export
 sim_trajectories_brownian <- function(
@@ -545,50 +528,27 @@ sim_trajectories_brownian <- function(
     }
   }
 
-  # Convert matrices to long format data frame
-  # Create data frame for latent X
-  dat_latent <- as.data.frame(X)
-  colnames(dat_latent) <- as.character(0:follow_up_time)
-  dat_latent <- dat_latent |>
-    dplyr::mutate(
-      id = seq_len(n_patients),
-      tx = treatment
-    ) |>
-    tidyr::pivot_longer(
-      cols = -c(id, tx),
-      names_to = "time",
-      values_to = "x"
-    ) |>
-    dplyr::mutate(time = as.integer(time))
+  colnames(X) <- as.character(0:follow_up_time)
+  colnames(Y) <- as.character(0:follow_up_time)
 
-  # Create data frame for observed Y
-  dat_observed <- as.data.frame(Y)
-  colnames(dat_observed) <- as.character(0:follow_up_time)
-  dat_observed <- dat_observed |>
-    dplyr::mutate(
-      id = seq_len(n_patients),
-      tx = treatment
-    ) |>
-    tidyr::pivot_longer(
-      cols = -c(id, tx),
-      names_to = "time",
-      values_to = "y"
-    ) |>
-    dplyr::mutate(time = as.integer(time)) |>
-    dplyr::group_by(id) |>
-    dplyr::mutate(yprev = dplyr::lag(y, 1)) |>
-    dplyr::ungroup() |>
-    dplyr::filter(time > 0)
+  dat_latent <- matrix_to_long(X, value_name = "x")
+  dat_latent$id <- as.integer(dat_latent$id)
+  dat_latent$time <- as.integer(dat_latent$time)
 
-  # Combine latent and observed data
-  result <- dat_observed |>
-    dplyr::left_join(
-      dat_latent |> dplyr::select(id, time, x),
-      by = c("id", "time")
-    ) |>
-    dplyr::arrange(id, time)
+  dat_observed <- matrix_to_long(Y, value_name = "y")
+  dat_observed$id <- as.integer(dat_observed$id)
+  dat_observed$time <- as.integer(dat_observed$time)
+  dat_observed$tx <- treatment[dat_observed$id]
+  dat_observed <- dat_observed[order(dat_observed$id, dat_observed$time), , drop = FALSE]
+  dat_observed$yprev <- ave(dat_observed$y, dat_observed$id, FUN = function(x) c(NA, utils::head(x, -1)))
+  dat_observed <- dat_observed[dat_observed$time > 0, , drop = FALSE]
 
-  return(tibble::tibble(result))
+  result <- left_join_preserve_order(dat_observed, dat_latent, by = c("id", "time"))
+  result <- result[order(result$id, result$time), , drop = FALSE]
+  result <- reorder_columns(result, c("id", "tx", "time", "y", "yprev", "x"))
+  rownames(result) <- NULL
+
+  return(result)
 }
 
 
@@ -1086,9 +1046,6 @@ sim_actt2_brownian <- function(
 #' @return A tibble with id, time, tx, y, yprev, x, theta0, theta1.
 #'
 #' @importFrom stats rbinom rnorm
-#' @importFrom tibble tibble
-#' @importFrom dplyr mutate left_join arrange group_by ungroup
-#' @importFrom tidyr pivot_longer
 #'
 #' @export
 sim_trajectories_deterministic <- function(
@@ -1230,46 +1187,30 @@ sim_trajectories_deterministic <- function(
   }
 
   # --- Format Output as Long Data Frame ---
-  # Convert Y matrix to data frame
-  dat_y <- as.data.frame(Y)
-  colnames(dat_y) <- as.character(0:follow_up_time)
-  dat_y <- dat_y |>
-    dplyr::mutate(
-      id = 1:n_patients,
-      tx = treatment,
-      theta0 = theta0,
-      theta1 = theta1,
-      b0 = b0,
-      b1 = b1
-    ) |>
-    tidyr::pivot_longer(
-      cols = -c(id, tx, theta0, theta1, b0, b1),
-      names_to = "time",
-      values_to = "y"
-    ) |>
-    dplyr::mutate(time = as.integer(time))
+  colnames(Y) <- as.character(0:follow_up_time)
+  colnames(X) <- as.character(0:follow_up_time)
 
-  # Convert X matrix to data frame
-  dat_x <- as.data.frame(X)
-  colnames(dat_x) <- as.character(0:follow_up_time)
-  dat_x <- dat_x |>
-    dplyr::mutate(id = 1:n_patients) |>
-    tidyr::pivot_longer(
-      cols = -id,
-      names_to = "time",
-      values_to = "x"
-    ) |>
-    dplyr::mutate(time = as.integer(time))
+  dat_y <- matrix_to_long(Y, value_name = "y")
+  dat_y$id <- as.integer(dat_y$id)
+  dat_y$time <- as.integer(dat_y$time)
+  dat_y$tx <- treatment[dat_y$id]
+  dat_y$theta0 <- theta0[dat_y$id]
+  dat_y$theta1 <- theta1[dat_y$id]
+  dat_y$b0 <- b0[dat_y$id]
+  dat_y$b1 <- b1[dat_y$id]
+  dat_y <- reorder_columns(dat_y, c("id", "tx", "theta0", "theta1", "b0", "b1", "time", "y"))
 
-  # Combine and add lagged y (yprev)
-  result <- dplyr::left_join(dat_y, dat_x, by = c("id", "time")) |>
-    dplyr::arrange(id, time) |>
-    dplyr::group_by(id) |>
-    dplyr::mutate(yprev = dplyr::lag(y, 1)) |>
-    dplyr::ungroup() |>
-    dplyr::filter_out(time == 0)
+  dat_x <- matrix_to_long(X, value_name = "x")
+  dat_x$id <- as.integer(dat_x$id)
+  dat_x$time <- as.integer(dat_x$time)
 
-  return(tibble::tibble(result))
+  result <- left_join_preserve_order(dat_y, dat_x, by = c("id", "time"))
+  result <- result[order(result$id, result$time), , drop = FALSE]
+  result$yprev <- ave(result$y, result$id, FUN = function(x) c(NA, utils::head(x, -1)))
+  result <- result[result$time != 0, , drop = FALSE]
+  rownames(result) <- NULL
+
+  return(result)
 }
 
 
@@ -1285,13 +1226,10 @@ sim_trajectories_deterministic <- function(
 #'   identifiers are repeated `max_events` times internally (one block of
 #'   rates per subject). If missing, identifiers 1:n are generated where
 #'   `n` is provided or inferred.
-#' @param n Optional integer. Number of participants to simulate. If missing,
-#'   `n` is set to `length(id)`. If both `id` and `n` are provided their
-#'   lengths must match.
 #' @param dist Character. Name of the waiting-time distribution. Currently only
 #'   "Exponential" is supported (default).
 #' @param param Numeric. Parameter vector for the waiting-time distribution.
-#'   The first element is taken as the baseline rate \u03bb (lambda) used to
+#'   The first element is taken as the baseline rate lambda used to
 #'   construct the per-event rates. Only `param[1]` is used by the current
 #'   implementation.
 #' @param b Numeric scalar. Increment added to the rate for every subsequent
@@ -1347,6 +1285,9 @@ recurr_event <- function(
   max_events = NULL
 ) {
   # prepare variables
+  if (missing(id)) {
+    id <- 1L
+  }
   n <- length(id)
 
   lambda_i <- param
@@ -1373,7 +1314,7 @@ recurr_event <- function(
       }
 
       if (length(unique(rates)) == 1) {
-        p <- pgamma(follow_up, shape = length(rates), rate = unique(rates))
+        p <- stats::pgamma(follow_up, shape = length(rates), rate = unique(rates))
       } else {
         p <- phypoexp(follow_up, rate = rates)
       }
@@ -1404,11 +1345,7 @@ recurr_event <- function(
   #____ Model waiting times between events and store as vector   ________________#
   #______________________________________________________________________________#
   # Assign patient ID for later dataframe
-  if (missing(id)) {
-    id <- rep(1:n, each = max_events)
-  } else {
-    id <- rep(id, each = max_events)
-  }
+  id <- rep(id, each = max_events)
 
   # generate the waiting times between events for each individual
   rates_rep <- rep(rates, times = n)
@@ -1441,6 +1378,8 @@ recurr_event <- function(
 #'   Default is NULL, which allows starting in any state. If provided, only these
 #'   states will be assigned at baseline.
 #' @param prob Probabilities for each baseline_state.
+#' @param n Integer. Number of patients to simulate when `baseline_data` is
+#'   `NULL`. Ignored when `baseline_data` is supplied.
 #' @param states Integer vector. Ordered states in the model (default: 1:6).
 #'   States should be numbered consecutively.
 #' @param absorbing_states Integer vector. States that are absorbing (once entered,
@@ -1532,7 +1471,6 @@ recurr_event <- function(
 #' @seealso
 #' \code{\link{recurr_event}} for the underlying recurrent event generation
 #'
-#' @importFrom tidyr tibble
 #' @importFrom stats rnorm
 #'
 #' @export
@@ -1640,14 +1578,23 @@ sim_trajectories_tte <- function(
     ids_tx <- baseline_data$id[baseline_data$tx == tx_val]
 
     for (i in states) {
-      state_changes[[m]] <- recurr_event(
+      state_change <- recurr_event(
         id = ids_tx,
         param = param_list[[j]][i],
         b = b[i],
         follow_up = follow_up_time,
         max_events = NULL
       )
-      state_changes[[m]] <- cbind(state_changes[[m]], state = i, tx = tx_val)
+      if (nrow(state_change) == 0L) {
+        state_changes[[m]] <- data.frame(
+          id = numeric(0),
+          event_time = numeric(0),
+          state = numeric(0),
+          tx = numeric(0)
+        )
+      } else {
+        state_changes[[m]] <- cbind(state_change, state = i, tx = tx_val)
+      }
       m <- m + 1
     }
   }
@@ -1742,5 +1689,5 @@ sim_trajectories_tte <- function(
   state_changes_long <- do.call(rbind, state_changes_list)
   rownames(state_changes_long) <- NULL
 
-  tibble::tibble(state_changes_long)
+  state_changes_long
 }

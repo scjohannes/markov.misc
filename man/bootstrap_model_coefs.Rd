@@ -82,8 +82,9 @@ environment (for datadist) without conflicts.
 The returned tibble can be used to compute confidence intervals using
 quantile-based methods (percentile or BCa intervals).
 
-\strong{Important:} Factor variables (like \code{yprev}) should be factors
-before fitting the model for proper handling of factor levels.
+\strong{Previous-state type:} \code{yprev} may be a factor for categorical
+previous-state effects or numeric for linear/spline effects. Bootstrap
+releveling preserves the column type used to fit the original model.
 }
 \examples{
 \dontrun{

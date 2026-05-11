@@ -2,7 +2,7 @@ test_that("score-bootstrap simulation adds CIs and metadata for avg_sops", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  set.seed(2001)
+  withr::local_seed(2001)
   data <- make_test_data(n_patients = 60, seed = 2001, follow_up_time = 10)
   baseline_data <- data[data$time == 1, ]
   model <- make_test_model(data, robust = TRUE)
@@ -38,7 +38,7 @@ test_that("score-bootstrap simulation stores draw-level output with expected str
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  set.seed(2002)
+  withr::local_seed(2002)
   data <- make_test_data(n_patients = 60, seed = 2002, follow_up_time = 10)
   baseline_data <- data[data$time == 1, ]
   model <- make_test_model(data, robust = TRUE)
@@ -72,7 +72,7 @@ test_that("score-bootstrap simulation does not expose draws when return_draws is
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  set.seed(2003)
+  withr::local_seed(2003)
   data <- make_test_data(n_patients = 60, seed = 2003, follow_up_time = 10)
   baseline_data <- data[data$time == 1, ]
   model <- make_test_model(data, robust = TRUE)
@@ -100,7 +100,7 @@ test_that("score-bootstrap simulation rejects user-supplied vcov", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  set.seed(2004)
+  withr::local_seed(2004)
   data <- make_test_data(n_patients = 60, seed = 2004, follow_up_time = 10)
   baseline_data <- data[data$time == 1, ]
   model <- make_test_model(data, robust = TRUE)
@@ -132,7 +132,7 @@ test_that("score-bootstrap simulation validates score_weight_dist", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  set.seed(2005)
+  withr::local_seed(2005)
   data <- make_test_data(n_patients = 60, seed = 2005, follow_up_time = 10)
   baseline_data <- data[data$time == 1, ]
   model <- make_test_model(data, robust = TRUE)
@@ -163,7 +163,7 @@ test_that("generate_score_bootstrap_draws returns valid dimensions and normalize
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  set.seed(2006)
+  withr::local_seed(2006)
   data <- make_test_data(n_patients = 35, seed = 2006, follow_up_time = 8)
   model <- make_test_model(data, robust = TRUE)
   baseline_data <- data[data$time == 1, ]
@@ -199,7 +199,7 @@ test_that("generate_score_bootstrap_draws is reproducible with a fixed seed", {
   model <- make_test_model(data, robust = TRUE)
   baseline_data <- data[data$time == 1, ]
 
-  set.seed(9999)
+  withr::local_seed(9999)
   draws_a <- generate_score_bootstrap_draws(
     model = model,
     baseline_data = baseline_data,
@@ -207,7 +207,7 @@ test_that("generate_score_bootstrap_draws is reproducible with a fixed seed", {
     n_sim = 15
   )
 
-  set.seed(9999)
+  withr::local_seed(9999)
   draws_b <- generate_score_bootstrap_draws(
     model = model,
     baseline_data = baseline_data,
@@ -223,7 +223,7 @@ test_that("generate_score_bootstrap_draws errors when baseline IDs do not match 
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  set.seed(2008)
+  withr::local_seed(2008)
   data <- make_test_data(n_patients = 30, seed = 2008, follow_up_time = 8)
   model <- make_test_model(data, robust = TRUE)
   baseline_data <- data[data$time == 1, ]
@@ -245,7 +245,7 @@ test_that("generate_score_bootstrap_draws errors when required robust components
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  set.seed(2009)
+  withr::local_seed(2009)
   data <- make_test_data(n_patients = 30, seed = 2009, follow_up_time = 8)
   model <- make_test_model(data, robust = TRUE)
   baseline_data <- data[data$time == 1, ]

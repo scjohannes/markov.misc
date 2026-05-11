@@ -36,7 +36,9 @@ after standardization.}
 bootstrap inference.}
 
 \item{...}{Additional arguments passed to \code{sops()} (e.g., \code{ylevels}, \code{absorb},
-\code{tvarname}, \code{pvarname}, \code{t_covs}).}
+\code{tvarname}, \code{pvarname}, \code{t_covs}). \code{t_covs} is only needed for explicit
+precomputed time-basis columns; inline terms such as \code{rms::rcs(time, 4)}
+can be used without it.}
 }
 \value{
 A data frame of class \code{markov_avg_sops} with columns:

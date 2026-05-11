@@ -1,0 +1,235 @@
+---
+title: "Quasi-Continuous Outcomes with a Previous-State Spline"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Quasi-Continuous Outcomes with a Previous-State Spline}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  out.width = "100%",
+  fig.align = "center",
+  dpi = 300
+)
+```
+
+```{r setup, message = FALSE}
+library(markov.misc)
+library(dplyr)
+library(ggplot2)
+library(rms)
+
+N_PATIENTS <- 500
+FOLLOW_UP <- 28
+QOL_LEVELS <- 1:100
+DEATH_STATE <- 101
+STATE_LEVELS <- c(QOL_LEVELS, DEATH_STATE)
+SEED <- 1234
+```
+
+Ordinal Markov models are not limited to a handful of clinical states. We can also use Ordinal Regression to analysis quasi-continuous outcomes, such as symptom or quality of life score with many levels. This
+vignette simulates a 100-level quality-of-life state scale, where larger values correspond to worse quality of life, and adds one absorbing death state as state 101. Death is intentionally rare: about 1% of patients enter the absorbing state over 28 discrete weeks. When $Y$ has so many levels, modeling the previous state `yprev` as a factor is not feasible. To capture the non-linearity in the effect of the previous state, we can also treat the previous state as numeric und model it using restricted cubic splines. 
+
+## Simulate a Hypothetical 101-State Outcome
+
+We use `sim_trajectories_brownian()` to generate longitudinal movement on a fine ordinal scale. Here patients' quality of life (on average) improves until about week 15, and then declines.
+
+```{r simulate}
+qol_thresholds <- c(
+  stats::qnorm(seq(0.005, 0.995, length.out = 99L)),
+  5
+)
+
+raw_data <- sim_trajectories_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  n_states = length(STATE_LEVELS),
+  thresholds = qol_thresholds,
+  allowed_start_state = as.integer(45:100),
+  absorbing_state = DEATH_STATE,
+  x0_sd = 1.2,
+  sigma_rw = 0.18,
+  mu_drift = -0.09,
+  mu_quad = 0.006,
+  mu_treatment_effect = -0.01,
+  treatment_prob = 0.5,
+  drift_change_times = NULL,
+  latent_dist = "normal",
+  seed = SEED
+)
+
+raw_data |>
+  summarise(
+    patients = n_distinct(id),
+    follow_up_weeks = max(time),
+    start_min = min(yprev[time == 1]),
+    start_max = max(yprev[time == 1]),
+    mean_week_1 = mean(y[time == 1 & y != DEATH_STATE]),
+    mean_week_15 = mean(y[time == 15 & y != DEATH_STATE]),
+    mean_week_28 = mean(y[time == FOLLOW_UP & y != DEATH_STATE]),
+    observed_outcome_levels = n_distinct(y),
+    death_trajectories = n_distinct(id[y == DEATH_STATE]),
+    death_risk = death_trajectories / patients
+  )
+```
+
+## Fit a Fast `orm()` Markov Model
+
+`prepare_markov_data()` removes transitions after death. We setting `factor_previous = FALSE` so we can model `yprev` using `rcs()`.
+
+```{r prepare-data}
+model_data <- prepare_markov_data(
+  raw_data,
+  absorbing_state = DEATH_STATE,
+  factor_previous = FALSE
+)
+model_data$y <- ordered(model_data$y, levels = STATE_LEVELS)
+```
+
+Because we have so many possible $Y$ values, with a relatively small sample size of `r N_PATIENTS`, we often need to add a small ridge penalty to help the model converge.
+
+```{r fit-model}
+dd <- datadist(model_data)
+options(datadist = "dd")
+
+fit_orm <- orm(
+  y ~ rms::rcs(time, 4) + tx + rms::rcs(yprev, 6),
+  data = model_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE,
+  maxit = 100,
+  penalty = 0.1
+)
+
+fit_orm_robust <- robcov(fit_orm, cluster = model_data$id)
+robust_vcov <- as.matrix(fit_orm_robust$var)
+```
+
+## State Occupancy Probabilities
+
+To obtain the sample average state occupancy probabilities we only need the previous state of each patient at the first time point.
+
+```{r avg-sops}
+# use basline data to calcualte sops
+qol_sops <- avg_sops(
+  fit_orm_robust,
+  newdata = model_data[model_data$time == 1, ],
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = as.character(STATE_LEVELS),
+  absorb = as.character(DEATH_STATE),
+  pvarname = "yprev",
+  id_var = "id"
+)
+
+head(qol_sops)
+```
+
+The same object can be passed to `inferences()`. We use only 10 multivariate
+normal simulations so the vignette remains quick; a real analysis should use
+many more draws.
+
+```{r mvn-inference}
+qol_sops_mvn <- inferences(
+  qol_sops,
+  method = "simulation",
+  engine = "mvn",
+  n_sim = 10,
+  vcov = robust_vcov,
+  return_draws = TRUE
+)
+
+qol_sops_mvn |>
+  filter(
+    time == FOLLOW_UP,
+    state %in% c("25", "50", "75", as.character(DEATH_STATE))
+  ) |>
+  select(tx, time, state, estimate, conf.low, conf.high)
+```
+
+```{r empirical-sops}
+empirical_sops <- raw_data |>
+  count(tx, time, state = y, name = "n") |>
+  group_by(tx, time) |>
+  mutate(estimate = n / sum(n)) |>
+  ungroup() |>
+  select(tx, time, state, estimate)
+
+state_fill_values <- c(
+  stats::setNames(
+    grDevices::hcl.colors(length(QOL_LEVELS), "Viridis"),
+    as.character(QOL_LEVELS)
+  ),
+  stats::setNames("#2B2B2B", as.character(DEATH_STATE))
+)
+
+state_fill_scale <- function() {
+  scale_fill_manual(
+    values = state_fill_values,
+    breaks = c("1", "25", "50", "75", "100", as.character(DEATH_STATE)),
+    labels = c("1", "25", "50", "75", "100", "Death"),
+    name = "State",
+    drop = FALSE
+  )
+}
+```
+
+With 101 states, separate lines for each state are not helpful. A stacked bar
+chart keeps the full state-occupancy distribution visible at each time point.
+Both panels use the same fill scale: living quality-of-life states are shown on
+one gradient, and death is a separate dark level so it remains easy to spot.
+
+```{r stacked-sops, message=FALSE}
+bind_rows(
+  empirical_sops |>
+    mutate(
+      state = as.character(state),
+      source = "Empirical"
+    ),
+  qol_sops_mvn |>
+    select(tx, time, state, estimate) |>
+    mutate(
+      state = as.character(state),
+      source = "Model derived"
+    )
+) |>
+  mutate(
+    tx = factor(tx, levels = c(0, 1), labels = c("Control", "Treatment")),
+    source = factor(source, levels = c("Empirical", "Model derived")),
+    state = factor(as.character(state), levels = as.character(STATE_LEVELS))
+  ) |>
+  plot_sops(
+    geom = "bar",
+    facet_var = c("tx", "source")
+  ) +
+  scale_x_continuous(breaks = c(1, 7, 15, 21, 28)) +
+  scale_y_continuous(
+    labels = function(x) paste0(round(100 * x), "%"),
+    expand = expansion(mult = c(0, 0.01))
+  ) +
+  state_fill_scale() +
+  labs(
+    title = NULL,
+    x = "Week",
+    y = "State occupancy probability"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+The key pattern is the same as for a smaller ordinal state space: fit an ordinal
+transition model, identify the absorbing state, then let `avg_sops()` iterate the
+transition probabilities forward. For quasi-continuous outcomes, the practical
+change is to keep `yprev` numeric and use a compact basis such as
+`rms::rcs(yprev, 6)`.

@@ -142,7 +142,6 @@ fast_group_bootstrap <- function(data, id_var = "id", n_boot) {
 #' # This is done automatically by apply_to_bootstrap
 #' }
 #'
-#' @importFrom dplyr left_join
 #' @export
 
 materialize_bootstrap_sample <- function(boot_ids, data, id_var) {
@@ -150,13 +149,8 @@ materialize_bootstrap_sample <- function(boot_ids, data, id_var) {
   boot_ids_renamed <- boot_ids
   names(boot_ids_renamed)[names(boot_ids_renamed) == "original_id"] <- id_var
 
-  # Join with original data
-  boot_sample <- dplyr::left_join(
-    boot_ids_renamed,
-    data,
-    by = id_var,
-    relationship = "many-to-many"
-  )
+  # Join with original data, preserving bootstrap sampling order.
+  boot_sample <- left_join_preserve_order(boot_ids_renamed, data, by = id_var)
 
   return(boot_sample)
 }
@@ -199,7 +193,7 @@ materialize_bootstrap_sample <- function(boot_ids, data, id_var) {
 #'   \item Full bootstrap datasets are never stored in memory simultaneously
 #' }
 #'
-#' If \code{workers} is NULL or 1, uses sequential processing with purrr::map().
+#' If \code{workers} is NULL or 1, uses sequential processing with \code{lapply()}.
 #' If \code{workers > 1}, uses future.callr::callr strategy for parallel
 #' processing, which provides isolated R processes for each worker. This makes
 #' it safe to modify the global environment (e.g., for datadist).
@@ -237,7 +231,6 @@ materialize_bootstrap_sample <- function(boot_ids, data, id_var) {
 #' @importFrom furrr future_map furrr_options
 #' @importFrom future plan
 #' @importFrom future.callr callr
-#' @importFrom purrr map
 #' @export
 
 apply_to_bootstrap <- function(
@@ -247,7 +240,7 @@ apply_to_bootstrap <- function(
   id_var,
   workers = NULL,
   parallel = NULL,
-  packages = c("rms", "VGAM", "Hmisc", "stats", "dplyr"),
+  packages = c("rms", "VGAM", "Hmisc", "stats"),
   globals = character(0)
 ) {
   # Handle deprecated parallel parameter
@@ -290,7 +283,7 @@ apply_to_bootstrap <- function(
 
     plan("sequential")
   } else {
-    results <- purrr::map(boot_samples, wrapper_fn)
+    results <- lapply(boot_samples, wrapper_fn)
   }
 
   return(results)

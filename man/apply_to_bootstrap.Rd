@@ -11,7 +11,7 @@ apply_to_bootstrap(
   id_var,
   workers = NULL,
   parallel = NULL,
-  packages = c("rms", "VGAM", "Hmisc", "stats", "dplyr"),
+  packages = c("rms", "VGAM", "Hmisc", "stats"),
   globals = character(0)
 )
 }
@@ -60,7 +60,7 @@ This function implements a memory-efficient just-in-time bootstrap approach:
 \item Full bootstrap datasets are never stored in memory simultaneously
 }
 
-If \code{workers} is NULL or 1, uses sequential processing with purrr::map().
+If \code{workers} is NULL or 1, uses sequential processing with \code{lapply()}.
 If \code{workers > 1}, uses future.callr::callr strategy for parallel
 processing, which provides isolated R processes for each worker. This makes
 it safe to modify the global environment (e.g., for datadist).

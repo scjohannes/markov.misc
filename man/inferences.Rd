@@ -11,6 +11,7 @@ inferences(
   score_weight_dist = "exponential",
   n_sim = 1000,
   vcov = NULL,
+  cluster = NULL,
   workers = NULL,
   conf_level = 0.95,
   conf_type = "perc",
@@ -37,7 +38,7 @@ Only works for \code{markov_avg_sops} objects.
 \item \code{"mvn"} (default): Draws coefficients from MVN(beta_hat, Sigma).
 \item \code{"score_bootstrap"}: Uses one-step score perturbation with
 cluster-level exponential multipliers. Requires a \code{robcov_vglm} model
-and \code{avg_sops()} objects.
+or an \code{orm} model with \code{cluster}, and \code{avg_sops()} objects.
 }}
 
 \item{score_weight_dist}{Character. Cluster weight distribution for
@@ -48,6 +49,10 @@ iterations (for bootstrap). Default is 1000.}
 
 \item{vcov}{Optional custom variance-covariance matrix. If provided,
 overrides the vcov extracted from the model.}
+
+\item{cluster}{Optional row-level cluster vector for
+\code{engine = "score_bootstrap"} with \code{orm} models. Values should match
+\code{id_var} in the baseline data used by \code{avg_sops()}.}
 
 \item{workers}{Number of parallel workers. If NULL (default) or 1, uses
 sequential processing. If > 1, uses parallel processing with that many
@@ -105,8 +110,8 @@ cluster-level exponential multipliers.
 \itemize{
 \item Works for both individual-level (\code{sops()}) and averaged (\code{avg_sops()}) SOPs
 for \code{engine = "mvn"}
-\item \code{engine = "score_bootstrap"} currently supports \code{avg_sops()} with
-\code{robcov_vglm} models only
+\item \code{engine = "score_bootstrap"} supports \code{avg_sops()} with \code{robcov_vglm}
+models and with \code{orm} models when \code{cluster} is supplied.
 }
 }
 
@@ -158,6 +163,32 @@ result_score <- avg_sops(
   id_var = "id"
 ) |>
   inferences(method = "simulation", engine = "score_bootstrap", n_sim = 1000)
+
+# orm fits use rms::robcov() for full robust covariance matrices.
+dd <- rms::datadist(data)
+options(datadist = "dd")
+fit_orm <- rms::orm(y ~ time + tx + yprev, data = data, x = TRUE, y = TRUE)
+fit_orm_robust <- rms::robcov(fit_orm, cluster = data$id)
+
+avg_orm <- avg_sops(
+  model = fit_orm_robust,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = 1:60,
+  ylevels = factor(1:6),
+  absorb = "6",
+  id_var = "id"
+)
+result_orm <- avg_orm |>
+  inferences(method = "simulation", engine = "mvn", n_sim = 1000)
+
+result_orm_score <- avg_orm |>
+  inferences(
+    method = "simulation",
+    engine = "score_bootstrap",
+    cluster = data$id,
+    n_sim = 1000
+  )
 
 # Step 2b: Bootstrap inference (must use full data)
 result_boot <- avg_sops(

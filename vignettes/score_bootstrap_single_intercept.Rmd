@@ -73,7 +73,7 @@ beta_hat <- as.numeric(stats::coef(fit)[1])
 scores <- as.numeric(fit_rb$scores[, 1])
 bread <- as.numeric(fit_rb$bread[1, 1])
 n_obs <- fit_rb$n
-v_hat <- bread / n_obs
+v_hat <- bread
 
 stopifnot(length(stats::coef(fit)) == 1)
 stopifnot(abs(sum(scores)) < 1e-8)
@@ -287,7 +287,7 @@ $$
 
 
 where $V(\hat\beta)=(-H(\hat\beta))^{-1}$, and in package terms
-$V(\hat\beta) = \texttt{bread}/n$.
+$V(\hat\beta) = \texttt{bread}$.
 
 ```{r tangent-viz}
 U_star <- sum(contrib_df$weighted_score_i)
@@ -515,7 +515,7 @@ run_one_sim <- function(sim_id, n_obs, p_true, n_draws) {
 
   beta_hat_sim <- as.numeric(stats::coef(fit_sim)[1])
   scores_sim <- as.numeric(fit_sim_rb$scores[, 1])
-  v_hat_sim <- as.numeric(fit_sim_rb$bread[1, 1] / fit_sim_rb$n)
+  v_hat_sim <- as.numeric(fit_sim_rb$bread[1, 1])
 
   beta_score_sim <- draw_score_boot(
     n_draws = n_draws,
@@ -666,7 +666,7 @@ BETA_TX_TRUE <- 0
 
 ```{r tx-coverage-helper}
 draw_score_boot_coefs <- function(model, n_draws) {
-  required <- c("coefficients", "bread", "scores", "cluster", "n")
+  required <- c("coefficients", "bread", "scores", "cluster")
   missing_required <- required[vapply(
     required,
     function(x) is.null(model[[x]]),
@@ -683,8 +683,6 @@ draw_score_boot_coefs <- function(model, n_draws) {
   bread <- model$bread
   scores <- model$scores
   cluster <- model$cluster
-  n_obs <- model$n
-
   if (!is.matrix(scores)) {
     stop("`scores` must be a matrix.")
   }
@@ -703,7 +701,7 @@ draw_score_boot_coefs <- function(model, n_draws) {
   for (i in seq_len(n_draws)) {
     u_cluster <- rexp(n_clusters, rate = 1) - 1
     U_star <- as.vector(crossprod(u_cluster, scores_clustered))
-    beta_draws[i, ] <- beta_hat + as.vector((bread %*% U_star) / n_obs)
+    beta_draws[i, ] <- beta_hat + as.vector(bread %*% U_star)
   }
 
   beta_draws

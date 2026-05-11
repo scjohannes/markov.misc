@@ -8,7 +8,10 @@ markov_msm_build(
   model,
   data,
   t_covs = NULL,
+  times = NULL,
   ylevels = 1:6,
+  absorb = NULL,
+  tvarname = "time",
   pvarname = "yprev",
   ...
 )
@@ -20,7 +23,14 @@ markov_msm_build(
 
 \item{t_covs}{Time-dependent covariate lookup (optional)}
 
+\item{times}{Time points to predict}
+
 \item{ylevels}{State labels}
+
+\item{absorb}{Absorbing state(s). These transition matrices are not needed
+because absorbing states keep their prior probability mass.}
+
+\item{tvarname}{Name of time variable}
 
 \item{pvarname}{Name of previous state variable}
 
@@ -30,8 +40,8 @@ markov_msm_build(
 A list containing pre-calculated matrices and metadata.
 }
 \description{
-Pre-calculates design matrices and interaction structures for fast Markov
-simulation. This is the "heavy lifting" step that should be done ONCE before
-running thousands of simulation draws.
+Pre-calculates design matrices for fast Markov simulation. This is the
+"heavy lifting" step that should be done ONCE before running thousands of
+simulation draws.
 }
 \keyword{internal}
