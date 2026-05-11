@@ -124,6 +124,7 @@ test_that("vglm.markov() rejects invalid families, weights, and form2 subsets", 
   data <- data.frame(
     y = c(0, 1, 0, 1),
     x = c(0, 0, 1, 1),
+    off = c(0.1, 0.2, 0.3, 0.4),
     bad_w = c(1, 1, -1, 1)
   )
 
@@ -151,6 +152,25 @@ test_that("vglm.markov() rejects invalid families, weights, and form2 subsets", 
       subset = data$x == 1
     ),
     "subset",
+    fixed = TRUE
+  )
+  expect_error(
+    vglm.markov(
+      y ~ x + offset(off),
+      family = VGAM::binomialff,
+      data = data
+    ),
+    "Model offsets are not supported",
+    fixed = TRUE
+  )
+  expect_error(
+    vglm.markov(
+      y ~ x,
+      family = VGAM::binomialff,
+      data = data,
+      offset = off
+    ),
+    "Model offsets are not supported",
     fixed = TRUE
   )
 })

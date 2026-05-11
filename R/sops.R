@@ -15,6 +15,10 @@ validate_markov_model <- function(object) {
     object
   }
 
+  if (model_uses_offset(model_chk)) {
+    stop_unsupported_offset()
+  }
+
   # Check if it's a vglm/vgam model
   if (inherits(model_chk, c("vglm", "vgam"))) {
     # Extract family object

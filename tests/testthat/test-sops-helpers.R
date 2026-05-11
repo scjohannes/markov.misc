@@ -596,6 +596,52 @@ test_that("low-level SOP helpers validate model families and state metadata", {
     fixed = TRUE
   )
 
+  offset_data <- data.frame(
+    y = ordered(rep(1:3, length.out = 30)),
+    x = rep(c(0, 1), length.out = 30),
+    off = seq(-0.2, 0.2, length.out = 30)
+  )
+  offset_model <- suppressWarnings(
+    VGAM::vglm(
+      y ~ x + offset(off),
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = offset_data
+    )
+  )
+  expect_error(
+    markov.misc:::validate_markov_model(offset_model),
+    "Model offsets are not supported",
+    fixed = TRUE
+  )
+
+  null_offset_model <- suppressWarnings(
+    VGAM::vglm(
+      y ~ x,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = offset_data,
+      offset = NULL
+    )
+  )
+  expect_error(
+    markov.misc:::validate_markov_model(null_offset_model),
+    NA
+  )
+
+  fit_with_optional_offset <- function(offset = NULL) {
+    suppressWarnings(
+      VGAM::vglm(
+        y ~ x,
+        family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+        data = offset_data,
+        offset = offset
+      )
+    )
+  }
+  expect_error(
+    markov.misc:::validate_markov_model(fit_with_optional_offset()),
+    NA
+  )
+
   expect_error(
     markov.misc:::score_bootstrap_components(list()),
     "supports robcov_vglm and orm",
@@ -629,4 +675,31 @@ test_that("low-level SOP helpers validate model families and state metadata", {
     fixed = TRUE
   )
   expect_equal(no_rowid$rowid, 1)
+})
+
+test_that("low-level SOP helpers reject orm offsets", {
+  skip_if_not_installed("rms")
+
+  offset_data <- data.frame(
+    y = ordered(rep(1:3, length.out = 45)),
+    x = rep(c(0, 1, 2), length.out = 45),
+    off = seq(-0.2, 0.2, length.out = 45)
+  )
+  dd <- rms::datadist(offset_data)
+  assign("dd_offset_test", dd, envir = globalenv())
+  withr::defer(rm("dd_offset_test", envir = globalenv()))
+  withr::local_options(datadist = "dd_offset_test")
+
+  offset_model <- rms::orm(
+    y ~ x + offset(off),
+    data = offset_data,
+    x = TRUE,
+    y = TRUE
+  )
+
+  expect_error(
+    markov.misc:::validate_markov_model(offset_model),
+    "Model offsets are not supported",
+    fixed = TRUE
+  )
 })

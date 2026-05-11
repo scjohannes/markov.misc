@@ -20,6 +20,9 @@
 #' compute robust covariance matrices; wrap the returned fit with
 #' [robcov_vglm()] when robust covariance is needed.
 #'
+#' Offsets are not supported in `markov.misc` SOP workflows, so `vglm.markov()`
+#' rejects both `offset()` terms and the `offset` argument.
+#'
 #' @inheritParams VGAM::vglm
 #' @param family A VGAM family object, e.g. `VGAM::cumulative()`.
 #' @param constraints Optional VGAM constraints list. For inline `rcs()` terms,
@@ -141,6 +144,10 @@ vglm.markov <- function(
   mf <- eval(mf, parent.frame())
 
   mt <- attr(mf, "terms")
+  if (terms_has_offset(mt) || !is.null(stats::model.offset(mf))) {
+    stop_unsupported_offset()
+  }
+
   xlev <- get_xlevels(mt, mf)
   y <- stats::model.response(mf, "any")
   x <- if (!stats::is.empty.model(mt)) {

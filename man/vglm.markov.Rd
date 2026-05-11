@@ -291,6 +291,9 @@ Non-spline terms, factor terms, and workflows that use explicit precomputed
 basis columns keep ordinary VGAM assignment behavior. This function does not
 compute robust covariance matrices; wrap the returned fit with
 \code{\link[=robcov_vglm]{robcov_vglm()}} when robust covariance is needed.
+
+Offsets are not supported in \code{markov.misc} SOP workflows, so \code{vglm.markov()}
+rejects both \code{offset()} terms and the \code{offset} argument.
 }
 \examples{
 \dontrun{
