@@ -24,6 +24,11 @@ test_that("plot_sops creates line plots with and without linetype groups", {
     site = rep(c("a", "b"), times = 6)
   )
 
+  default_plot <- plot_sops(data, facet_var = NULL)
+  expect_s3_class(default_plot$layers[[1]]$geom, "GeomLine")
+  expect_true(default_plot$scales$has_scale("colour"))
+  expect_true(default_plot$scales$has_scale("fill"))
+
   plot <- plot_sops(
     data,
     facet_var = NULL,
@@ -39,6 +44,149 @@ test_that("plot_sops creates line plots with and without linetype groups", {
 
   no_linetype <- plot_sops(data, facet_var = NULL, geom = "line")
   expect_null(no_linetype$labels$linetype)
+
+  override <- suppressMessages(
+    default_plot +
+      ggplot2::scale_color_brewer(palette = "Dark2") +
+      ggplot2::scale_fill_brewer(palette = "Dark2")
+  )
+  expect_s3_class(override, "ggplot")
+  expect_true(override$scales$has_scale("colour"))
+  expect_true(override$scales$has_scale("fill"))
+})
+
+make_avg_sops_plot_data <- function(with_draws = TRUE) {
+  data <- expand.grid(
+    time = 1:2,
+    state = factor(c("1", "2", "3"), levels = c("1", "2", "3")),
+    tx = c(0, 1),
+    KEEP.OUT.ATTRS = FALSE
+  )
+  data$estimate <- c("1" = 0.2, "2" = 0.3, "3" = 0.5)[
+    as.character(data$state)
+  ]
+  data$conf.low <- pmax(0, data$estimate - 0.05)
+  data$conf.high <- pmin(1, data$estimate + 0.05)
+  class(data) <- c("markov_avg_sops", class(data))
+
+  if (with_draws) {
+    draws <- expand.grid(
+      draw_id = 1:7,
+      time = 1:2,
+      state = factor(c("1", "2", "3"), levels = c("1", "2", "3")),
+      tx = c(0, 1),
+      KEEP.OUT.ATTRS = FALSE
+    )
+    draws$estimate <- c("1" = 0.18, "2" = 0.31, "3" = 0.51)[
+      as.character(draws$state)
+    ]
+    attr(data, "simulation_draws") <- draws
+  }
+
+  data
+}
+
+test_that("plot_sops creates model-derived line plots with ribbons", {
+  data <- make_avg_sops_plot_data()
+
+  plot <- plot_sops(data, geom = "line", facet_var = "tx")
+  built <- ggplot2::ggplot_build(plot)
+
+  expect_s3_class(plot, "ggplot")
+  expect_equal(length(plot$layers), 2)
+  expect_equal(plot$labels$title, "State Occupancy Probabilities Over Time")
+  expect_equal(nrow(built$data[[1]]), nrow(data))
+})
+
+test_that("plot_sops warns but plots avg_sops bars without stored draws", {
+  data <- make_avg_sops_plot_data(with_draws = FALSE)
+
+  expect_warning(
+    plot <- plot_sops(data, geom = "bar", facet_var = "tx"),
+    "No stored draws found",
+    fixed = TRUE
+  )
+
+  expect_s3_class(plot, "ggplot")
+  expect_equal(length(plot$layers), 1)
+})
+
+test_that("plot_sops overlays a deterministic subset of avg_sops draws", {
+  data <- make_avg_sops_plot_data()
+
+  plot <- plot_sops(data, geom = "bar", facet_var = "tx", n_draws = 3)
+  built <- ggplot2::ggplot_build(plot)
+  draw_layer_ids <- unname(vapply(plot$layers[-1], function(layer) {
+    unique(layer$data$draw_id)
+  }, numeric(1)))
+  layer_max_y <- vapply(built$data, function(layer_data) {
+    max(layer_data$y)
+  }, numeric(1))
+  draw_layer_nrows <- unname(vapply(
+    plot$layers[-1],
+    function(layer) nrow(layer$data),
+    integer(1)
+  ))
+
+  expect_s3_class(plot, "ggplot")
+  expect_equal(length(plot$layers), 4)
+  expect_equal(draw_layer_ids, c(1, 4, 7))
+  expect_equal(draw_layer_nrows, rep(12L, 3))
+  expect_equal(layer_max_y, rep(1, 4))
+})
+
+test_that("plot_sops validates uncertainty controls", {
+  data <- make_avg_sops_plot_data()
+
+  expect_error(
+    plot_sops(data, geom = "bar", n_draws = Inf),
+    "`n_draws`"
+  )
+  expect_error(
+    plot_sops(data, geom = "bar", draw_alpha = NA),
+    "`draw_alpha`"
+  )
+  expect_error(
+    plot_sops(data, geom = "bar", show_uncertainty = NA),
+    "`show_uncertainty`"
+  )
+})
+
+test_that("plot_sops rejects ambiguous summary groups", {
+  data <- make_avg_sops_plot_data(with_draws = FALSE)
+  class(data) <- "data.frame"
+  data <- rbind(
+    transform(data, scenario = "a"),
+    transform(data, scenario = "b")
+  )
+
+  line_msg <- tryCatch(
+    plot_sops(data, geom = "line", facet_var = "tx"),
+    error = conditionMessage
+  )
+  bar_msg <- tryCatch(
+    plot_sops(data, geom = "bar", facet_var = "tx"),
+    error = conditionMessage
+  )
+
+  expect_match(line_msg, "`facet_var` or `linetype_var`", fixed = TRUE)
+  expect_match(bar_msg, "`facet_var`, aggregate", fixed = TRUE)
+  expect_no_match(bar_msg, "`linetype_var`", fixed = TRUE)
+
+  plot <- plot_sops(data, geom = "line", facet_var = c("tx", "scenario"))
+  expect_s3_class(plot, "ggplot")
+})
+
+test_that("plot_sops supports summary data frames and grid facets", {
+  data <- make_avg_sops_plot_data()
+  attr(data, "simulation_draws") <- NULL
+  class(data) <- "data.frame"
+  data$source <- rep(c("a", "b"), length.out = nrow(data))
+
+  plot <- plot_sops(data, geom = "line", facet_var = c("tx", "source"))
+
+  expect_s3_class(plot, "ggplot")
+  expect_equal(class(plot$facet)[1], "FacetGrid")
 })
 
 test_that("plot_results validates grouping and x variables", {

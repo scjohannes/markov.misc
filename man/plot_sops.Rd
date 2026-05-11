@@ -2,7 +2,7 @@
 % Please edit documentation in R/viz.R
 \name{plot_sops}
 \alias{plot_sops}
-\title{Plot Empirical State Occupancy Probabilities Over Time}
+\title{Plot State Occupancy Probabilities Over Time}
 \usage{
 plot_sops(
   data,
@@ -10,18 +10,27 @@ plot_sops(
   y_var = "y",
   facet_var = "tx",
   linetype_var = NULL,
-  geom = c("bar", "line")
+  geom = c("line", "bar"),
+  prob_var = NULL,
+  n_draws = 50,
+  draw_alpha = 0.06,
+  ribbon_alpha = 0.12,
+  show_uncertainty = TRUE
 )
 }
 \arguments{
 \item{data}{A data frame containing trajectory data, typically from
-\code{sim_trajectories_markov()} or \code{sim_trajectories_brownian()}.}
+\code{sim_trajectories_markov()} or \code{sim_trajectories_brownian()}, or a
+model-derived SOP summary such as a \code{markov_avg_sops} object from
+\code{avg_sops()} and \code{inferences()}.}
 
 \item{time_var}{Character string. Name of the time variable column (default: "time").}
 
-\item{y_var}{Character string. Name of the state variable column (default: "y").}
+\item{y_var}{Character string. Name of the observed state variable column for
+empirical trajectory data (default: "y").}
 
-\item{facet_var}{Character string or NULL. Name of the variable to facet by (default: "tx").
+\item{facet_var}{Character vector or NULL. Name of the variable to facet by
+(default: "tx"). Use a length-two vector for \code{facet_grid(row ~ column)}.
 Set to NULL to disable faceting.}
 
 \item{linetype_var}{Character string or NULL. Name of the variable to map to linetype
@@ -29,42 +38,68 @@ Set to NULL to disable faceting.}
 \code{facet_var} and \code{linetype_var} are specified, you can facet by one variable
 (e.g., site) and distinguish groups by linetype (e.g., treatment).}
 
-\item{geom}{Character string. Type of plot: "bar" for stacked bar chart (default)
-or "line" for line plot.}
+\item{geom}{Character string. Type of plot: "line" for line plot (default)
+or "bar" for stacked bar chart.}
+
+\item{prob_var}{Character string or NULL. Name of the probability column for
+model-derived SOP summary data. Defaults to \code{"estimate"} when present.}
+
+\item{n_draws}{Integer. Maximum number of stored inference draws to overlay
+for \code{markov_avg_sops} bar plots. Draws are selected deterministically.}
+
+\item{draw_alpha}{Numeric. Alpha level for draw overlays in model-derived
+bar plots.}
+
+\item{ribbon_alpha}{Numeric. Alpha level for confidence bands in
+model-derived line plots.}
+
+\item{show_uncertainty}{Logical. If TRUE, add confidence ribbons for line
+plots and draw overlays for \code{markov_avg_sops} bar plots when available.}
 }
 \value{
-A ggplot object showing empirical state occupancy probabilities over time.
+A ggplot object showing state occupancy probabilities over time.
 }
 \description{
-Creates a visualization showing the empirical state occupancy probabilities
-over time, with optional faceting by a grouping variable (typically treatment).
-Can display as stacked bars (default) or as lines.
+Creates a visualization showing empirical or model-derived state occupancy
+probabilities over time, with optional faceting by grouping variables
+(typically treatment). Can display as lines (default) or stacked bars.
 }
 \details{
 This function creates a visualization of how the distribution of patients
 across states changes over time.
 
-When \code{geom = "bar"} (default), each bar represents a time point with
-colors indicating the empirical state occupancy probability for each state.
+For empirical trajectory data, probabilities are computed from observed
+counts at each time point. For model-derived SOP summaries, the function
+uses the supplied probability column, usually \code{estimate}.
 
-When \code{geom = "line"}, separate lines show the empirical state occupancy
-probability for each state over time, which can be useful for seeing trends
-in individual states.
+When \code{geom = "line"} (default), separate lines show the state occupancy
+probability for each state over time. Model-derived SOP summaries with
+\code{conf.low} and \code{conf.high} columns also show uncertainty bands.
+
+When \code{geom = "bar"}, each bar represents a time point with colors
+indicating the state occupancy probability for each state. If \code{data} is a
+\code{markov_avg_sops} object with stored draws from \code{inferences(..., return_draws = TRUE)}, a deterministic subset of draws is overlaid with low
+alpha to show uncertainty in the stacked probabilities.
 
 Faceting allows comparison between groups (e.g., treatment vs. control).
 The \code{linetype_var} parameter allows distinguishing groups by linetype instead
 of (or in addition to) faceting, enabling more flexible plot layouts.
+
+\code{plot_sops()} adds viridis discrete color and fill scales by default. Add
+another \verb{scale_color_*()} or \verb{scale_fill_*()} layer to replace them.
+Summary data must have only one row for each plotted time, state, facet, and
+linetype combination.
 }
 \examples{
 \dontrun{
 # After simulating trajectories
 trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
 
-# Basic stacked bar plot
+# Basic line plot
 plot_sops(trajectories)
 
-# Line plot with faceting by treatment
-plot_sops(trajectories, geom = "line")
+# Stacked bar plot with faceting by treatment
+plot_sops(trajectories, geom = "bar")
 
 # Line plot with linetype by treatment (no faceting)
 plot_sops(trajectories, geom = "line", facet_var = NULL, linetype_var = "tx")

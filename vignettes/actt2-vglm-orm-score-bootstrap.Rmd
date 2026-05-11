@@ -267,17 +267,24 @@ sops_orm <- inferences(
 ```
 
 ```{r clean-results}
+clean_model_sops <- function(x) {
+  as.data.frame(x) |>
+    mutate(
+      state = as.character(state),
+      tx = as.integer(as.character(tx))
+    )
+}
+
 model_sops <- bind_rows(
   list(
-    "vglm.markov" = sops_vglm,
-    "vglm linear-time PPO" = sops_vglm_linear_time_ppo,
-    orm = sops_orm
+    "vglm.markov" = clean_model_sops(sops_vglm),
+    "vglm linear-time PPO" = clean_model_sops(sops_vglm_linear_time_ppo),
+    orm = clean_model_sops(sops_orm)
   ),
   .id = "backend"
 ) |>
   mutate(
-    state = as.integer(as.character(state)),
-    tx = as.integer(tx)
+    state = as.integer(state)
   ) |>
   select(backend, tx, time, state, estimate, conf.low, conf.high)
 
@@ -287,17 +294,15 @@ head(model_sops)
 ## Compare With Empirical SOPs
 
 First, plot the empirical SOPs directly from the simulated longitudinal data.
-This uses `plot_sops(..., geom = "line")`, so each line is the observed
-proportion of patients in a state over follow-up.
+This uses the default `plot_sops(..., geom = "line")`, so each line is the
+observed proportion of patients in a state over follow-up.
 
 ```{r empirical-line-plot, fig.width = 7, fig.height = 5}
 plot_sops(
   raw_data |> filter(time %in% seq_len(FOLLOW_UP)),
-  geom = "line",
   facet_var = "tx"
 ) +
   coord_cartesian(ylim = c(0, 1)) +
-  scale_color_viridis_d() +
   labs(
     x = "Day",
     y = "State occupancy probability",
@@ -319,17 +324,10 @@ model_sops |>
       levels = c("vglm.markov", "vglm linear-time PPO", "orm")
     )
   ) |>
-  ggplot(aes(x = time, y = estimate, color = state, fill = state)) +
-  geom_ribbon(
-    aes(ymin = conf.low, ymax = conf.high, group = state),
-    alpha = 0.12,
-    color = NA
+  plot_sops(
+    facet_var = c("tx", "backend")
   ) +
-  geom_line(aes(group = state), linewidth = 0.6) +
-  facet_grid(tx ~ backend) +
   coord_cartesian(ylim = c(0, 1)) +
-  scale_color_viridis_d() +
-  scale_fill_viridis_d() +
   labs(
     x = "Day",
     y = "State occupancy probability",
@@ -362,12 +360,14 @@ stacked_sops <- bind_rows(
     )
   )
 
-ggplot(stacked_sops, aes(x = time, y = estimate, fill = state)) +
-  geom_col(width = 0.9) +
-  facet_grid(tx ~ source) +
+plot_sops(
+  stacked_sops,
+  geom = "bar",
+  facet_var = c("tx", "source")
+) +
   scale_y_continuous(labels = function(x) paste0(round(100 * x), "%")) +
-  scale_fill_viridis_d() +
   labs(
+    title = NULL,
     x = "Day",
     y = "State occupancy probability",
     fill = "State"

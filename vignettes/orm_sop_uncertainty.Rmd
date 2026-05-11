@@ -74,11 +74,9 @@ rownames(markov_data) <- NULL
 
 plot_sops(
   markov_data,
-  geom = "line",
   linetype_var = "tx",
   facet_var = NULL
 ) +
-  scale_color_brewer(palette = "Dark2") +
   coord_cartesian(ylim = c(0, 1)) +
   labs(
     title = "Empirical State Occupancy Probabilities",
@@ -255,20 +253,11 @@ head(inference_sops)
 ```
 
 ```{r sop-plot}
-ggplot(
+plot_sops(
   inference_sops,
-  aes(x = time, y = estimate, color = state, fill = state)
+  facet_var = c("tx", "method")
 ) +
-  geom_ribbon(
-    aes(ymin = conf.low, ymax = conf.high, group = state),
-    alpha = 0.12,
-    color = NA
-  ) +
-  geom_line(aes(group = state), linewidth = 0.6) +
-  facet_grid(tx ~ method) +
   coord_cartesian(ylim = c(0, 1)) +
-  scale_color_brewer(palette = "Dark2") +
-  scale_fill_brewer(palette = "Dark2") +
   labs(
     title = "Marginal State Occupancy Probabilities",
     subtitle = "One full proportional-odds orm() model, three uncertainty estimators",
@@ -276,6 +265,26 @@ ggplot(
     y = "State occupancy probability",
     color = "State",
     fill = "State"
+  )
+```
+
+The stacked bar view is useful when the full state distribution matters more
+than individual state trajectories. For `avg_sops()` objects with stored draws,
+`plot_sops()` overlays a deterministic subset of draw-specific stacks with low
+alpha. Here we show the score-bootstrap result and keep the overlay small for
+vignette build speed.
+
+```{r sop-stacked-draws}
+plot_sops(
+  sops_score,
+  geom = "bar",
+  facet_var = "tx",
+  show_uncertainty = TRUE
+) +
+  labs(
+    title = "Score-Bootstrap SOP Draws",
+    x = "Day",
+    y = "State occupancy probability"
   )
 ```
 

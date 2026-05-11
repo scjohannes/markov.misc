@@ -187,7 +187,7 @@ chart keeps the full state-occupancy distribution visible at each time point.
 Both panels use the same fill scale: living quality-of-life states are shown on
 one gradient, and death is a separate dark level so it remains easy to spot.
 
-```{r stacked-sops}
+```{r stacked-sops, message=FALSE}
 bind_rows(
   empirical_sops |>
     mutate(
@@ -206,9 +206,10 @@ bind_rows(
     source = factor(source, levels = c("Empirical", "Model derived")),
     state = factor(as.character(state), levels = as.character(STATE_LEVELS))
   ) |>
-  ggplot(aes(x = time, y = estimate, group = state, fill = state)) +
-  geom_col(width = 0.85) +
-  facet_grid(tx ~ source) +
+  plot_sops(
+    geom = "bar",
+    facet_var = c("tx", "source")
+  ) +
   scale_x_continuous(breaks = c(1, 7, 15, 21, 28)) +
   scale_y_continuous(
     labels = function(x) paste0(round(100 * x), "%"),
@@ -216,6 +217,7 @@ bind_rows(
   ) +
   state_fill_scale() +
   labs(
+    title = NULL,
     x = "Week",
     y = "State occupancy probability"
   ) +
