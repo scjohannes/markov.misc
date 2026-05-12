@@ -31,6 +31,8 @@ Suggests:
     dplyr,
     knitr,
     ordinal,
+    posterior,
+    rmsb,
     rmarkdown,
     survival,
     tibble,

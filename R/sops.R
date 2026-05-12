@@ -124,6 +124,323 @@ predict_orm_response_markov <- function(object, newdata) {
   probs
 }
 
+select_posterior_draws <- function(model, n_draws = 100L, seed = NULL) {
+  n_available <- nrow(model$draws)
+  if (is.null(n_available) || n_available < 1) {
+    stop("`blrm` model does not contain posterior draws.")
+  }
+
+  if (is.null(n_draws)) {
+    n <- n_available
+  } else {
+    if (!is.numeric(n_draws) || length(n_draws) != 1 || is.na(n_draws) || n_draws < 1) {
+      stop("`n_draws` must be a positive integer or NULL.")
+    }
+    n <- min(as.integer(n_draws), n_available)
+  }
+
+  if (n == n_available) {
+    return(seq_len(n_available))
+  }
+
+  if (!is.null(seed)) {
+    old_seed_exists <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+    old_seed <- if (old_seed_exists) {
+      get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+    } else {
+      NULL
+    }
+    on.exit({
+      if (old_seed_exists) {
+        assign(".Random.seed", old_seed, envir = .GlobalEnv)
+      } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+        rm(".Random.seed", envir = .GlobalEnv)
+      }
+    }, add = TRUE)
+    set.seed(seed)
+  }
+
+  sample.int(n_available, n)
+}
+
+blrm_design_matrix <- function(model, newdata, second = FALSE) {
+  if (!requireNamespace("rms", quietly = TRUE)) {
+    stop("Package 'rms' is required for `blrm` prediction.")
+  }
+  X <- rms::predictrms(model, newdata = newdata, type = "x", second = second)
+  normalize_blrm_design_names(model, X, second = second)
+}
+
+normalize_blrm_design_names <- function(model, X, second = FALSE) {
+  if (second) {
+    return(X)
+  }
+
+  design <- model$Design
+  rms_names <- design$colnames
+  mm_names <- design$mmcolnames
+  if (
+    !is.null(rms_names) &&
+      !is.null(mm_names) &&
+      length(rms_names) == ncol(X) &&
+      length(mm_names) == ncol(X) &&
+      identical(colnames(X), mm_names)
+  ) {
+    colnames(X) <- rms_names
+  }
+
+  X
+}
+
+resolve_blrm_id_var <- function(model, newdata, id_var = NULL) {
+  if (!is.null(id_var)) {
+    return(id_var)
+  }
+
+  cluster_name <- model$clusterInfo$name
+  if (!is.null(cluster_name) && length(cluster_name) == 1 && nzchar(cluster_name)) {
+    return(cluster_name)
+  }
+
+  "id"
+}
+
+get_blrm_gamma_draws <- function(model, draw_indices) {
+  if (!is.null(model$gamma_draws)) {
+    gamma <- model$gamma_draws
+    return(gamma[draw_indices, , drop = FALSE])
+  }
+
+  if (!requireNamespace("rmsb", quietly = TRUE)) {
+    stop("Package 'rmsb' is required for `include_re = TRUE`.")
+  }
+  if (!requireNamespace("posterior", quietly = TRUE)) {
+    stop("Package 'posterior' is required for `include_re = TRUE`.")
+  }
+
+  stan_fit <- rmsb::stanGet(model)
+  gamma <- tryCatch(
+    {
+      posterior::as_draws_matrix(stan_fit$draws(variables = "gamma"))
+    },
+    error = function(e) {
+      mat <- as.matrix(stan_fit)
+      mat[, grep("^gamma\\[", colnames(mat)), drop = FALSE]
+    }
+  )
+
+  if (ncol(gamma) == 0) {
+    stop("No random-effect draws named `gamma` were found in the `blrm` fit.")
+  }
+
+  gamma[draw_indices, , drop = FALSE]
+}
+
+cache_blrm_gamma_draws <- function(model, draw_indices, include_re) {
+  if (!isTRUE(include_re)) {
+    return(NULL)
+  }
+
+  gamma <- get_blrm_gamma_draws(model, draw_indices)
+  rownames(gamma) <- as.character(draw_indices)
+  gamma
+}
+
+subset_cached_draw_matrix <- function(x, all_draw_indices, draw_indices) {
+  if (is.null(x)) {
+    return(NULL)
+  }
+
+  idx <- match(draw_indices, all_draw_indices)
+  if (anyNA(idx)) {
+    stop("Cached posterior draw matrix is missing requested draw indices.")
+  }
+
+  x[idx, , drop = FALSE]
+}
+
+blrm_random_effect_matrix <- function(
+  model,
+  newdata,
+  id_var,
+  draw_indices,
+  gamma_draws = NULL
+) {
+  cluster <- model$clusterInfo$cluster
+  if (is.null(cluster) || length(cluster) == 0) {
+    stop(
+      "`include_re = TRUE` requires a `blrm` model fitted with `cluster()` ",
+      "and stored cluster information."
+    )
+  }
+  if (!id_var %in% names(newdata)) {
+    stop("`newdata` must contain `", id_var, "` when `include_re = TRUE`.")
+  }
+
+  patient_ids <- as.character(newdata[[id_var]])
+
+  gamma <- gamma_draws %||% get_blrm_gamma_draws(model, draw_indices)
+  if (nrow(gamma) != length(draw_indices)) {
+    stop("Random-effect draw matrix does not match requested posterior draws.")
+  }
+
+  gamma_names <- colnames(gamma)
+  gamma_index <- NULL
+  if (!is.null(gamma_names)) {
+    cleaned_gamma_names <- sub("^gamma\\[([^]]+)\\]$", "\\1", gamma_names)
+    if (all(patient_ids %in% gamma_names)) {
+      gamma_index <- match(patient_ids, gamma_names)
+    } else if (all(patient_ids %in% cleaned_gamma_names)) {
+      gamma_index <- match(patient_ids, cleaned_gamma_names)
+    }
+  }
+  if (is.null(gamma_index)) {
+    cluster_levels <- levels(as.factor(cluster))
+    gamma_index <- match(patient_ids, cluster_levels)
+  }
+
+  if (anyNA(gamma_index)) {
+    missing_ids <- unique(patient_ids[is.na(gamma_index)])
+    stop(
+      "`newdata` contains IDs not present in the fitted `blrm` clusters: ",
+      paste(utils::head(missing_ids, 5), collapse = ", "),
+      if (length(missing_ids) > 5) " ..." else ""
+    )
+  }
+
+  if (max(gamma_index) > ncol(gamma)) {
+    stop("Random-effect draw matrix has fewer columns than fitted clusters.")
+  }
+
+  gamma[, gamma_index, drop = FALSE]
+}
+
+predict_blrm_response_markov <- function(
+  object,
+  newdata,
+  include_re = FALSE,
+  id_var = NULL,
+  draw_indices = NULL,
+  gamma_draws = NULL
+) {
+  if (is.null(draw_indices)) {
+    draw_indices <- seq_len(nrow(object$draws))
+  }
+  manual_error <- NULL
+
+  manual <- tryCatch(
+    {
+      X <- blrm_design_matrix(object, newdata = newdata, second = FALSE)
+      draws <- object$draws[draw_indices, , drop = FALSE]
+      ndraws <- nrow(draws)
+      ns <- object$non.slopes
+      K <- ns + 1L
+      cn <- colnames(draws)
+      tauinfo <- object$tauInfo
+      tau_names <- if (!is.null(tauinfo) && length(tauinfo$name)) tauinfo$name else character()
+
+      intercept_draws <- draws[, seq_len(ns), drop = FALSE]
+      beta_names <- setdiff(cn, c(cn[seq_len(ns)], tau_names))
+      if (length(beta_names) == 0) {
+        xb <- matrix(0, nrow = ndraws, ncol = nrow(newdata))
+      } else {
+        beta_draws <- draws[, beta_names, drop = FALSE]
+        missing_beta <- setdiff(beta_names, colnames(X))
+        if (length(missing_beta) > 0) {
+          stop(
+            "Could not match `blrm` posterior coefficients to prediction ",
+            "design columns. Missing columns: ",
+            paste(utils::head(missing_beta, 10), collapse = ", "),
+            if (length(missing_beta) > 10) " ..." else "",
+            "."
+          )
+        }
+        X <- X[, beta_names, drop = FALSE]
+        xb <- beta_draws %*% t(X)
+      }
+
+      pppo <- object$pppo %||% 0L
+      has_npo <- pppo > 0
+      if (has_npo) {
+        cppo <- object$cppo
+        if (is.character(cppo)) {
+          cppo <- eval(parse(text = cppo))
+        }
+        if (!is.function(cppo)) {
+          stop("Only constrained partial proportional odds `blrm` models are supported.")
+        }
+        Z <- blrm_design_matrix(object, newdata = newdata, second = TRUE)
+        tau_draws <- draws[, tau_names, drop = FALSE]
+        zt <- tau_draws %*% t(Z)
+        cppos <- vapply(object$ylevels[-1], cppo, numeric(1))
+      }
+
+      u_draws <- matrix(0, nrow = ndraws, ncol = nrow(newdata))
+      if (include_re) {
+        id_var <- resolve_blrm_id_var(object, newdata, id_var)
+        u_draws <- blrm_random_effect_matrix(
+          object,
+          newdata,
+          id_var,
+          draw_indices,
+          gamma_draws = gamma_draws
+        )
+      }
+
+      ynam <- if (!is.null(object$yname)) {
+        paste(object$yname, object$ylevels, sep = "=")
+      } else {
+        as_state_labels(object$ylevels)
+      }
+      out <- array(
+        NA_real_,
+        dim = c(ndraws, nrow(newdata), K),
+        dimnames = list(draw_indices, rownames(newdata), ynam)
+      )
+
+      base_eta <- xb + u_draws
+      cum_probs <- array(
+        NA_real_,
+        dim = c(ndraws, nrow(newdata), ns)
+      )
+      for (k in seq_len(ns)) {
+        ep <- sweep(base_eta, 1L, intercept_draws[, k], "+")
+        if (has_npo) {
+          ep <- ep + cppos[k] * zt
+        }
+        cum_probs[, , k] <- stats::plogis(ep)
+      }
+
+      out[, , 1] <- 1 - cum_probs[, , 1]
+      if (K > 2) {
+        out[, , 2:(K - 1)] <- cum_probs[, , 1:(K - 2), drop = FALSE] -
+          cum_probs[, , 2:(K - 1), drop = FALSE]
+      }
+      out[, , K] <- cum_probs[, , K - 1]
+      out[out < 0] <- 0
+
+      out
+    },
+    error = function(e) {
+      manual_error <<- e
+      NULL
+    }
+  )
+
+  if (!is.null(manual)) {
+    return(manual)
+  }
+  if (include_re) {
+    stop(manual_error$message, call. = FALSE)
+  }
+
+  stop(
+    "Manual `blrm` prediction failed: ",
+    manual_error$message,
+    call. = FALSE
+  )
+}
+
 orm_model_matrix <- function(model, newdata, include_intercept = FALSE) {
   if (!inherits(model, "orm")) {
     stop("orm_model_matrix() requires an orm model.")
@@ -286,6 +603,9 @@ normalize_previous_state_column <- function(values, prototype, pvarname) {
 #'   model formula. Defaults to \code{"time"}.
 #' @param pvarname A character string specifying the name of the previous state variable
 #'   used in the model formula. Defaults to \code{"yprev"}.
+#' @param p2varname Optional character string specifying the second previous
+#'   state variable. `NULL` uses first-order recursion; any non-`NULL` value
+#'   uses second-order recursion with histories `(p2varname, pvarname)`.
 #' @param gap (Optional) A character string specifying the name of the variable representing
 #'   the time gap (delta time) between observations, if used in the model. Defaults to \code{NULL}.
 #' @param t_covs (Optional) A data frame used for explicit time-basis columns
@@ -298,6 +618,17 @@ normalize_previous_state_column <- function(values, prototype, pvarname) {
 #'   Inline model terms such as \code{rms::rcs(time, 4)} do not require
 #'   \code{t_covs}; prediction reuses the fitted model's stored transform
 #'   metadata.
+#' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
+#'   fitted random-effect draws in posterior predictions. This does not
+#'   integrate over the random-effects distribution; it uses the fitted effects
+#'   for known IDs.
+#' @param id_var Character ID column used when `include_re = TRUE`. If `NULL`
+#'   for `blrm`, inferred from `model$clusterInfo$name` when available,
+#'   otherwise `"id"`.
+#' @param n_draws Integer number of posterior draws to sample for `blrm`, or
+#'   `NULL` to use all stored draws. Defaults to 100.
+#' @param seed Optional random seed for reproducible `blrm` draw sampling.
+#' @param ... Reserved for internal use.
 #'
 #' @details
 #'
@@ -354,11 +685,37 @@ soprob_markov <- function(
   absorb = NULL,
   tvarname = "time",
   pvarname = "yprev",
+  p2varname = NULL,
   gap = NULL,
-  t_covs = NULL
+  t_covs = NULL,
+  include_re = FALSE,
+  id_var = NULL,
+  n_draws = 100L,
+  seed = NULL,
+  ...
 ) {
   # --- 1. Initial Checks & Setup ---
-  cl <- class(object)[1]
+  dots <- list(...)
+  unknown_dots <- setdiff(names(dots), c(".draw_indices", ".gamma_draws"))
+  if (length(unknown_dots) > 0) {
+    stop("Unused arguments: ", paste(unknown_dots, collapse = ", "))
+  }
+  draw_indices_arg <- dots$.draw_indices
+  gamma_draws_arg <- dots$.gamma_draws
+
+  cl <- if (inherits(object, "blrm")) {
+    "blrm"
+  } else if (inherits(object, "robcov_vglm")) {
+    "robcov_vglm"
+  } else if (inherits(object, "orm")) {
+    "orm"
+  } else if (inherits(object, "vglm")) {
+    "vglm"
+  } else if (inherits(object, "vgam")) {
+    "vgam"
+  } else {
+    class(object)[1]
+  }
   ftypes <- c(
     orm = "rms",
     blrm = "rmsb",
@@ -378,6 +735,14 @@ soprob_markov <- function(
   if (!pvarname %in% names(data)) {
     stop("Previous-state variable `", pvarname, "` not found in `data`.")
   }
+  if (!is.null(p2varname) && !p2varname %in% names(data)) {
+    stop("Second previous-state variable `", p2varname, "` not found in `data`.")
+  }
+
+  draw_indices <- NULL
+  if (ftype == "rmsb") {
+    draw_indices <- draw_indices_arg %||% select_posterior_draws(object, n_draws, seed)
+  }
 
   # Define prediction function
   prd <- switch(
@@ -385,7 +750,14 @@ soprob_markov <- function(
     rms = function(obj, d) predict_orm_response_markov(obj, d),
     vgam = function(obj, d) predict_vglm_response_markov(obj, d),
     rmsb = function(obj, d) {
-      stats::predict(obj, d, type = "fitted.ind", posterior.summary = "all")
+      predict_blrm_response_markov(
+        obj,
+        d,
+        include_re = include_re,
+        id_var = id_var,
+        draw_indices = draw_indices,
+        gamma_draws = gamma_draws_arg
+      )
     },
     robcov = function(obj, d) {
       if (is.null(obj$vglm_fit)) {
@@ -408,7 +780,7 @@ soprob_markov <- function(
   n_yna <- length(yna)
 
   # Check Bayesian draws
-  nd <- if (ftype == "rmsb" && length(object$draws)) nrow(object$draws) else 0
+  nd <- if (ftype == "rmsb" && length(object$draws)) length(draw_indices) else 0
 
   # Initialize Output Array
   # Structure: [Patients, Time, States]
@@ -422,7 +794,7 @@ soprob_markov <- function(
     P <- array(
       0,
       dim = c(nd, n_pat, n_times, n_states),
-      dimnames = list(1:nd, rownames(data), times, ylevel_names)
+      dimnames = list(draw_indices, rownames(data), times, ylevel_names)
     )
   }
 
@@ -447,6 +819,24 @@ soprob_markov <- function(
     P[, 1, ] <- p_t1
   } else {
     P[,, 1, ] <- p_t1
+  }
+
+  if (!is.null(p2varname)) {
+    return(soprob_markov_second_order_run(
+      P = P,
+      object = object,
+      data = data,
+      prd = prd,
+      nd = nd,
+      times = times,
+      ylevel_names = ylevel_names,
+      absorb_names = absorb_names,
+      tvarname = tvarname,
+      pvarname = pvarname,
+      p2varname = p2varname,
+      gap = gap,
+      t_covs = t_covs
+    ))
   }
 
   # --- 3. Prepare Expansion Data for Transitions ---
@@ -522,37 +912,200 @@ soprob_markov <- function(
 
       P[, it, ] <- p_current
     } else {
-      # --- Bayesian Block (Complex due to extra dimension) ---
-      # trans_probs is [nd x (n_pat*n_yna) x n_states]
+      # trans_probs is [draw x (patient * previous state) x state].
+      p_current <- array(0, dim = c(nd, n_pat, n_states))
+      dimnames(p_current) <- list(dimnames(P)[[1]], rownames(data), ylevel_names)
 
-      # Iterate draws (hard to vectorize draws + patients + states simultaneously without memory issues)
-      for (d in 1:nd) {
-        p_current_d <- matrix(0, nrow = n_pat, ncol = n_states)
-        colnames(p_current_d) <- ylevel_names
+      for (i in seq_along(yna)) {
+        prev_state_name <- yna[i]
+        prob_prev <- P[, , it - 1, prev_state_name]
+        row_indices <- ((i - 1) * n_pat + 1):(i * n_pat)
+        probs_transition <- trans_probs[, row_indices, , drop = FALSE]
 
-        for (i in seq_along(yna)) {
-          prev_state_name <- yna[i]
-          prob_prev <- P[d, , it - 1, prev_state_name] # [n_pat]
-
-          row_indices <- ((i - 1) * n_pat + 1):(i * n_pat)
-          probs_transition <- trans_probs[d, row_indices, ] # [n_pat x n_states]
-
-          p_current_d <- p_current_d + (probs_transition * prob_prev)
+        for (k in seq_len(n_states)) {
+          p_current[, , k] <- p_current[, , k] +
+            probs_transition[, , k] * prob_prev
         }
-
-        if (!is.null(absorb)) {
-          for (a_state in absorb) {
-            # total dead at t = new deaths + already dead
-            p_current_d[, a_state] <- p_current_d[, a_state] +
-              P[d, , it - 1, a_state]
-          }
-        }
-        P[d, , it, ] <- p_current_d
       }
+
+      if (!is.null(absorb)) {
+        for (a_state in absorb) {
+          # total dead at t = new deaths + already dead
+          p_current[, , a_state] <- p_current[, , a_state] +
+            P[, , it - 1, a_state]
+        }
+      }
+      P[, , it, ] <- p_current
     }
   }
 
   return(P)
+}
+
+match_state_indices <- function(values, ylevel_names, varname) {
+  idx <- match(as.character(values), ylevel_names)
+  if (anyNA(idx)) {
+    bad <- unique(as.character(values[is.na(idx)]))
+    stop(
+      "Values in `", varname, "` are not among `ylevels`: ",
+      paste(utils::head(bad, 5), collapse = ", "),
+      if (length(bad) > 5) " ..." else ""
+    )
+  }
+  idx
+}
+
+soprob_markov_second_order_run <- function(
+  P,
+  object,
+  data,
+  prd,
+  nd,
+  times,
+  ylevel_names,
+  absorb_names,
+  tvarname,
+  pvarname,
+  p2varname,
+  gap,
+  t_covs
+) {
+  n_pat <- nrow(data)
+  n_times <- length(times)
+  n_states <- length(ylevel_names)
+  absorb_idx <- which(ylevel_names %in% absorb_names)
+  non_absorb_idx <- setdiff(seq_len(n_states), absorb_idx)
+  prev_idx <- match_state_indices(data[[pvarname]], ylevel_names, pvarname)
+
+  if (nd == 0) {
+    joint_prev <- array(
+      0,
+      dim = c(n_pat, n_states, n_states),
+      dimnames = list(rownames(data), ylevel_names, ylevel_names)
+    )
+    for (i in seq_len(n_pat)) {
+      if (prev_idx[i] %in% absorb_idx) {
+        joint_prev[i, prev_idx[i], prev_idx[i]] <- 1
+        P[i, 1, ] <- 0
+        P[i, 1, prev_idx[i]] <- 1
+      } else {
+        joint_prev[i, prev_idx[i], ] <- P[i, 1, ]
+      }
+    }
+  } else {
+    joint_prev <- array(
+      0,
+      dim = c(nd, n_pat, n_states, n_states),
+      dimnames = list(dimnames(P)[[1]], rownames(data), ylevel_names, ylevel_names)
+    )
+    for (i in seq_len(n_pat)) {
+      if (prev_idx[i] %in% absorb_idx) {
+        joint_prev[, i, prev_idx[i], prev_idx[i]] <- 1
+        P[, i, 1, ] <- 0
+        P[, i, 1, prev_idx[i]] <- 1
+      } else {
+        joint_prev[, i, prev_idx[i], ] <- P[, i, 1, ]
+      }
+    }
+  }
+
+  if (n_times < 2) {
+    return(P)
+  }
+
+  pair_grid <- expand.grid(
+    h = seq_len(n_states),
+    j = seq_len(n_states),
+    KEEP.OUT.ATTRS = FALSE
+  )
+  n_pairs <- nrow(pair_grid)
+  predictable_pair <- pair_grid$h %in% non_absorb_idx &
+    pair_grid$j %in% non_absorb_idx
+  block_rows <- lapply(seq_len(n_pairs), function(i) {
+    ((i - 1) * n_pat + 1):(i * n_pat)
+  })
+
+  edata_base <- data[rep(seq_len(n_pat), times = n_pairs), , drop = FALSE]
+  edata_base[[p2varname]] <- make_previous_state_column(
+    states = ylevel_names[pair_grid$h],
+    prototype = data[[p2varname]],
+    n = n_pat,
+    pvarname = p2varname
+  )
+  edata_base[[pvarname]] <- make_previous_state_column(
+    states = ylevel_names[pair_grid$j],
+    prototype = data[[pvarname]],
+    n = n_pat,
+    pvarname = pvarname
+  )
+
+  for (it in 2:n_times) {
+    edata_base[[tvarname]] <- times[it]
+    if (!is.null(gap)) {
+      edata_base[[gap]] <- times[it] - times[it - 1]
+    }
+    if (!is.null(t_covs)) {
+      for (nm in names(t_covs)) {
+        edata_base[[nm]] <- t_covs[it, nm]
+      }
+    }
+
+    predict_rows <- unlist(block_rows[predictable_pair], use.names = FALSE)
+    trans_probs <- prd(object, edata_base[predict_rows, , drop = FALSE])
+    cursor <- 1L
+
+    if (nd == 0) {
+      joint_current <- array(0, dim = c(n_pat, n_states, n_states))
+      for (pair_i in seq_len(n_pairs)) {
+        h <- pair_grid$h[pair_i]
+        j <- pair_grid$j[pair_i]
+        prob_prev <- joint_prev[, h, j]
+        if (!any(prob_prev > 0)) {
+          if (predictable_pair[pair_i]) {
+            cursor <- cursor + n_pat
+          }
+          next
+        }
+        if (j %in% absorb_idx) {
+          joint_current[, j, j] <- joint_current[, j, j] + prob_prev
+        } else if (predictable_pair[pair_i]) {
+          rows <- cursor:(cursor + n_pat - 1L)
+          transition <- trans_probs[rows, , drop = FALSE]
+          for (l in seq_len(n_states)) {
+            joint_current[, j, l] <- joint_current[, j, l] + transition[, l] * prob_prev
+          }
+          cursor <- cursor + n_pat
+        }
+      }
+      P[, it, ] <- apply(joint_current, c(1, 3), sum)
+      joint_prev <- joint_current
+    } else {
+      joint_current <- array(0, dim = c(nd, n_pat, n_states, n_states))
+      for (pair_i in seq_len(n_pairs)) {
+        h <- pair_grid$h[pair_i]
+        j <- pair_grid$j[pair_i]
+        if (j %in% absorb_idx) {
+          joint_current[, , j, j] <- joint_current[, , j, j] +
+            joint_prev[, , h, j]
+        } else if (predictable_pair[pair_i]) {
+          rows <- cursor:(cursor + n_pat - 1L)
+          prob_prev <- joint_prev[, , h, j]
+          if (any(prob_prev > 0)) {
+            transition <- trans_probs[, rows, , drop = FALSE]
+            for (l in seq_len(n_states)) {
+              joint_current[, , j, l] <- joint_current[, , j, l] +
+                transition[, , l] * prob_prev
+            }
+          }
+          cursor <- cursor + n_pat
+        }
+      }
+      P[, , it, ] <- apply(joint_current, c(1, 2, 4), sum)
+      joint_prev <- joint_current
+    }
+  }
+
+  P
 }
 
 #' Compute standardized state occupancy probabilities (Vectorized)
@@ -566,8 +1119,15 @@ soprob_markov <- function(
 #' @param times Time points to predict.
 #' @param ylevels States in the data.
 #' @param absorb Absorbing state name.
-#' @param varnames List of variable names: tvarname, pvarname, id, tx, gap (optional).
+#' @param varnames List of variable names: tvarname, pvarname, p2varname
+#'   (optional second previous-state variable), id, tx, gap (optional).
 #' @param t_covs Time-dependent covariate lookup table.
+#' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
+#'   fitted random-effect draws in posterior predictions.
+#' @param id_var Optional patient ID variable. Defaults to `varnames$id`.
+#' @param n_draws Integer number of `blrm` posterior draws to sample, or `NULL`
+#'   to use all stored draws.
+#' @param seed Optional random seed for reproducible `blrm` draw sampling.
 #'
 #' @return A list with two components:
 #'   \item{sop_tx}{Matrix (Time x State) or Array (Draws x Time x State) for Treatment}
@@ -583,11 +1143,16 @@ standardize_sops <- function(
   varnames = list(
     tvarname = "time",
     pvarname = "yprev",
+    p2varname = NULL,
     id = "id",
     tx = "tx",
     gap = NULL
   ),
-  t_covs = NULL
+  t_covs = NULL,
+  include_re = FALSE,
+  id_var = NULL,
+  n_draws = 100L,
+  seed = NULL
 ) {
   # --- 1. Setup & Data Extraction ---
   # Validate model compatibility
@@ -596,7 +1161,7 @@ standardize_sops <- function(
   if (
     !inherits(model, "orm") &&
       !inherits(model, "vglm") &&
-      !inherits(model, "rmsb") &&
+      !inherits(model, "blrm") &&
       !inherits(model, "robcov_vglm")
   ) {
     stop("model must be an orm, rmsb, vglm, or robcov_vglm object.")
@@ -611,10 +1176,11 @@ standardize_sops <- function(
   }
 
   # Variable mapping
-  id_var <- varnames$id
+  id_var <- id_var %||% varnames$id
   tx_var <- varnames$tx
   tvar <- varnames$tvarname
   pvar <- varnames$pvarname
+  p2var <- varnames$p2varname %||% NULL
   gap_var <- varnames$gap %||% NULL # Helper if varnames$gap is missing
 
   if (is.null(times)) {
@@ -649,8 +1215,13 @@ standardize_sops <- function(
     absorb = absorb,
     tvarname = tvar,
     pvarname = pvar,
+    p2varname = p2var,
     gap = gap_var,
-    t_covs = t_covs
+    t_covs = t_covs,
+    include_re = include_re,
+    id_var = id_var,
+    n_draws = n_draws,
+    seed = seed
   )
 
   res_ctrl <- soprob_markov(
@@ -661,8 +1232,13 @@ standardize_sops <- function(
     absorb = absorb,
     tvarname = tvar,
     pvarname = pvar,
+    p2varname = p2var,
     gap = gap_var,
-    t_covs = t_covs
+    t_covs = t_covs,
+    include_re = include_re,
+    id_var = id_var,
+    n_draws = n_draws,
+    seed = seed
   )
 
   # --- 4. Marginalize (Average over Patients) ---
@@ -891,8 +1467,8 @@ time_in_state <- function(sops, target_states = 1) {
 #' in a dataset. Optionally aggregates results within strata defined by grouping
 #' variables.
 #'
-#' @param model A fitted model object (e.g., `vglm`, `orm`). For `vglm` models,
-#'   the family must be `cumulative(reverse = TRUE, ...)`.
+#' @param model A fitted model object (e.g., `vglm`, `orm`, or `blrm`). For
+#'   `vglm` models, the family must be `cumulative(reverse = TRUE, ...)`.
 #' @param newdata Optional. A data frame of new data for prediction. If NULL,
 #'   uses the data used to fit the model.
 #' @param times A numeric vector of time points to estimate.
@@ -900,6 +1476,9 @@ time_in_state <- function(sops, target_states = 1) {
 #' @param absorb The absorbing state.
 #' @param tvarname Name of the time variable in the model.
 #' @param pvarname Name of the previous state variable in the model.
+#' @param p2varname Optional second previous-state variable. `NULL` uses a
+#'   first-order Markov recursion; a non-`NULL` column name uses a second-order
+#'   recursion.
 #' @param gap Name of the time gap variable (if used).
 #' @param t_covs Optional time-varying covariate lookup table for explicit
 #' basis columns. Inline terms such as `rms::rcs(time, 4)` can be used without
@@ -910,6 +1489,20 @@ time_in_state <- function(sops, target_states = 1) {
 #'   within ECOG levels; `by = c("ecog", "age_group")` aggregates within each
 #'   combination of ECOG and age group. NOTE: This is simple aggregation within
 #'   observed strata, NOT G-computation standardization (use `avg_sops()` for that).
+#' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
+#'   fitted random-effect draws in posterior predictions for known IDs.
+#' @param id_var Character ID column used when `include_re = TRUE`. For `blrm`,
+#'   `NULL` is inferred from `model$clusterInfo$name` when available, otherwise
+#'   `"id"`.
+#' @param n_draws Integer number of posterior draws to sample for `blrm`, or
+#'   `NULL` to use all stored draws. Defaults to 100.
+#' @param seed Optional random seed for reproducible random draw sampling.
+#' @param posterior_summary Summary used for `blrm` posterior SOP draws:
+#'   `"mean"` or `"median"`.
+#' @param conf_level Confidence level for `blrm` posterior intervals.
+#' @param return_draws Logical. For `blrm`, store posterior SOP draws for
+#'   extraction with `get_draws()`. Large draw objects are guarded to protect
+#'   memory.
 #' @param ... Additional arguments (currently unused).
 #'
 #' @return A data frame of class `markov_sops` containing:
@@ -917,6 +1510,8 @@ time_in_state <- function(sops, target_states = 1) {
 #'   \item{time}{Time point}
 #'   \item{state}{State name}
 #'   \item{estimate}{Probability of being in the state (individual-level or stratum average)}
+#'   \item{conf.low, conf.high, std.error}{For `blrm` fits, posterior
+#'     uncertainty summaries computed directly from SOP draws}
 #'   \item{(by variables)}{Stratification variables if `by` is specified}
 #'   Plus all columns from `newdata` (for individual-level results).
 #'
@@ -924,6 +1519,14 @@ time_in_state <- function(sops, target_states = 1) {
 #' This function wraps `soprob_markov()` and converts its array output to a tidy
 #' data frame. The output contains one row per patient-time-state combination
 #' (or stratum-time-state if `by` is used).
+#'
+#' For `rmsb::blrm()` models, SOPs are computed on sampled posterior draws and
+#' then summarized. The point estimate is the requested posterior summary of the
+#' SOP draws, not a plug-in calculation from summarized model parameters.
+#' State-wise medians and interval bounds are not constrained to sum to one
+#' across states; use `posterior_summary = "mean"` when the displayed estimates
+#' themselves need to preserve total probability. Draw-level probabilities
+#' stored with `return_draws = TRUE` remain normalized within each draw.
 #'
 #' **Model Requirements:**
 #'
@@ -975,9 +1578,17 @@ sops <- function(
   absorb = NULL,
   tvarname = "time",
   pvarname = "yprev",
+  p2varname = NULL,
   gap = NULL,
   t_covs = NULL,
   by = NULL,
+  include_re = FALSE,
+  id_var = NULL,
+  n_draws = 100L,
+  seed = NULL,
+  posterior_summary = c("mean", "median"),
+  conf_level = 0.95,
+  return_draws = FALSE,
   ...
 ) {
   # --- 1. Setup & Defaults ---
@@ -1016,6 +1627,9 @@ sops <- function(
       # robcov_vglm stores extra slot in list
       ylevels <- model$extra$colnames.y
       if (is.null(ylevels)) stop("`ylevels` cannot be NULL")
+    } else if (inherits(model, "blrm")) {
+      ylevels <- model$ylevels
+      if (is.null(ylevels)) stop("`ylevels` cannot be NULL")
     } else if (inherits(model, "orm")) {
       # rms orm stores levels
       ylevels <- model$yunique
@@ -1023,6 +1637,30 @@ sops <- function(
     } else {
       stop("`ylevels` cannot be NULL")
     }
+  }
+
+  if (inherits(model, "blrm")) {
+    posterior_summary <- match.arg(posterior_summary)
+    return(sops_blrm(
+      model = model,
+      newdata = newdata,
+      times = times,
+      ylevels = ylevels,
+      absorb = absorb,
+      tvarname = tvarname,
+      pvarname = pvarname,
+      p2varname = p2varname,
+      gap = gap,
+      t_covs = t_covs,
+      by = by,
+      include_re = include_re,
+      id_var = id_var,
+      n_draws = n_draws,
+      seed = seed,
+      posterior_summary = posterior_summary,
+      conf_level = conf_level,
+      return_draws = return_draws
+    ))
   }
 
   # --- 2. Compute SOPs (Vectorized) ---
@@ -1034,6 +1672,7 @@ sops <- function(
     absorb = absorb,
     tvarname = tvarname,
     pvarname = pvarname,
+    p2varname = p2varname,
     gap = gap,
     t_covs = t_covs
   )
@@ -1098,6 +1737,7 @@ sops <- function(
   attr(result, "model") <- model
   attr(result, "tvarname") <- tvarname
   attr(result, "pvarname") <- pvarname
+  attr(result, "p2varname") <- p2varname
   attr(result, "ylevels") <- ylevels
   attr(result, "absorb") <- absorb
   attr(result, "gap") <- gap
@@ -1109,6 +1749,7 @@ sops <- function(
     absorb = absorb,
     tvarname = tvarname,
     pvarname = pvarname,
+    p2varname = p2varname,
     gap = gap,
     t_covs = t_covs,
     by = by
@@ -1120,6 +1761,231 @@ sops <- function(
   return(result)
 }
 
+sops_blrm <- function(
+  model,
+  newdata,
+  times,
+  ylevels,
+  absorb,
+  tvarname,
+  pvarname,
+  p2varname,
+  gap,
+  t_covs,
+  by,
+  include_re,
+  id_var,
+  n_draws,
+  seed,
+  posterior_summary,
+  conf_level,
+  return_draws
+) {
+  if (!is.null(by)) {
+    if (!is.character(by)) {
+      stop("'by' must be a character vector of variable names.")
+    }
+    missing_vars <- setdiff(by, names(newdata))
+    if (length(missing_vars) > 0) {
+      stop(
+        "Variables specified in 'by' not found in newdata: ",
+        paste(missing_vars, collapse = ", ")
+      )
+    }
+  }
+
+  draw_indices <- select_posterior_draws(model, n_draws, seed)
+  n_pat <- nrow(newdata)
+  n_times <- length(times)
+  n_states <- length(ylevels)
+  n_cells <- n_pat * n_times * n_states
+  n_requested <- length(draw_indices)
+  # `sops()` keeps individual-level draw summaries in memory. The default
+  # guard is 50 million numeric cells, about 400 MB before data-frame overhead.
+  max_draw_cells <- getOption("markov.misc.max_sops_draw_cells", 5e7)
+
+  if (n_cells * n_requested > max_draw_cells) {
+    stop(
+      "`sops()` for `blrm` would require ",
+      format(n_cells * n_requested, scientific = FALSE),
+      " posterior draw cells, above the current limit of ",
+      format(max_draw_cells, scientific = FALSE),
+      ". This limit protects memory because individual-level `sops()` stores ",
+      "draw x patient x time x state values. Lower `n_draws`, use ",
+      "`avg_sops()` for marginal summaries, or increase option ",
+      "`markov.misc.max_sops_draw_cells` if this allocation is intentional."
+    )
+  }
+
+  draw_values <- matrix(NA_real_, nrow = n_requested, ncol = n_cells)
+  rownames(draw_values) <- draw_indices
+  chunks <- split_draw_indices(draw_indices)
+  gamma_draws <- cache_blrm_gamma_draws(model, draw_indices, include_re)
+  row_cursor <- 1L
+  for (chunk in chunks) {
+    arr <- soprob_markov(
+      object = model,
+      data = newdata,
+      times = times,
+      ylevels = ylevels,
+      absorb = absorb,
+      tvarname = tvarname,
+      pvarname = pvarname,
+      p2varname = p2varname,
+      gap = gap,
+      t_covs = t_covs,
+      include_re = include_re,
+      id_var = id_var,
+      n_draws = NULL,
+      .draw_indices = chunk,
+      .gamma_draws = subset_cached_draw_matrix(gamma_draws, draw_indices, chunk)
+    )
+    for (i in seq_along(chunk)) {
+      draw_values[row_cursor, ] <- as.vector(arr[i, , , ])
+      row_cursor <- row_cursor + 1L
+    }
+  }
+
+  if (is.null(by)) {
+    stats <- summarize_posterior_draw_matrix(
+      draw_values,
+      posterior_summary = posterior_summary,
+      conf_level = conf_level
+    )
+    idx_pat <- rep(seq_len(n_pat), times = n_times * n_states)
+    result <- newdata[idx_pat, , drop = FALSE]
+    result$time <- rep(rep(times, each = n_pat), times = n_states)
+    result$state <- rep(ylevels, each = n_pat * n_times)
+    result$estimate <- stats$estimate
+    result$conf.low <- stats$conf.low
+    result$conf.high <- stats$conf.high
+    result$std.error <- stats$std.error
+    rownames(result) <- NULL
+
+    draws_df <- if (return_draws) {
+      sops_draw_matrix_to_df(draw_values, result, draw_indices)
+    } else {
+      NULL
+    }
+  } else {
+    draw_list <- vector("list", n_requested)
+    for (i in seq_len(n_requested)) {
+      arr_i <- array(draw_values[i, ], dim = c(n_pat, n_times, n_states))
+      draw_i <- array_to_df_individual(arr_i, times, ylevels, newdata, by = by)
+      draw_i$draw_id <- draw_indices[i]
+      draw_list[[i]] <- draw_i
+    }
+    draws_df <- bind_rows_fill(draw_list)
+    group_cols <- unique(c("time", "state", by))
+    result <- summarize_posterior_draws_df(
+      draws_df,
+      group_cols = group_cols,
+      posterior_summary = posterior_summary,
+      conf_level = conf_level
+    )
+    if (!return_draws) {
+      draws_df <- NULL
+    }
+  }
+
+  attr(result, "model") <- model
+  attr(result, "tvarname") <- tvarname
+  attr(result, "pvarname") <- pvarname
+  attr(result, "p2varname") <- p2varname
+  attr(result, "ylevels") <- ylevels
+  attr(result, "absorb") <- absorb
+  attr(result, "gap") <- gap
+  attr(result, "t_covs") <- t_covs
+  attr(result, "by") <- by
+  attr(result, "call_args") <- list(
+    times = times,
+    ylevels = ylevels,
+    absorb = absorb,
+    tvarname = tvarname,
+    pvarname = pvarname,
+    p2varname = p2varname,
+    gap = gap,
+    t_covs = t_covs,
+    by = by,
+    include_re = include_re,
+    id_var = id_var,
+    n_draws = n_draws,
+    seed = seed,
+    posterior_summary = posterior_summary,
+    conf_level = conf_level
+  )
+  attr(result, "newdata_orig") <- newdata
+  attr(result, "method") <- "posterior"
+  attr(result, "engine") <- "posterior"
+  attr(result, "n_draws") <- n_requested
+  attr(result, "draw_ids") <- draw_indices
+  attr(result, "conf_level") <- conf_level
+  attr(result, "posterior_summary") <- posterior_summary
+  if (!is.null(draws_df)) {
+    attr(result, "draws") <- draws_df
+  }
+
+  class(result) <- c("markov_sops", class(result))
+  result
+}
+
+split_draw_indices <- function(draw_indices, chunk_size = NULL) {
+  if (is.null(chunk_size)) {
+    chunk_size <- getOption("markov.misc.blrm_chunk_size", 10L)
+  }
+  chunk_size <- max(1L, as.integer(chunk_size))
+  split(draw_indices, ceiling(seq_along(draw_indices) / chunk_size))
+}
+
+summarize_posterior_draw_matrix <- function(draw_values, posterior_summary, conf_level) {
+  alpha <- 1 - conf_level
+  estimate <- switch(
+    posterior_summary,
+    mean = colMeans(draw_values, na.rm = TRUE),
+    median = apply(draw_values, 2, stats::median, na.rm = TRUE)
+  )
+  conf.low <- apply(draw_values, 2, stats::quantile, probs = alpha / 2, na.rm = TRUE)
+  conf.high <- apply(draw_values, 2, stats::quantile, probs = 1 - alpha / 2, na.rm = TRUE)
+  std.error <- apply(draw_values, 2, stats::sd, na.rm = TRUE)
+  data.frame(
+    estimate = as.numeric(estimate),
+    conf.low = as.numeric(conf.low),
+    conf.high = as.numeric(conf.high),
+    std.error = as.numeric(std.error)
+  )
+}
+
+summarize_posterior_draws_df <- function(draws_df, group_cols, posterior_summary, conf_level) {
+  alpha <- 1 - conf_level
+  split_key <- interaction(draws_df[, group_cols, drop = FALSE], drop = TRUE)
+  groups <- split(seq_len(nrow(draws_df)), split_key)
+  out <- draws_df[vapply(groups, `[`, integer(1), 1L), group_cols, drop = FALSE]
+  values <- lapply(groups, function(idx) draws_df$estimate[idx])
+  out$estimate <- vapply(values, function(x) {
+    switch(
+      posterior_summary,
+      mean = mean(x, na.rm = TRUE),
+      median = stats::median(x, na.rm = TRUE)
+    )
+  }, numeric(1))
+  out$conf.low <- vapply(values, stats::quantile, numeric(1), probs = alpha / 2, na.rm = TRUE)
+  out$conf.high <- vapply(values, stats::quantile, numeric(1), probs = 1 - alpha / 2, na.rm = TRUE)
+  out$std.error <- vapply(values, stats::sd, numeric(1), na.rm = TRUE)
+  rownames(out) <- NULL
+  out
+}
+
+sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
+  meta_cols <- setdiff(names(result), c("estimate", "conf.low", "conf.high", "std.error"))
+  n_draws <- nrow(draw_values)
+  n_cells <- ncol(draw_values)
+  out <- result[rep(seq_len(n_cells), times = n_draws), meta_cols, drop = FALSE]
+  out$draw_id <- rep(draw_indices, each = n_cells)
+  out$estimate <- as.vector(t(draw_values))
+  rownames(out) <- NULL
+  out
+}
+
 
 #' Calculate Averaged State Occupation Probabilities (Marginal Effects)
 #'
@@ -1128,8 +1994,8 @@ sops <- function(
 #' to each level of the treatment variable and averaging over the covariate
 #' distribution.
 #'
-#' @param model A fitted model object (e.g., `vglm`, `orm`). For `vglm` models,
-#'   the family **must** be `cumulative(reverse = TRUE, ...)`.
+#' @param model A fitted model object (e.g., `vglm`, `orm`, or `blrm`). For
+#'   `vglm` models, the family **must** be `cumulative(reverse = TRUE, ...)`.
 #' @param newdata Data frame for prediction. For **simulation inference**, pass
 #'   baseline data only (one row per patient). For **bootstrap inference**, you
 #'   must pass the full longitudinal dataset (all time points) since the model
@@ -1140,8 +2006,23 @@ sops <- function(
 #' @param by Optional character vector of additional variables to group by,
 #' after standardization.
 #' @param times Numeric vector of time points. If NULL, inferred from data.
-#' @param id_var Name of the patient ID variable (default "id"). Required for
-#'   bootstrap inference.
+#' @param id_var Name of the patient ID variable. Required for bootstrap
+#'   inference and for `blrm` random-effect prediction. If `NULL`, defaults to
+#'   `"id"`; for `blrm` models with `include_re = TRUE`, it is first inferred
+#'   from `model$clusterInfo$name` when available.
+#' @param p2varname Optional second previous-state variable. `NULL` uses a
+#'   first-order Markov recursion; a non-`NULL` column name uses a second-order
+#'   recursion.
+#' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
+#'   fitted random-effect draws in posterior predictions for known IDs.
+#' @param n_draws Integer number of posterior draws to sample for `blrm`, or
+#'   `NULL` to use all stored draws. Defaults to 100.
+#' @param seed Optional random seed for reproducible random draw sampling.
+#' @param posterior_summary Summary used for `blrm` posterior SOP draws:
+#'   `"mean"` or `"median"`.
+#' @param conf_level Confidence level for `blrm` posterior intervals.
+#' @param return_draws Logical. For `blrm`, store posterior SOP draws for
+#'   extraction with `get_draws()`.
 #' @param ... Additional arguments passed to `sops()` (e.g., `ylevels`, `absorb`,
 #'   `tvarname`, `pvarname`, `t_covs`). `t_covs` is only needed for explicit
 #'   precomputed time-basis columns; inline terms such as `rms::rcs(time, 4)`
@@ -1152,6 +2033,8 @@ sops <- function(
 #'   \item{state}{State level}
 #'   \item{(variables)}{Value of standardization variable (e.g., tx)}
 #'   \item{estimate}{Average probability across individuals}
+#'   \item{conf.low, conf.high, std.error}{For `blrm` fits, posterior
+#'     uncertainty summaries computed directly from marginalized SOP draws}
 #'
 #' @details
 #' This function implements G-computation (standardization) for Markov SOPs:
@@ -1168,6 +2051,12 @@ sops <- function(
 #'
 #' The result represents the expected SOP if the entire population received
 #' treatment vs. control, averaged over the observed covariate distribution.
+#' For `rmsb::blrm()` models, patient-level posterior arrays are chunked and
+#' marginalized by draw before summarizing to reduce memory use.
+#' State-wise medians and interval bounds are not constrained to sum to one
+#' across states; use `posterior_summary = "mean"` when the displayed estimates
+#' themselves need to preserve total probability. Draw-level probabilities
+#' stored with `return_draws = TRUE` remain normalized within each draw.
 #'
 #' @seealso [sops()] for individual-level SOPs, [inferences()] for bootstrap
 #'   uncertainty, [standardize_sops()] for the underlying implementation.
@@ -1203,7 +2092,14 @@ avg_sops <- function(
   variables = NULL,
   by = NULL,
   times = NULL,
-  id_var = "id",
+  id_var = NULL,
+  p2varname = NULL,
+  include_re = FALSE,
+  n_draws = 100L,
+  seed = NULL,
+  posterior_summary = c("mean", "median"),
+  conf_level = 0.95,
+  return_draws = FALSE,
   ...
 ) {
   # --- 1. Input Validation ---
@@ -1226,6 +2122,12 @@ avg_sops <- function(
     # if (is.null(newdata)) {
     stop("Provide newdata or ensure model stores data (x = TRUE).")
     # }
+  }
+
+  if (inherits(model, "blrm") && isTRUE(include_re)) {
+    id_var <- resolve_blrm_id_var(model, newdata, id_var)
+  } else {
+    id_var <- id_var %||% "id"
   }
 
   # Validate id_var exists
@@ -1281,8 +2183,37 @@ avg_sops <- function(
 
   newdata_expanded <- create_counterfactual_data(baseline_data, grid, var_list)
 
+  if (inherits(model, "blrm")) {
+    posterior_summary <- match.arg(posterior_summary)
+    result <- avg_sops_blrm(
+      model = model,
+      newdata_expanded = newdata_expanded,
+      grid = grid,
+      variables = var_list,
+      by = by,
+      times = times,
+      id_var = id_var,
+      p2varname = p2varname,
+      include_re = include_re,
+      n_draws = n_draws,
+      seed = seed,
+      posterior_summary = posterior_summary,
+      conf_level = conf_level,
+      return_draws = return_draws,
+      ...
+    )
+    attr(result, "newdata_orig") <- newdata
+    return(result)
+  }
+
   # --- 4. Compute Individual SOPs ---
-  sops_ind <- sops(model, newdata = newdata_expanded, times = times, ...)
+  sops_ind <- sops(
+    model,
+    newdata = newdata_expanded,
+    times = times,
+    p2varname = p2varname,
+    ...
+  )
 
   # --- 5. Aggregate (Marginalize) ---
   # Group by time, state, and the variables used for standardization
@@ -1316,6 +2247,7 @@ avg_sops <- function(
   attr(result, "call_args") <- attr(sops_ind, "call_args")
   attr(result, "tvarname") <- attr(sops_ind, "tvarname")
   attr(result, "pvarname") <- attr(sops_ind, "pvarname")
+  attr(result, "p2varname") <- attr(sops_ind, "p2varname")
   attr(result, "ylevels") <- attr(sops_ind, "ylevels")
   attr(result, "absorb") <- attr(sops_ind, "absorb")
   attr(result, "gap") <- attr(sops_ind, "gap")
@@ -1335,11 +2267,175 @@ avg_sops <- function(
   return(result)
 }
 
+avg_sops_blrm <- function(
+  model,
+  newdata_expanded,
+  grid,
+  variables,
+  by,
+  times,
+  id_var,
+  p2varname,
+  include_re,
+  n_draws,
+  seed,
+  posterior_summary,
+  conf_level,
+  return_draws,
+  ...
+) {
+  args <- list(...)
+  ylevels <- args$ylevels %||% model$ylevels
+  absorb <- args$absorb %||% NULL
+  tvarname <- args$tvarname %||% "time"
+  pvarname <- args$pvarname %||% "yprev"
+  gap <- args$gap %||% NULL
+  t_covs <- args$t_covs %||% NULL
+
+  if (is.null(times)) {
+    if (!tvarname %in% names(newdata_expanded)) {
+      stop("`times` must be specified if `tvarname` is not in data.")
+    }
+    times <- sort(unique(newdata_expanded[[tvarname]]))
+  }
+
+  missing_by <- setdiff(by %||% character(), names(newdata_expanded))
+  if (length(missing_by) > 0) {
+    stop("Grouping variables missing: ", paste(missing_by, collapse = ", "))
+  }
+
+  draw_indices <- select_posterior_draws(model, n_draws, seed)
+  chunks <- split_draw_indices(
+    draw_indices,
+    chunk_size = getOption("markov.misc.blrm_avg_chunk_size", 50L)
+  )
+  gamma_draws <- cache_blrm_gamma_draws(model, draw_indices, include_re)
+  n_cf <- nrow(grid)
+  n_each <- nrow(newdata_expanded) / n_cf
+  draw_results <- vector("list", length(draw_indices))
+  out_i <- 1L
+
+  for (chunk in chunks) {
+    arr <- soprob_markov(
+      object = model,
+      data = newdata_expanded,
+      times = times,
+      ylevels = ylevels,
+      absorb = absorb,
+      tvarname = tvarname,
+      pvarname = pvarname,
+      p2varname = p2varname,
+      gap = gap,
+      t_covs = t_covs,
+      include_re = include_re,
+      id_var = id_var,
+      n_draws = NULL,
+      .draw_indices = chunk,
+      .gamma_draws = subset_cached_draw_matrix(gamma_draws, draw_indices, chunk)
+    )
+
+    for (i in seq_along(chunk)) {
+      arr_i <- arr[i, , , , drop = FALSE]
+      arr_i <- array(arr_i, dim = dim(arr_i)[-1])
+      if (is.null(by)) {
+        draw_i <- marginalize_sops_array(
+          sops_array = arr_i,
+          grid = grid,
+          times = times,
+          ylevels = ylevels,
+          variables = variables,
+          n_cf = n_cf,
+          n_each = n_each
+        )
+      } else {
+        draw_i <- array_to_df_individual(
+          sops_array = arr_i,
+          times = times,
+          ylevels = ylevels,
+          newdata = newdata_expanded,
+          by = NULL
+        )
+        group_cols <- unique(c("time", "state", names(variables), by))
+        agg_formula <- stats::as.formula(
+          paste("estimate ~", paste(group_cols, collapse = " + "))
+        )
+        draw_i <- stats::aggregate(
+          agg_formula,
+          data = draw_i,
+          FUN = mean,
+          na.rm = TRUE
+        )
+      }
+      draw_i$draw_id <- chunk[i]
+      draw_results[[out_i]] <- draw_i
+      out_i <- out_i + 1L
+    }
+  }
+
+  draws_df <- bind_rows_fill(draw_results)
+  group_cols <- c("time", "state", names(variables))
+  if (!is.null(by)) {
+    group_cols <- unique(c(group_cols, by))
+  }
+  result <- summarize_posterior_draws_df(
+    draws_df,
+    group_cols = group_cols,
+    posterior_summary = posterior_summary,
+    conf_level = conf_level
+  )
+
+  attr(result, "model") <- model
+  attr(result, "call_args") <- list(
+    times = times,
+    ylevels = ylevels,
+    absorb = absorb,
+    tvarname = tvarname,
+    pvarname = pvarname,
+    p2varname = p2varname,
+    gap = gap,
+    t_covs = t_covs,
+    include_re = include_re,
+    id_var = id_var,
+    n_draws = n_draws,
+    seed = seed,
+    posterior_summary = posterior_summary,
+    conf_level = conf_level
+  )
+  attr(result, "tvarname") <- tvarname
+  attr(result, "pvarname") <- pvarname
+  attr(result, "p2varname") <- p2varname
+  attr(result, "ylevels") <- ylevels
+  attr(result, "absorb") <- absorb
+  attr(result, "gap") <- gap
+  attr(result, "t_covs") <- t_covs
+  attr(result, "avg_args") <- list(
+    variables = variables,
+    by = by,
+    times = times,
+    id_var = id_var
+  )
+  attr(result, "method") <- "posterior"
+  attr(result, "engine") <- "posterior"
+  attr(result, "n_draws") <- length(draw_indices)
+  attr(result, "draw_ids") <- draw_indices
+  attr(result, "conf_level") <- conf_level
+  attr(result, "posterior_summary") <- posterior_summary
+  if (return_draws) {
+    attr(result, "draws") <- draws_df
+  }
+
+  class(result) <- c("markov_avg_sops", class(result))
+  result
+}
+
 
 #' Inference for State Occupation Probabilities
 #'
 #' Adds confidence intervals to SOP objects using simulation-based or bootstrap
-#' methods. The default method is simulation.
+#' methods. The default method is simulation. For objects produced from
+#' `rmsb::blrm()` models, posterior uncertainty is already computed by
+#' `sops()`/`avg_sops()`, so `inferences()` ignores `method` and returns the
+#' object unchanged.
 #'
 #' @param object A `markov_avg_sops` object from `avg_sops()` or a
 #'   `markov_sops` object from `sops()`.
@@ -1360,7 +2456,9 @@ avg_sops <- function(
 #' @param score_weight_dist Character. Cluster weight distribution for
 #'   `engine = "score_bootstrap"`. Currently only `"exponential"` is supported.
 #' @param n_sim Number of simulation draws (for simulation) or bootstrap
-#'   iterations (for bootstrap). Default is 1000.
+#'   iterations (for bootstrap). Default is 1000. For `blrm` SOP objects this
+#'   argument is ignored; rerun `sops()`/`avg_sops()` with `n_draws` and `seed`
+#'   to change posterior draws.
 #' @param vcov Optional custom variance-covariance matrix. If provided,
 #'   overrides the vcov extracted from the model.
 #' @param cluster Optional row-level cluster vector for
@@ -1369,7 +2467,9 @@ avg_sops <- function(
 #' @param workers Number of parallel workers. If NULL (default) or 1, uses
 #'   sequential processing. If > 1, uses parallel processing with that many
 #'   workers.
-#' @param conf_level Confidence level for intervals (default 0.95).
+#' @param conf_level Confidence level for intervals (default 0.95). For `blrm`
+#'   SOP objects this argument is ignored; rerun `sops()`/`avg_sops()` with
+#'   `conf_level` to change posterior intervals.
 #' @param conf_type Type of confidence interval (simulation method only):
 #'   \itemize{
 #'     \item `"perc"` (default): Percentile-based intervals from the simulation
@@ -1552,6 +2652,10 @@ inferences <- function(
     )
   }
 
+  if (inherits(attr(object, "model"), "blrm")) {
+    return(object)
+  }
+
   method <- match.arg(method, choices = c("simulation", "bootstrap"))
   engine <- match.arg(engine, choices = c("mvn", "score_bootstrap"))
 
@@ -1632,6 +2736,7 @@ inferences_simulation <- function(
 
   tvarname <- attr(object, "tvarname")
   pvarname <- attr(object, "pvarname")
+  p2varname <- attr(object, "p2varname")
   ylevels <- attr(object, "ylevels")
   absorb <- attr(object, "absorb")
   t_covs <- attr(object, "t_covs")
@@ -1733,7 +2838,7 @@ inferences_simulation <- function(
   # The fast path uses pre-computed design matrix decompositions for supported
   # ordinal model backends.
   model_chk <- if (inherits(model, "robcov_vglm")) model$vglm_fit else model
-  use_fast_path <- inherits(model_chk, c("vglm", "orm"))
+  use_fast_path <- inherits(model_chk, c("vglm", "orm")) && is.null(p2varname)
 
   if (use_fast_path) {
     # --- FAST PATH: Pre-build components once, then run efficient Markov loop ---
@@ -1833,6 +2938,7 @@ inferences_simulation <- function(
           absorb = absorb,
           tvarname = tvarname,
           pvarname = pvarname,
+          p2varname = p2varname,
           t_covs = t_covs
         ),
         error = function(e) {
@@ -1895,6 +3001,7 @@ inferences_simulation <- function(
       "absorb",
       "tvarname",
       "pvarname",
+      "p2varname",
       "t_covs",
       "is_avg",
       "grid",
@@ -2348,6 +3455,7 @@ inferences_bootstrap <- function(
 
   tvarname <- attr(object, "tvarname")
   pvarname <- attr(object, "pvarname")
+  p2varname <- attr(object, "p2varname")
   ylevels <- attr(object, "ylevels")
   absorb <- attr(object, "absorb")
   t_covs <- attr(object, "t_covs")
@@ -2386,7 +3494,7 @@ inferences_bootstrap <- function(
   n_states <- length(ylevels)
 
   # --- 2. Identify Factor Columns ---
-  factor_cols <- c("y", pvarname)
+  factor_cols <- c("y", pvarname, p2varname)
   factor_cols <- intersect(factor_cols, names(newdata_orig))
 
   # --- 3. Generate Bootstrap ID Samples ---
@@ -2452,6 +3560,7 @@ inferences_bootstrap <- function(
         absorb = boot_absorb,
         tvarname = tvarname,
         pvarname = pvarname,
+        p2varname = p2varname,
         t_covs = t_covs
       ),
       error = function(e) {
@@ -2535,6 +3644,7 @@ inferences_bootstrap <- function(
       "ylevels",
       "absorb",
       "pvarname",
+      "p2varname",
       "tvarname",
       "t_covs",
       "n_times",

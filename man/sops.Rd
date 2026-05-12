@@ -12,15 +12,23 @@ sops(
   absorb = NULL,
   tvarname = "time",
   pvarname = "yprev",
+  p2varname = NULL,
   gap = NULL,
   t_covs = NULL,
   by = NULL,
+  include_re = FALSE,
+  id_var = NULL,
+  n_draws = 100L,
+  seed = NULL,
+  posterior_summary = c("mean", "median"),
+  conf_level = 0.95,
+  return_draws = FALSE,
   ...
 )
 }
 \arguments{
-\item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}). For \code{vglm} models,
-the family must be \code{cumulative(reverse = TRUE, ...)}.}
+\item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, or \code{blrm}). For
+\code{vglm} models, the family must be \code{cumulative(reverse = TRUE, ...)}.}
 
 \item{newdata}{Optional. A data frame of new data for prediction. If NULL,
 uses the data used to fit the model.}
@@ -35,6 +43,10 @@ uses the data used to fit the model.}
 
 \item{pvarname}{Name of the previous state variable in the model.}
 
+\item{p2varname}{Optional second previous-state variable. \code{NULL} uses a
+first-order Markov recursion; a non-\code{NULL} column name uses a second-order
+recursion.}
+
 \item{gap}{Name of the time gap variable (if used).}
 
 \item{t_covs}{Optional time-varying covariate lookup table for explicit
@@ -48,6 +60,27 @@ within ECOG levels; \code{by = c("ecog", "age_group")} aggregates within each
 combination of ECOG and age group. NOTE: This is simple aggregation within
 observed strata, NOT G-computation standardization (use \code{avg_sops()} for that).}
 
+\item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
+fitted random-effect draws in posterior predictions for known IDs.}
+
+\item{id_var}{Character ID column used when \code{include_re = TRUE}. For \code{blrm},
+\code{NULL} is inferred from \code{model$clusterInfo$name} when available, otherwise
+\code{"id"}.}
+
+\item{n_draws}{Integer number of posterior draws to sample for \code{blrm}, or
+\code{NULL} to use all stored draws. Defaults to 100.}
+
+\item{seed}{Optional random seed for reproducible random draw sampling.}
+
+\item{posterior_summary}{Summary used for \code{blrm} posterior SOP draws:
+\code{"mean"} or \code{"median"}.}
+
+\item{conf_level}{Confidence level for \code{blrm} posterior intervals.}
+
+\item{return_draws}{Logical. For \code{blrm}, store posterior SOP draws for
+extraction with \code{get_draws()}. Large draw objects are guarded to protect
+memory.}
+
 \item{...}{Additional arguments (currently unused).}
 }
 \value{
@@ -56,6 +89,8 @@ A data frame of class \code{markov_sops} containing:
 \item{time}{Time point}
 \item{state}{State name}
 \item{estimate}{Probability of being in the state (individual-level or stratum average)}
+\item{conf.low, conf.high, std.error}{For \code{blrm} fits, posterior
+uncertainty summaries computed directly from SOP draws}
 \item{(by variables)}{Stratification variables if \code{by} is specified}
 Plus all columns from \code{newdata} (for individual-level results).
 }
@@ -68,6 +103,14 @@ variables.
 This function wraps \code{soprob_markov()} and converts its array output to a tidy
 data frame. The output contains one row per patient-time-state combination
 (or stratum-time-state if \code{by} is used).
+
+For \code{rmsb::blrm()} models, SOPs are computed on sampled posterior draws and
+then summarized. The point estimate is the requested posterior summary of the
+SOP draws, not a plug-in calculation from summarized model parameters.
+State-wise medians and interval bounds are not constrained to sum to one
+across states; use \code{posterior_summary = "mean"} when the displayed estimates
+themselves need to preserve total probability. Draw-level probabilities
+stored with \code{return_draws = TRUE} remain normalized within each draw.
 
 \strong{Model Requirements:}
 

@@ -18,7 +18,7 @@ test_that("sops() validates inputs and supports stratified aggregation", {
 
   with_mocked_bindings(
     validate_markov_model = function(object) NULL,
-    soprob_markov = function(object, data, times, ylevels, absorb, tvarname, pvarname, gap, t_covs) {
+    soprob_markov = function(object, data, times, ylevels, absorb, tvarname, pvarname, gap, t_covs, ...) {
       expect_equal(times, c(1, 2))
       expect_equal(ylevels, c(1, 2))
       sops_array
@@ -91,7 +91,7 @@ test_that("sops() infers ylevels from supported model containers", {
 
   with_mocked_bindings(
     validate_markov_model = function(object) NULL,
-    soprob_markov = function(object, data, times, ylevels, absorb, tvarname, pvarname, gap, t_covs) {
+    soprob_markov = function(object, data, times, ylevels, absorb, tvarname, pvarname, gap, t_covs, ...) {
       expect_equal(ylevels, c("1", "2"))
       sops_array
     },
@@ -416,7 +416,7 @@ test_that("standardize_sops() validates inputs and marginalizes arrays", {
 
   with_mocked_bindings(
     validate_markov_model = function(object) NULL,
-    soprob_markov = function(object, data, times, ylevels, absorb, tvarname, pvarname, gap, t_covs) {
+    soprob_markov = function(object, data, times, ylevels, absorb, tvarname, pvarname, gap, t_covs, ...) {
       if (all(data$tx == 1)) {
         array(
           c(0.8, 0.6, 0.2, 0.4, 0.7, 0.5, 0.3, 0.5),

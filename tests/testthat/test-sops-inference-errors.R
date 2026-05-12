@@ -351,26 +351,35 @@ test_that("soprob_markov() validates model classes and propagates Bayesian draws
     }
   )
 
-  predict.blrm <- function(object, newdata, type, posterior.summary) {
-    nd <- nrow(object$draws)
-    n <- nrow(newdata)
-    out <- array(0, dim = c(nd, n, 2))
-    out[, , 1] <- 0.6
-    out[, , 2] <- 0.4
-    out
-  }
-  assign("predict.blrm", predict.blrm, envir = globalenv())
-  withr::defer(rm("predict.blrm", envir = globalenv()))
+  draws <- matrix(stats::qlogis(0.4), nrow = 2, ncol = 1)
+  colnames(draws) <- "y>=2"
+  blrm <- structure(
+    list(
+      draws = draws,
+      non.slopes = 1L,
+      pppo = 0L,
+      tauInfo = data.frame(name = character()),
+      ylevels = 1:2,
+      yname = "y"
+    ),
+    class = "blrm"
+  )
 
-  blrm <- structure(list(draws = matrix(1:4, nrow = 2)), class = "blrm")
-  out <- soprob_markov(
-    object = blrm,
-    data = data.frame(id = 1:2, yprev = factor(c(1, 1)), gap = 0, z = 0),
-    times = 1:2,
-    ylevels = 1:2,
-    absorb = 2,
-    gap = "gap",
-    t_covs = data.frame(z = c(1, 2))
+  with_mocked_bindings(
+    blrm_design_matrix = function(model, newdata, second = FALSE) {
+      matrix(numeric(0), nrow = nrow(newdata), ncol = 0)
+    },
+    {
+      out <- soprob_markov(
+        object = blrm,
+        data = data.frame(id = 1:2, yprev = factor(c(1, 1)), gap = 0, z = 0),
+        times = 1:2,
+        ylevels = 1:2,
+        absorb = 2,
+        gap = "gap",
+        t_covs = data.frame(z = c(1, 2))
+      )
+    }
   )
 
   expect_equal(dim(out), c(2L, 2L, 2L, 2L))
