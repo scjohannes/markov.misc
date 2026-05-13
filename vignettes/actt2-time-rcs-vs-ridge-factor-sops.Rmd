@@ -1,0 +1,339 @@
+---
+title: "ACTT-2 SOPs with Spline and Penalized Factor Time"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{ACTT-2 SOPs with Spline and Penalized Factor Time}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  out.width = "100%"
+)
+```
+
+```{r setup, message = FALSE, warning = FALSE}
+library(markov.misc)
+library(dplyr)
+library(ggplot2)
+library(rms)
+
+N_PATIENTS <- 250
+N_SIM <- 30
+SEED <- 20260513
+FOLLOW_UP <- 28
+STATE_LEVELS <- as.character(1:8)
+ABSORB <- "8"
+TIME_RIDGE_PENALTY <- 100
+MODEL_LEVELS <- c("RCS time, 6 knots", "Ridge-penalized factor time")
+```
+
+This vignette compares two ways to represent follow-up day in an ACTT-2-like
+ordinal Markov model:
+
+1. A numeric day term modeled as `rms::rcs(time, 6)`.
+2. A saturated day factor whose indicator coefficients are shrunk with a large
+   ridge penalty.
+
+Both models use `rms::orm()` with `opt_method = "LM"`, then use
+patient-clustered robust covariance matrices from `rms::robcov()` for
+multivariate normal simulation intervals around standardized SOPs.
+
+`N_SIM` is intentionally small for vignette build time. Use a larger value,
+for example `1000` or `2000`, for a final analysis.
+
+## Simulate and Prepare Data
+
+```{r simulate}
+raw_data <- sim_actt2_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  seed = SEED
+)
+
+model_data_rcs <- prepare_markov_data(
+  raw_data,
+  absorbing_state = as.integer(ABSORB),
+  factor_previous = TRUE
+)
+model_data_rcs$y <- ordered(model_data_rcs$y, levels = STATE_LEVELS)
+
+model_data_factor <- model_data_rcs
+model_data_factor$time <- factor(
+  model_data_factor$time,
+  levels = as.character(seq_len(FOLLOW_UP))
+)
+
+baseline_rcs <- model_data_rcs[!duplicated(model_data_rcs$id), , drop = FALSE]
+baseline_factor <- model_data_factor[
+  !duplicated(model_data_factor$id),
+  ,
+  drop = FALSE
+]
+
+c(
+  raw_rows = nrow(raw_data),
+  model_rows = nrow(model_data_rcs),
+  patients = length(unique(model_data_rcs$id))
+)
+```
+
+The spline model keeps `time` numeric. The factor model uses the same rows and
+same previous-state coding, but turns `time` into the ordered set of scheduled
+daily visits.
+
+## Fit the Time Models
+
+The factor model has 27 visit indicators before penalization. We first fit the
+unpenalized factor model only to get its expanded design matrix, then create a
+ridge penalty matrix that is zero for treatment and previous-state effects and
+positive only for the factor-time columns.
+
+```{r fit-models}
+dd_rcs <- datadist(model_data_rcs)
+options(datadist = "dd_rcs")
+
+fit_rcs <- orm(
+  y ~ tx + rms::rcs(time, 6) + yprev,
+  data = model_data_rcs,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE,
+  maxit = 100
+)
+
+dd_factor <- datadist(model_data_factor)
+options(datadist = "dd_factor")
+
+fit_factor_template <- orm(
+  y ~ tx + time + yprev,
+  data = model_data_factor,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE,
+  maxit = 100
+)
+
+time_cols <- grep("^time=", colnames(fit_factor_template$x))
+time_penalty <- matrix(
+  0,
+  nrow = ncol(fit_factor_template$x),
+  ncol = ncol(fit_factor_template$x),
+  dimnames = list(
+    colnames(fit_factor_template$x),
+    colnames(fit_factor_template$x)
+  )
+)
+time_penalty[time_cols, time_cols] <- diag(length(time_cols))
+
+fit_factor <- orm(
+  y ~ tx + time + yprev,
+  data = model_data_factor,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE,
+  maxit = 100,
+  penalty = TIME_RIDGE_PENALTY,
+  penalty.matrix = time_penalty
+)
+```
+
+The factor-time model still lets every follow-up day have its own coefficient,
+but the large ridge penalty reduces the effective time degrees of freedom to a
+size similar to the 6-knot spline basis.
+
+
+```{r effective-df}
+fit_rcs
+fit_factor
+```
+
+
+## Robust MVN SOP Uncertainty
+
+For both models, SOP point estimates are standardized over the same baseline
+patients under treatment and control counterfactuals. The MVN simulation uses
+the patient-clustered robust covariance matrix from `rms::robcov()`.
+
+```{r robust-vcov}
+fit_rcs_robust <- robcov(fit_rcs, cluster = model_data_rcs$id)
+fit_factor_robust <- robcov(fit_factor, cluster = model_data_factor$id)
+
+vcov_rcs_robust <- as.matrix(fit_rcs_robust$var)
+vcov_factor_robust <- as.matrix(fit_factor_robust$var)
+```
+
+```{r avg-sops}
+avg_rcs <- avg_sops(
+  fit_rcs_robust,
+  newdata = baseline_rcs,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_rcs$yunique,
+  absorb = ABSORB,
+  id_var = "id"
+)
+
+avg_factor <- avg_sops(
+  fit_factor_robust,
+  newdata = baseline_factor,
+  variables = list(tx = c(0, 1)),
+  times = NULL,
+  ylevels = fit_factor$yunique,
+  absorb = ABSORB,
+  id_var = "id"
+)
+```
+
+```{r mvn-inference}
+set.seed(SEED)
+sops_rcs <- inferences(
+  avg_rcs,
+  method = "simulation",
+  engine = "mvn",
+  n_sim = N_SIM,
+  vcov = vcov_rcs_robust,
+  conf_level = 0.95,
+  return_draws = TRUE
+)
+
+set.seed(SEED)
+sops_factor <- inferences(
+  avg_factor,
+  method = "simulation",
+  engine = "mvn",
+  n_sim = N_SIM,
+  vcov = vcov_factor_robust,
+  conf_level = 0.95,
+  return_draws = TRUE
+)
+
+c(
+  rcs_successful_draws = attr(sops_rcs, "n_successful"),
+  factor_successful_draws = attr(sops_factor, "n_successful")
+)
+```
+
+## Compare SOPs
+
+```{r combine-sops}
+prepare_sops_for_comparison <- function(x, model) {
+  x <- as.data.frame(x)
+  x$model <- model
+  x$time <- as.integer(as.character(x$time))
+  x
+}
+
+comparison_sops <- bind_rows(
+  prepare_sops_for_comparison(sops_rcs, "RCS time, 6 knots"),
+  prepare_sops_for_comparison(
+    sops_factor,
+    "Ridge-penalized factor time"
+  )
+) |>
+  mutate(
+    model = factor(model, levels = MODEL_LEVELS),
+    tx = factor(tx, levels = c(0, 1), labels = c("Control", "Treatment")),
+    state = factor(as.character(state), levels = STATE_LEVELS),
+    ci_width = conf.high - conf.low
+  )
+```
+
+```{r selected-sops-plot}
+comparison_sops |>
+  # filter(state %in% c("1", "4", "8")) |>
+  plot_sops(
+    geom = "line",
+    facet_var = c("tx", "model"),
+    ribbon_alpha = 0.15
+  ) +
+  scale_x_continuous(breaks = c(1, 7, 14, 21, 28)) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title = "Selected SOPs with Robust MVN Intervals",
+    x = "Day",
+    y = "State occupancy probability",
+    color = "State",
+    fill = "State"
+  )
+```
+
+Results are very similar, but the factor-time model seems to haver larger uncertainty.
+
+## Contrasts on derived estimands
+
+We can also use the stored MVN draws to compare a derived estimand: treatment
+minus control in expected days spent in State 1. Here expected days are computed
+by summing the daily State 1 SOP draws over follow-up.
+
+```{r state1-draw-differences}
+draws_rcs <- get_draws(sops_rcs)
+draws_rcs$model <- "RCS time, 6 knots"
+draws_rcs$time <- as.integer(as.character(draws_rcs$time))
+
+draws_factor <- get_draws(sops_factor)
+draws_factor$model <- "Ridge-penalized factor time"
+draws_factor$time <- as.integer(as.character(draws_factor$time))
+
+draws_all <- bind_rows(draws_rcs, draws_factor) |>
+  mutate(
+    model = factor(model, levels = MODEL_LEVELS),
+    tx = as.character(tx),
+    state = as.character(state)
+  ) |> 
+  arrange(draw_id, time, tx)
+
+state1_time <- draws_all |>
+  filter(state == "1") |>
+  group_by(model, draw_id, tx) |>
+  summarise(expected_days = sum(draw), .groups = "drop")
+
+state1_control <- state1_time |>
+  filter(tx == "0") |>
+  select(model, draw_id, control_days = expected_days)
+
+state1_treatment <- state1_time |>
+  filter(tx == "1") |>
+  select(model, draw_id, treatment_days = expected_days)
+
+state1_diff_draws <- inner_join(
+  state1_treatment,
+  state1_control,
+  by = c("model", "draw_id")
+) |>
+  mutate(delta_days = treatment_days - control_days)
+
+state1_diff_summary <- state1_diff_draws |>
+  group_by(model) |>
+  summarise(
+    mean_delta_days = mean(delta_days),
+    lower_2.5 = unname(stats::quantile(delta_days, 0.025)),
+    upper_97.5 = unname(stats::quantile(delta_days, 0.975)),
+    .groups = "drop"
+  )
+
+knitr::kable(state1_diff_summary, digits = 2)
+```
+
+```{r state1-difference-plot}
+ggplot(state1_diff_draws, aes(x = delta_days, y = model, fill = model)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey55") +
+  geom_violin(trim = FALSE, alpha = 0.45, color = NA) +
+  geom_boxplot(width = 0.12, outlier.shape = NA, alpha = 0.85) +
+  scale_fill_brewer(palette = "Dark2") +
+  labs(
+    title = "MVN Draws for State 1 Treatment Difference",
+    x = "Expected days in State 1, treatment minus control",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "none")
+```

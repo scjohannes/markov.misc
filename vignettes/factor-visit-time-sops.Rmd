@@ -1,0 +1,171 @@
+---
+title: "Visit-Time SOPs with Irregular ACTT-2 Assessments"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Visit-Time SOPs with Irregular ACTT-2 Assessments}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.5,
+  out.width = "100%"
+)
+```
+
+This example starts from ACTT-2-like daily trajectories, keeps only four
+assessment days, fits the Markov model on a factor-valued visit index, adds
+simulation-based uncertainty, and then maps the SOPs back to elapsed days as a
+separate post-processing step.
+
+```{r}
+library(markov.misc)
+library(VGAM)
+library(ggplot2)
+
+set.seed(20260513)
+
+visit_days <- c(3, 7, 14, 21)
+visit_levels <- paste0("visit_", seq_along(visit_days))
+state_levels <- as.character(1:8)
+time_map <- stats::setNames(visit_days, visit_levels)
+```
+
+First simulate daily ACTT-2-style ordinal outcomes, then retain the scheduled
+assessment days. The visit index is a factor; the real days are kept in a
+separate column and are not used by the transition model.
+
+```{r}
+actt2_daily <- sim_actt2_brownian(n_patients = 250, seed = 20260513)
+
+actt2_visits <- actt2_daily[actt2_daily$time %in% visit_days, ]
+actt2_visits <- actt2_visits[order(actt2_visits$id, actt2_visits$time), ]
+actt2_visits$day <- actt2_visits$time
+actt2_visits$visit <- ave(actt2_visits$day, actt2_visits$id, FUN = seq_along)
+actt2_visits$visit_label <- paste0("visit_", actt2_visits$visit)
+
+actt2_visits$yprev_visit <- ave(
+  actt2_visits$y,
+  actt2_visits$id,
+  FUN = function(z) c(NA, head(z, -1))
+)
+actt2_visits$yprev_visit[actt2_visits$visit == 1] <-
+  actt2_visits$yprev[actt2_visits$visit == 1]
+
+model_data <- actt2_visits
+model_data$time <- factor(model_data$visit_label, levels = visit_levels)
+model_data$y <- ordered(model_data$y, levels = state_levels)
+model_data$yprev <- factor(model_data$yprev_visit, levels = state_levels)
+
+model_data <- model_data[as.character(model_data$yprev) != "8", ]
+
+head(model_data[c("id", "tx", "day", "time", "yprev", "y")])
+```
+
+The model sees `time` as the visit scale. Use `vglm.markov()` as the package
+entrypoint for VGAM Markov workflows, then wrap the fit with `robcov_vglm()` so
+simulation inference uses patient-clustered robust standard errors. With
+`times = NULL`, `avg_sops()` resolves the prediction grid from the fitted factor
+levels. The plain `avg_sops()` result contains the standardized point estimates.
+
+```{r}
+fit <- vglm.markov(
+  ordered(y) ~ time + tx + yprev,
+  family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+  data = model_data
+)
+fit_robust <- robcov_vglm(fit, cluster = model_data$id)
+
+baseline_data <- model_data[!duplicated(model_data$id), ]
+
+avg_visit_sops <- avg_sops(
+  fit_robust,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = NULL,
+  ylevels = factor(state_levels),
+  absorb = "8",
+  pvarname = "yprev"
+)
+
+attr(avg_visit_sops, "avg_args")$times
+head(avg_visit_sops)
+```
+
+Add uncertainty with coefficient draws from the multivariate normal
+approximation. The vignette uses a small number of simulations to keep runtime
+short; increase `n_sim` for analysis. Use `return_draws = TRUE` before
+interpolation so intervals on the real-day scale are computed from interpolated
+draws rather than from interpolated interval endpoints.
+
+```{r}
+set.seed(20260513)
+
+avg_visit_sops <- inferences(
+  avg_visit_sops,
+  method = "simulation",
+  engine = "mvn",
+  n_sim = 75,
+  return_draws = TRUE
+)
+
+head(avg_visit_sops)
+```
+
+Use `interpolate_sops()` when you want summaries on elapsed days. Here day 0 is
+used as an empirical baseline anchor, but the returned SOPs start at day 1. The
+same baseline distribution is used for both treatment counterfactuals.
+
+```{r}
+real_day_sops <- interpolate_sops(
+  avg_visit_sops,
+  time_map = time_map,
+  xout = 1:max(visit_days),
+  origin_time = 0
+)
+
+label_treatment <- function(x) {
+  x <- as.character(x)
+  out <- ifelse(
+    x %in% c("1", "Treatment"),
+    "Treatment",
+    ifelse(x %in% c("0", "Control"), "Control", NA_character_)
+  )
+  factor(out, levels = c("Control", "Treatment"))
+}
+
+real_day_sops$tx_label <- label_treatment(real_day_sops$tx)
+real_day_draws <- attr(real_day_sops, "simulation_draws")
+if (!is.null(real_day_draws)) {
+  real_day_draws$tx_label <- label_treatment(real_day_draws$tx)
+  attr(real_day_sops, "simulation_draws") <- real_day_draws
+}
+
+head(real_day_sops)
+```
+
+```{r}
+plot_sops(
+  real_day_sops,
+  geom = "line",
+  facet_var = "tx_label",
+  ribbon_alpha = 0.16
+) +
+  labs(
+    x = "Day",
+    title = "Interpolated SOPs with MVN Simulation Intervals"
+  )
+```
+
+Because `real_day_sops` has already been interpolated to a daily grid starting
+at day 1, `time_in_state()` integrates from day 1 using trapezoidal AUC.
+
+```{r}
+state_1_auc <- time_in_state(real_day_sops, target_states = "1")
+
+state_1_auc[c("tx_label", "total_time")]
+```
