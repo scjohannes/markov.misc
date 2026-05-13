@@ -4,7 +4,14 @@
 \alias{time_in_state}
 \title{Compute Total Time in Target State(s)}
 \usage{
-time_in_state(sops, target_states = 1)
+time_in_state(
+  sops,
+  target_states = 1,
+  time_map = NULL,
+  origin_time = NULL,
+  xout = NULL,
+  origin = c("empirical_baseline", "none")
+)
 }
 \arguments{
 \item{sops}{Input object.
@@ -16,6 +23,22 @@ time_in_state(sops, target_states = 1)
 \item{target_states}{Vector of target state(s) to include in the time calculation.
 Can be integer indices or character names (e.g., \code{1} or \code{c("Home", "Rehab")}).
 For bootstrap outputs, these must match the suffix of the \code{state_} columns (e.g., if column is \code{state_1}, use \code{1}).}
+
+\item{time_map}{Optional named numeric vector or data frame mapping visit
+labels to real elapsed times. Supplying this switches tidy SOP and array
+inputs to trapezoidal real-time AUC.}
+
+\item{origin_time}{Optional real time for an empirical baseline anchor. For
+tidy outputs from \code{\link[=sops]{sops()}} or \code{\link[=avg_sops]{avg_sops()}}, this is passed to
+\code{\link[=interpolate_sops]{interpolate_sops()}}.}
+
+\item{xout}{Optional numeric real-time grid for tidy SOP outputs when
+\code{time_map} is supplied. This controls the interpolation grid used for AUC,
+for example \code{xout = 1:28} with \code{origin_time = 0} uses day 0 as an anchor
+but starts the AUC at day 1.}
+
+\item{origin}{Origin handling for tidy SOP outputs when \code{origin_time} is
+supplied. See \code{\link[=interpolate_sops]{interpolate_sops()}}.}
 }
 \value{
 \itemize{
@@ -32,7 +55,10 @@ For bootstrap outputs, these must match the suffix of the \code{state_} columns 
 }
 \description{
 Calculates the expected total time spent in specified target state(s).
-This function integrates state occupancy probabilities over time assuming unit steps.
+By default this sums state occupancy probabilities over visit-scale unit
+steps. When \code{time_map} or \code{origin_time} is supplied, it maps/interpolates to
+real time and uses trapezoidal AUC. Already interpolated SOP output from
+\code{\link[=interpolate_sops]{interpolate_sops()}} is integrated on its current real-time grid.
 It automatically adapts to the input format:
 \itemize{
 \item \strong{Patient-Level:} If input is an array from \code{soprob_markov}, it returns time-in-state for each patient.
@@ -44,6 +70,15 @@ It automatically adapts to the input format:
 # --- Scenario 1: Patient-Level Estimates ---
 sops_arr <- soprob_markov(model, data, times = 1:30, ylevels = 1:6)
 days_home <- time_in_state(sops_arr, target_states = 1)
+
+# Real-time AUC after fitting on factor visit indices
+real_days_home <- time_in_state(
+  avg,
+  target_states = 1,
+  time_map = c("1" = 3, "2" = 7, "3" = 14, "4" = 28),
+  origin_time = 0,
+  xout = 1:28
+)
 
 # --- Scenario 2: Bootstrap Inference ---
 bs_res <- bootstrap_standardized_sops(model, data, n_boot=100)

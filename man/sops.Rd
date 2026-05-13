@@ -33,7 +33,10 @@ sops(
 \item{newdata}{Optional. A data frame of new data for prediction. If NULL,
 uses the data used to fit the model.}
 
-\item{times}{A numeric vector of time points to estimate.}
+\item{times}{Visit-scale time points to estimate. For numeric time
+variables this is usually a numeric vector. For factor-valued visit
+indices, values are matched to fitted visit levels; if \code{NULL}, all
+fitted visit levels are used.}
 
 \item{ylevels}{A vector of state levels. If NULL, attempts to infer from model.}
 

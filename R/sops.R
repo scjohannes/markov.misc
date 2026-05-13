@@ -579,6 +579,212 @@ normalize_previous_state_column <- function(values, prototype, pvarname) {
   coerce_previous_state_values(values, prototype, pvarname)
 }
 
+get_model_factor_levels <- function(model, varname) {
+  model_chk <- if (inherits(model, "robcov_vglm")) {
+    model$vglm_fit
+  } else {
+    model
+  }
+
+  if (inherits(model_chk, c("vglm", "vgam"))) {
+    xlevels <- tryCatch(
+      model_chk@xlevels,
+      error = function(e) NULL
+    )
+    if (!is.null(xlevels[[varname]])) {
+      return(as.character(xlevels[[varname]]))
+    }
+  }
+
+  if (inherits(model_chk, c("orm", "blrm"))) {
+    parms <- tryCatch(
+      model_chk$Design$parms,
+      error = function(e) NULL
+    )
+    if (!is.null(parms[[varname]])) {
+      return(as.character(parms[[varname]]))
+    }
+  }
+
+  NULL
+}
+
+get_time_info <- function(model, data, tvarname) {
+  values <- if (!is.null(tvarname) && tvarname %in% names(data)) {
+    data[[tvarname]]
+  } else {
+    NULL
+  }
+  model_levels <- if (!is.null(model)) {
+    get_model_factor_levels(model, tvarname)
+  } else {
+    NULL
+  }
+
+  levels <- NULL
+  ordered <- FALSE
+  if (is.factor(values)) {
+    levels <- model_levels %||% levels(values)
+    ordered <- is.ordered(values)
+  } else if (is.null(values)) {
+    levels <- model_levels
+  }
+
+  list(
+    is_factor = !is.null(levels),
+    levels = levels,
+    ordered = ordered
+  )
+}
+
+default_sop_times <- function(data, tvarname, t_covs, default) {
+  if (default == "max_sequence") {
+    return(seq_len(max(data[[tvarname]], na.rm = TRUE)))
+  }
+
+  if (default == "fast") {
+    if (!is.null(t_covs)) {
+      return(seq_len(nrow(t_covs)))
+    }
+    if (!is.null(tvarname) && tvarname %in% names(data)) {
+      return(sort(unique(data[[tvarname]])))
+    }
+    return(1)
+  }
+
+  if (is.null(tvarname) || !tvarname %in% names(data)) {
+    stop("`times` must be specified if `tvarname` is not in data.")
+  }
+
+  sort(unique(data[[tvarname]]))
+}
+
+coerce_visit_times <- function(times, time_info, tvarname) {
+  labels <- as.character(times)
+  bad <- is.na(match(labels, time_info$levels))
+  if (any(bad)) {
+    bad_values <- unique(labels[bad])
+    stop(
+      "Requested visit values are not among fitted factor levels for `",
+      tvarname,
+      "`: ",
+      paste(utils::head(bad_values, 5), collapse = ", "),
+      if (length(bad_values) > 5) " ..." else ""
+    )
+  }
+
+  factor(
+    labels,
+    levels = time_info$levels,
+    ordered = isTRUE(time_info$ordered)
+  )
+}
+
+resolve_sop_times <- function(
+  model,
+  data,
+  times,
+  tvarname,
+  t_covs = NULL,
+  default = c("unique", "max_sequence", "fast")
+) {
+  default <- match.arg(default)
+  time_info <- get_time_info(model, data, tvarname)
+
+  if (is.null(times)) {
+    times <- if (time_info$is_factor) {
+      time_info$levels
+    } else {
+      default_sop_times(data, tvarname, t_covs, default)
+    }
+  }
+
+  if (time_info$is_factor) {
+    times <- coerce_visit_times(times, time_info, tvarname)
+  }
+
+  if (!is.null(t_covs) && nrow(t_covs) != length(times)) {
+    stop("`t_covs` must have one row per requested time point.")
+  }
+
+  list(times = times, time_info = time_info)
+}
+
+assign_sop_time <- function(data, tvarname, value, time_info) {
+  if (isTRUE(time_info$is_factor)) {
+    data[[tvarname]] <- factor(
+      as.character(value),
+      levels = time_info$levels,
+      ordered = isTRUE(time_info$ordered)
+    )
+  } else {
+    data[[tvarname]] <- value
+  }
+  data
+}
+
+validate_factor_gap <- function(gap, t_covs, time_info) {
+  if (is.null(gap) || !isTRUE(time_info$is_factor)) {
+    return(invisible(NULL))
+  }
+
+  if (
+    is.null(t_covs) ||
+      !gap %in% names(t_covs) ||
+      !is.numeric(t_covs[[gap]])
+  ) {
+    stop(
+      "Factor visit time with `gap` requires numeric gap values in ",
+      "`t_covs[[\"", gap, "\"]]`; elapsed gaps are not inferred from ",
+      "factor visit labels."
+    )
+  }
+
+  invisible(NULL)
+}
+
+assign_sop_gap <- function(data, gap, times, index, t_covs, time_info) {
+  if (is.null(gap)) {
+    return(data)
+  }
+
+  validate_factor_gap(gap, t_covs, time_info)
+  if (!isTRUE(time_info$is_factor) && (is.null(t_covs) || !gap %in% names(t_covs))) {
+    data[[gap]] <- if (index == 1L) {
+      times[index]
+    } else {
+      times[index] - times[index - 1L]
+    }
+  }
+
+  data
+}
+
+assign_sop_t_covs <- function(data, t_covs, index) {
+  if (is.null(t_covs)) {
+    return(data)
+  }
+
+  for (nm in names(t_covs)) {
+    data[[nm]] <- t_covs[index, nm]
+  }
+  data
+}
+
+assign_sop_visit <- function(
+  data,
+  tvarname,
+  times,
+  index,
+  t_covs,
+  gap,
+  time_info
+) {
+  data <- assign_sop_time(data, tvarname, times[index], time_info)
+  data <- assign_sop_gap(data, gap, times, index, t_covs, time_info)
+  assign_sop_t_covs(data, t_covs, index)
+}
+
 #' Calculate State Occupation Probabilities for First-Order Markov Models
 #'
 #' Estimates state occupation probabilities over time by iterating a transition
@@ -593,8 +799,10 @@ normalize_previous_state_column <- function(values, prototype, pvarname) {
 #' @param data A data frame containing the baseline covariates for the prediction.
 #'   Rows represent unique patients. Columns must contain baseline covariates and
 #'   initial values for time-varying variables.
-#' @param times A numeric vector of time points to iterate over.
-#'   The function calculates probabilities for each time point in this sequence.
+#' @param times Visit-scale time points to iterate over. For numeric time
+#'   variables this is a numeric vector. For factor-valued visit indices,
+#'   values are matched to the fitted factor levels; if `NULL`, all fitted
+#'   visit levels are used.
 #' @param ylevels A character vector defining the names of the outcome levels (states).
 #'   These must match the levels used in the fitted `object`.
 #' @param absorb (Optional) A character vector of absorbing states (states from which
@@ -680,7 +888,7 @@ normalize_previous_state_column <- function(values, prototype, pvarname) {
 soprob_markov <- function(
   object,
   data,
-  times,
+  times = NULL,
   ylevels,
   absorb = NULL,
   tvarname = "time",
@@ -738,6 +946,17 @@ soprob_markov <- function(
   if (!is.null(p2varname) && !p2varname %in% names(data)) {
     stop("Second previous-state variable `", p2varname, "` not found in `data`.")
   }
+  time_res <- resolve_sop_times(
+    object,
+    data,
+    times,
+    tvarname,
+    t_covs = t_covs,
+    default = "unique"
+  )
+  times <- time_res$times
+  time_info <- time_res$time_info
+  validate_factor_gap(gap, t_covs, time_info)
 
   draw_indices <- NULL
   if (ftype == "rmsb") {
@@ -800,17 +1019,15 @@ soprob_markov <- function(
 
   # --- 2. Time 1 Initialization (Start) ---
   # Update time variables for T1
-  data[[tvarname]] <- times[1]
-  if (!is.null(gap)) {
-    data[[gap]] <- times[1]
-  }
-
-  # Inject T1 basis functions
-  if (!is.null(t_covs)) {
-    for (nm in names(t_covs)) {
-      data[[nm]] <- t_covs[1, nm]
-    }
-  }
+  data <- assign_sop_visit(
+    data,
+    tvarname = tvarname,
+    times = times,
+    index = 1L,
+    t_covs = t_covs,
+    gap = gap,
+    time_info = time_info
+  )
 
   # Predict probabilities at T1
   p_t1 <- prd(object, data) # Returns [n_pat x n_states] or [nd x n_pat x n_states]
@@ -835,7 +1052,8 @@ soprob_markov <- function(
       pvarname = pvarname,
       p2varname = p2varname,
       gap = gap,
-      t_covs = t_covs
+      t_covs = t_covs,
+      time_info = time_info
     ))
   }
 
@@ -858,18 +1076,15 @@ soprob_markov <- function(
 
   # --- 4. Iterate Through Time (Vectorized over Patients) ---
   for (it in 2:n_times) {
-    # Update time in the expanded dataset
-    edata_base[[tvarname]] <- times[it]
-
-    if (!is.null(gap)) {
-      edata_base[[gap]] <- times[it] - times[it - 1]
-    }
-
-    if (!is.null(t_covs)) {
-      for (nm in names(t_covs)) {
-        edata_base[[nm]] <- t_covs[it, nm]
-      }
-    }
+    edata_base <- assign_sop_visit(
+      edata_base,
+      tvarname = tvarname,
+      times = times,
+      index = it,
+      t_covs = t_covs,
+      gap = gap,
+      time_info = time_info
+    )
 
     # Get Transition Probabilities
     # This returns matrix: [ (n_pat * n_yna) x n_states ]
@@ -968,7 +1183,8 @@ soprob_markov_second_order_run <- function(
   pvarname,
   p2varname,
   gap,
-  t_covs
+  t_covs,
+  time_info
 ) {
   n_pat <- nrow(data)
   n_times <- length(times)
@@ -1040,15 +1256,15 @@ soprob_markov_second_order_run <- function(
   )
 
   for (it in 2:n_times) {
-    edata_base[[tvarname]] <- times[it]
-    if (!is.null(gap)) {
-      edata_base[[gap]] <- times[it] - times[it - 1]
-    }
-    if (!is.null(t_covs)) {
-      for (nm in names(t_covs)) {
-        edata_base[[nm]] <- t_covs[it, nm]
-      }
-    }
+    edata_base <- assign_sop_visit(
+      edata_base,
+      tvarname = tvarname,
+      times = times,
+      index = it,
+      t_covs = t_covs,
+      gap = gap,
+      time_info = time_info
+    )
 
     predict_rows <- unlist(block_rows[predictable_pair], use.names = FALSE)
     trans_probs <- prd(object, edata_base[predict_rows, , drop = FALSE])
@@ -1116,7 +1332,8 @@ soprob_markov_second_order_run <- function(
 #' @param model A fitted model object (orm, vglm, rmsb). For `vglm` models,
 #'   the family must be `cumulative(reverse = TRUE, ...)`.
 #' @param data A data frame containing patient trajectory data.
-#' @param times Time points to predict.
+#' @param times Visit-scale time points to predict. Factor-valued visit
+#'   indices use fitted factor levels when `times = NULL`.
 #' @param ylevels States in the data.
 #' @param absorb Absorbing state name.
 #' @param varnames List of variable names: tvarname, pvarname, p2varname
@@ -1183,9 +1400,16 @@ standardize_sops <- function(
   p2var <- varnames$p2varname %||% NULL
   gap_var <- varnames$gap %||% NULL # Helper if varnames$gap is missing
 
-  if (is.null(times)) {
-    times <- 1:max(data[[tvar]], na.rm = TRUE)
-  }
+  time_res <- resolve_sop_times(
+    model,
+    data,
+    times,
+    tvar,
+    t_covs = t_covs,
+    default = "max_sequence"
+  )
+  times <- time_res$times
+  validate_factor_gap(gap_var, t_covs, time_res$time_info)
 
   if (!pvar %in% names(data)) {
     stop("Previous-state variable `", pvar, "` not found in `data`.")
@@ -1291,10 +1515,764 @@ standardize_sops <- function(
   ))
 }
 
+standardize_time_map <- function(time_map) {
+  if (is.null(time_map)) {
+    stop("`time_map` must be supplied.")
+  }
+
+  if (is.data.frame(time_map)) {
+    if (all(c("visit", "real_time") %in% names(time_map))) {
+      visit <- time_map$visit
+      real_time <- time_map$real_time
+    } else if (all(c("visit", "time") %in% names(time_map))) {
+      visit <- time_map$visit
+      real_time <- time_map$time
+    } else if (ncol(time_map) >= 2) {
+      visit <- time_map[[1]]
+      real_time <- time_map[[2]]
+    } else {
+      stop("`time_map` data frames must have at least two columns.")
+    }
+  } else if (is.atomic(time_map) && !is.null(names(time_map))) {
+    visit <- names(time_map)
+    real_time <- time_map
+  } else {
+    stop(
+      "`time_map` must be a named numeric vector or a data frame with ",
+      "visit and real-time columns."
+    )
+  }
+
+  real_time <- suppressWarnings(as.numeric(real_time))
+  visit <- as.character(visit)
+  bad <- is.na(visit) | !nzchar(visit) | is.na(real_time) | !is.finite(real_time)
+  if (any(bad)) {
+    stop("`time_map` contains missing or non-finite visit/time values.")
+  }
+  if (anyDuplicated(visit)) {
+    dup <- unique(visit[duplicated(visit)])
+    stop("`time_map` contains duplicate visit entries: ", paste(dup, collapse = ", "))
+  }
+
+  data.frame(visit = visit, real_time = real_time, stringsAsFactors = FALSE)
+}
+
+map_sop_time_values <- function(times, time_map) {
+  labels <- as.character(times)
+  idx <- match(labels, time_map$visit)
+  if (anyNA(idx)) {
+    missing <- unique(labels[is.na(idx)])
+    stop(
+      "`time_map` is missing entries for visit value(s): ",
+      paste(missing, collapse = ", ")
+    )
+  }
+  time_map$real_time[idx]
+}
+
+validate_sop_xout <- function(xout, lower, upper) {
+  if (!is.numeric(xout) || anyNA(xout) || any(!is.finite(xout))) {
+    stop("`xout` must be a finite numeric vector.")
+  }
+  if (any(xout < lower | xout > upper)) {
+    stop(
+      "`xout` must stay within the supported time range [",
+      lower,
+      ", ",
+      upper,
+      "]."
+    )
+  }
+  sort(unique(xout))
+}
+
+sop_measure_cols <- function(x) {
+  intersect(c("estimate", "conf.low", "conf.high", "std.error", "draw"), names(x))
+}
+
+split_key <- function(data, cols) {
+  if (length(cols) == 0) {
+    return(rep("all", nrow(data)))
+  }
+  do.call(interaction, c(data[, cols, drop = FALSE], drop = TRUE, sep = "\r"))
+}
+
+coerce_state_like <- function(labels, prototype) {
+  if (is.factor(prototype)) {
+    return(factor(
+      labels,
+      levels = levels(prototype),
+      ordered = is.ordered(prototype)
+    ))
+  }
+  if (is.integer(prototype)) {
+    return(as.integer(labels))
+  }
+  if (is.numeric(prototype)) {
+    return(as.numeric(labels))
+  }
+  labels
+}
+
+rows_match_values <- function(data, values) {
+  keep <- rep(TRUE, nrow(data))
+  for (nm in names(values)) {
+    keep <- keep & as.character(data[[nm]]) == as.character(values[[nm]])
+  }
+  keep
+}
+
+baseline_rows_for_anchor <- function(x, id_var) {
+  newdata_orig <- attr(x, "newdata_orig")
+  if (is.null(newdata_orig)) {
+    stop(
+      "`origin_time` requires SOP output with stored `newdata_orig` ",
+      "attributes."
+    )
+  }
+  if (!is.null(id_var) && id_var %in% names(newdata_orig)) {
+    return(newdata_orig[!duplicated(newdata_orig[[id_var]]), , drop = FALSE])
+  }
+  newdata_orig
+}
+
+state_distribution_anchor <- function(
+  x,
+  combos,
+  group_cols,
+  filter_cols,
+  states,
+  origin_time,
+  baseline,
+  pvarname
+) {
+  n_out <- max(1L, nrow(combos)) * length(states)
+  anchor <- x[rep(NA_integer_, n_out), , drop = FALSE]
+  row <- 1L
+
+  for (combo_i in seq_len(max(1L, nrow(combos)))) {
+    combo <- if (length(group_cols) > 0) {
+      combos[combo_i, group_cols, drop = FALSE]
+    } else {
+      data.frame()
+    }
+
+    baseline_i <- baseline
+    use_filters <- intersect(filter_cols, names(combo))
+    if (length(use_filters) > 0) {
+      baseline_i <- baseline_i[
+        rows_match_values(baseline_i, combo[use_filters]),
+        ,
+        drop = FALSE
+      ]
+    }
+    if (nrow(baseline_i) == 0) {
+      stop("No baseline rows are available for an empirical origin anchor.")
+    }
+
+    state_idx <- match(as.character(baseline_i[[pvarname]]), states)
+    probs <- tabulate(state_idx, nbins = length(states)) / nrow(baseline_i)
+    rows <- row:(row + length(states) - 1L)
+
+    for (nm in group_cols) {
+      anchor[[nm]][rows] <- combo[[nm]][1]
+    }
+    anchor$state[rows] <- coerce_state_like(states, x$state)
+    anchor$estimate[rows] <- probs
+    if ("conf.low" %in% names(anchor)) {
+      anchor$conf.low[rows] <- probs
+    }
+    if ("conf.high" %in% names(anchor)) {
+      anchor$conf.high[rows] <- probs
+    }
+    if ("std.error" %in% names(anchor)) {
+      anchor$std.error[rows] <- 0
+    }
+    if ("draw" %in% names(anchor)) {
+      anchor$draw[rows] <- probs
+    }
+    anchor$.sop_real_time[rows] <- origin_time
+    row <- row + length(states)
+  }
+
+  anchor
+}
+
+empirical_baseline_anchor <- function(x, origin_time) {
+  pvarname <- attr(x, "pvarname") %||% "yprev"
+  if (!"state" %in% names(x)) {
+    stop("SOP output must contain a `state` column.")
+  }
+  if (!"estimate" %in% names(x)) {
+    stop("SOP output must contain an `estimate` column.")
+  }
+
+  states <- as_state_labels(attr(x, "ylevels") %||% unique(x$state))
+
+  if (inherits(x, "markov_avg_sops")) {
+    avg_args <- attr(x, "avg_args")
+    variables <- names(avg_args$variables %||% list())
+    by <- avg_args$by %||% character()
+    group_cols <- unique(c(variables, by))
+    combos <- if (length(group_cols) > 0) {
+      unique(x[, group_cols, drop = FALSE])
+    } else {
+      data.frame(.dummy = 1L)
+    }
+    if (!pvarname %in% names(attr(x, "newdata_orig"))) {
+      stop("Previous-state variable `", pvarname, "` not found in `newdata_orig`.")
+    }
+    baseline <- baseline_rows_for_anchor(x, attr(x, "avg_args")$id_var)
+    return(state_distribution_anchor(
+      x = x,
+      combos = combos,
+      group_cols = group_cols,
+      filter_cols = by,
+      states = states,
+      origin_time = origin_time,
+      baseline = baseline,
+      pvarname = pvarname
+    ))
+  }
+
+  if (pvarname %in% names(x)) {
+    value_cols <- sop_measure_cols(x)
+    meta_cols <- setdiff(names(x), c("time", value_cols, ".sop_real_time"))
+    anchor_meta <- unique(x[, meta_cols, drop = FALSE])
+    anchor <- x[rep(NA_integer_, nrow(anchor_meta)), , drop = FALSE]
+    for (nm in meta_cols) {
+      anchor[[nm]] <- anchor_meta[[nm]]
+    }
+    anchor$estimate <- as.numeric(
+      as.character(anchor$state) == as.character(anchor[[pvarname]])
+    )
+    if ("conf.low" %in% names(anchor)) {
+      anchor$conf.low <- anchor$estimate
+    }
+    if ("conf.high" %in% names(anchor)) {
+      anchor$conf.high <- anchor$estimate
+    }
+    if ("std.error" %in% names(anchor)) {
+      anchor$std.error <- 0
+    }
+    if ("draw" %in% names(anchor)) {
+      anchor$draw <- anchor$estimate
+    }
+    anchor$.sop_real_time <- origin_time
+    return(anchor)
+  }
+
+  by <- attr(x, "by") %||% character()
+  group_cols <- by
+  combos <- if (length(group_cols) > 0) {
+    unique(x[, group_cols, drop = FALSE])
+  } else {
+    data.frame(.dummy = 1L)
+  }
+  baseline <- baseline_rows_for_anchor(x, NULL)
+  if (!pvarname %in% names(baseline)) {
+    stop("Previous-state variable `", pvarname, "` not found in `newdata_orig`.")
+  }
+  state_distribution_anchor(
+    x = x,
+    combos = combos,
+    group_cols = group_cols,
+    filter_cols = by,
+    states = states,
+    origin_time = origin_time,
+    baseline = baseline,
+    pvarname = pvarname
+  )
+}
+
+interpolate_numeric_column <- function(time, value, xout) {
+  ok <- !is.na(time) & !is.na(value)
+  time <- time[ok]
+  value <- value[ok]
+
+  if (length(time) == 0) {
+    return(rep(NA_real_, length(xout)))
+  }
+
+  agg <- stats::aggregate(value ~ time, FUN = mean)
+  agg <- agg[order(agg$time), , drop = FALSE]
+  if (nrow(agg) == 1L) {
+    out <- rep(NA_real_, length(xout))
+    out[xout == agg$time] <- agg$value
+    return(out)
+  }
+
+  stats::approx(
+    x = agg$time,
+    y = agg$value,
+    xout = xout,
+    rule = 1,
+    ties = "ordered"
+  )$y
+}
+
+normalize_interpolated_sops <- function(x) {
+  value_col <- if ("estimate" %in% names(x)) {
+    "estimate"
+  } else if ("draw" %in% names(x)) {
+    "draw"
+  } else {
+    return(x)
+  }
+
+  key_cols <- setdiff(names(x), c("state", sop_measure_cols(x)))
+  key <- split_key(x, key_cols)
+  sums <- ave(x[[value_col]], key, FUN = function(z) sum(z, na.rm = TRUE))
+  scale <- !is.na(sums) & sums > 0
+  x[[value_col]][scale] <- x[[value_col]][scale] / sums[scale]
+  x
+}
+
+sop_draw_attr_name <- function(x) {
+  for (nm in c("simulation_draws", "bootstrap_draws", "draws")) {
+    if (!is.null(attr(x, nm))) {
+      return(nm)
+    }
+  }
+  NULL
+}
+
+sop_has_uncertainty_cols <- function(x) {
+  any(c("conf.low", "conf.high", "std.error") %in% names(x))
+}
+
+warn_missing_interpolation_draws <- function(x) {
+  if (!sop_has_uncertainty_cols(x)) {
+    return(invisible(NULL))
+  }
+
+  if (identical(attr(x, "method"), "posterior")) {
+    warning(
+      "`interpolate_sops()` found uncertainty columns but no stored posterior ",
+      "draws. It will interpolate interval endpoints. For draw-level ",
+      "interpolation, rerun `sops()` or `avg_sops()` with `return_draws = TRUE`.",
+      call. = FALSE
+    )
+  } else {
+    warning(
+      "`interpolate_sops()` found uncertainty columns but no stored draws. ",
+      "It will interpolate interval endpoints. For draw-level interpolation, ",
+      "rerun `inferences(..., return_draws = TRUE)`.",
+      call. = FALSE
+    )
+  }
+
+  invisible(NULL)
+}
+
+sop_draw_value_col <- function(draws) {
+  if ("estimate" %in% names(draws)) {
+    return("estimate")
+  }
+  if ("draw" %in% names(draws)) {
+    return("draw")
+  }
+  NULL
+}
+
+repeat_anchor_for_draws <- function(anchor, draws, value_col) {
+  if (is.null(anchor) || !"draw_id" %in% names(draws)) {
+    return(NULL)
+  }
+
+  draw_ids <- sort(unique(draws$draw_id))
+  anchor_value <- anchor$estimate
+  anchor <- anchor[, intersect(names(anchor), c(names(draws), ".sop_real_time")), drop = FALSE]
+  anchor[[value_col]] <- anchor_value
+
+  bind_rows_fill(lapply(draw_ids, function(draw_id) {
+    anchor_i <- anchor
+    anchor_i$draw_id <- draw_id
+    anchor_i
+  }))
+}
+
+interpolate_sop_draws <- function(
+  draws,
+  time_map,
+  xout,
+  anchor,
+  normalize
+) {
+  if (!is.data.frame(draws) || !all(c("draw_id", "time", "state") %in% names(draws))) {
+    return(NULL)
+  }
+  value_col <- sop_draw_value_col(draws)
+  if (is.null(value_col)) {
+    return(NULL)
+  }
+
+  work <- as.data.frame(draws)
+  work$.sop_real_time <- map_sop_time_values(work$time, time_map)
+  draw_anchor <- repeat_anchor_for_draws(anchor, work, value_col)
+  work <- bind_rows_fill(list(draw_anchor, work))
+
+  group_cols <- setdiff(names(work), c("time", value_col, ".sop_real_time"))
+  groups <- split(seq_len(nrow(work)), split_key(work, group_cols), drop = TRUE)
+  pieces <- lapply(groups, function(idx) {
+    group <- work[idx, , drop = FALSE]
+    meta <- group[1, group_cols, drop = FALSE]
+    out <- meta[rep(1L, length(xout)), , drop = FALSE]
+    out$time <- xout
+    out[[value_col]] <- interpolate_numeric_column(
+      time = group$.sop_real_time,
+      value = group[[value_col]],
+      xout = xout
+    )
+    out
+  })
+
+  result <- bind_rows_fill(pieces)
+  result <- result[, intersect(names(draws), names(result)), drop = FALSE]
+  if (isTRUE(normalize)) {
+    result <- normalize_interpolated_sops(result)
+  }
+  result
+}
+
+interpolated_ci_from_draws <- function(draws, result, conf_level, conf_type) {
+  value_col <- sop_draw_value_col(draws)
+  if (is.null(value_col) || !"draw_id" %in% names(draws)) {
+    return(result)
+  }
+
+  draws_for_ci <- draws
+  if (value_col != "estimate") {
+    draws_for_ci$estimate <- draws_for_ci[[value_col]]
+  }
+  group_cols <- setdiff(names(draws), c(value_col, "draw_id"))
+  ci <- compute_ci_from_draws(
+    draws_df = draws_for_ci,
+    group_cols = group_cols,
+    conf_level = conf_level,
+    conf_type = conf_type
+  )
+
+  join_cols <- intersect(group_cols, names(result))
+  ci <- ci[, c(join_cols, "conf.low", "conf.high", "std.error"), drop = FALSE]
+
+  result$.sop_order <- seq_len(nrow(result))
+  result_base <- result[
+    ,
+    setdiff(names(result), c("conf.low", "conf.high", "std.error")),
+    drop = FALSE
+  ]
+  out <- left_join_preserve_order(result_base, ci, by = join_cols)
+  out <- out[order(out$.sop_order), , drop = FALSE]
+  out$.sop_order <- NULL
+  rownames(out) <- NULL
+  out
+}
+
+#' Interpolate SOPs from Visit Time to Real Time
+#'
+#' Maps visit-scale SOP output from [sops()] or [avg_sops()] to a real elapsed
+#' time scale and linearly interpolates probabilities within patient, state,
+#' draw, treatment, and strata groups.
+#'
+#' @param x A `markov_sops` or `markov_avg_sops` object.
+#' @param time_map A named numeric vector mapping visit labels to real times, or
+#'   a data frame with visit and real-time columns. Data frames may use columns
+#'   `visit` and `real_time`, `visit` and `time`, or their first two columns.
+#' @param xout Optional numeric real-time grid. If `NULL`, uses mapped visit
+#'   times, plus `origin_time` when an empirical origin anchor is requested.
+#' @param origin_time Optional real time for an empirical baseline anchor.
+#' @param origin Origin handling. `"empirical_baseline"` adds an anchor from the
+#'   stored `newdata_orig` and previous-state variable; `"none"` does not.
+#' @param normalize Logical. If `TRUE`, normalize interpolated estimates so
+#'   state probabilities sum to one within each time and group.
+#'
+#' @return An interpolated data frame with the same core columns as `x`, where
+#'   `time` is on the real-time scale.
+#'
+#' @details
+#' The recommended workflow for irregular assessment schedules is:
+#' 1. Recode assessment days to visit indices, for example day 3, 7, 14, and 28
+#'    to visit `1:4`.
+#' 2. Fit the Markov model with the visit index as a factor.
+#' 3. Compute visit-scale SOPs with [sops()] or [avg_sops()].
+#' 4. Use `interpolate_sops()` or `time_in_state(..., time_map = ...)` for
+#'    real-day summaries.
+#'
+#' With RCT standardization from [avg_sops()], the empirical baseline anchor is
+#' shared across treatment counterfactual groups.
+#'
+#' If `x` contains stored simulation, bootstrap, or posterior draws, the draws
+#' are interpolated too. Interval columns are then recomputed from the
+#' interpolated draws, with the empirical origin anchor treated as fixed.
+#' If interval columns are present but stored draws are unavailable,
+#' `interpolate_sops()` warns and falls back to interpolating interval endpoints.
+#'
+#' @examples
+#' \dontrun{
+#' avg <- avg_sops(
+#'   fit,
+#'   newdata = baseline,
+#'   variables = list(tx = c(0, 1)),
+#'   times = NULL
+#' )
+#' interpolate_sops(
+#'   avg,
+#'   time_map = c("1" = 3, "2" = 7, "3" = 14, "4" = 28),
+#'   xout = 0:28,
+#'   origin_time = 0
+#' )
+#' }
+#'
+#' @export
+interpolate_sops <- function(
+  x,
+  time_map,
+  xout = NULL,
+  origin_time = NULL,
+  origin = c("empirical_baseline", "none"),
+  normalize = TRUE
+) {
+  if (!inherits(x, c("markov_sops", "markov_avg_sops"))) {
+    stop("`x` must be a `markov_sops` or `markov_avg_sops` object.")
+  }
+  if (!all(c("time", "state") %in% names(x))) {
+    stop("`x` must contain `time` and `state` columns.")
+  }
+
+  origin <- match.arg(origin)
+  time_map <- standardize_time_map(time_map)
+  real_time <- map_sop_time_values(x$time, time_map)
+  mapped_range <- range(time_map$real_time)
+
+  use_origin <- !is.null(origin_time) && origin == "empirical_baseline"
+  if (!is.null(origin_time)) {
+    if (!is.numeric(origin_time) || length(origin_time) != 1 || is.na(origin_time)) {
+      stop("`origin_time` must be a single finite numeric value.")
+    }
+    if (!is.finite(origin_time)) {
+      stop("`origin_time` must be a single finite numeric value.")
+    }
+  }
+
+  lower <- if (use_origin) origin_time else mapped_range[1]
+  upper <- mapped_range[2]
+  if (lower > upper) {
+    stop("`origin_time` must not be greater than the largest mapped time.")
+  }
+
+  if (is.null(xout)) {
+    xout <- sort(unique(c(if (use_origin) origin_time else NULL, real_time)))
+  }
+  xout <- validate_sop_xout(xout, lower, upper)
+
+  work <- x
+  work$.sop_real_time <- real_time
+
+  anchor <- NULL
+  if (use_origin) {
+    anchor <- empirical_baseline_anchor(work, origin_time)
+    work <- bind_rows_fill(list(anchor, work))
+  } else {
+    work <- as.data.frame(work)
+  }
+
+  value_cols <- sop_measure_cols(work)
+  if (length(value_cols) == 0) {
+    stop("`x` must contain an `estimate` or `draw` column to interpolate.")
+  }
+  group_cols <- setdiff(names(work), c("time", value_cols, ".sop_real_time"))
+  groups <- split(seq_len(nrow(work)), split_key(work, group_cols), drop = TRUE)
+
+  pieces <- lapply(groups, function(idx) {
+    group <- work[idx, , drop = FALSE]
+    meta <- group[1, group_cols, drop = FALSE]
+    out <- meta[rep(1L, length(xout)), , drop = FALSE]
+    out$time <- xout
+    for (nm in value_cols) {
+      out[[nm]] <- interpolate_numeric_column(
+        time = group$.sop_real_time,
+        value = group[[nm]],
+        xout = xout
+      )
+    }
+    out
+  })
+
+  result <- bind_rows_fill(pieces)
+  result <- result[, intersect(names(x), names(result)), drop = FALSE]
+  if (isTRUE(normalize)) {
+    result <- normalize_interpolated_sops(result)
+  }
+
+  draw_attr <- sop_draw_attr_name(x)
+  if (is.null(draw_attr)) {
+    warn_missing_interpolation_draws(x)
+  }
+  interpolated_draws <- if (!is.null(draw_attr)) {
+    interpolate_sop_draws(
+      draws = attr(x, draw_attr),
+      time_map = time_map,
+      xout = xout,
+      anchor = anchor,
+      normalize = normalize
+    )
+  } else {
+    NULL
+  }
+  if (!is.null(interpolated_draws)) {
+    result <- interpolated_ci_from_draws(
+      draws = interpolated_draws,
+      result = result,
+      conf_level = attr(x, "conf_level") %||% 0.95,
+      conf_type = attr(x, "conf_type") %||% "perc"
+    )
+  }
+
+  for (a in names(attributes(x))) {
+    if (!a %in% c("names", "row.names", "class")) {
+      attr(result, a) <- attr(x, a)
+    }
+  }
+  if (!is.null(interpolated_draws)) {
+    attr(result, draw_attr) <- interpolated_draws
+  }
+  attr(result, "time_map") <- time_map
+  attr(result, "origin_time") <- if (use_origin) origin_time else NULL
+  class(result) <- c("markov_interpolated_sops", class(x))
+  result
+}
+
+trapezoid_auc <- function(time, value) {
+  ok <- !is.na(time) & !is.na(value)
+  time <- time[ok]
+  value <- value[ok]
+  if (length(time) < 2) {
+    return(0)
+  }
+  agg <- stats::aggregate(value ~ time, FUN = sum)
+  agg <- agg[order(agg$time), , drop = FALSE]
+  if (nrow(agg) < 2) {
+    return(0)
+  }
+  dt <- diff(agg$time)
+  sum(dt * (head(agg$value, -1L) + tail(agg$value, -1L)) / 2)
+}
+
+time_in_state_tidy <- function(x, target_states, real_time = FALSE) {
+  value_col <- if ("estimate" %in% names(x)) {
+    "estimate"
+  } else if ("draw" %in% names(x)) {
+    "draw"
+  } else {
+    stop("Tidy SOP input must contain an `estimate` or `draw` column.")
+  }
+
+  keep <- as.character(x$state) %in% as.character(target_states)
+  if (!any(keep)) {
+    stop("Target states not found in SOP data frame.")
+  }
+  x <- x[keep, , drop = FALSE]
+  measure_cols <- sop_measure_cols(x)
+  group_cols <- setdiff(names(x), c("time", "state", measure_cols))
+
+  agg_formula <- stats::as.formula(
+    paste(value_col, "~", paste(c(group_cols, "time"), collapse = " + "))
+  )
+  by_time <- stats::aggregate(agg_formula, data = x, FUN = sum, na.rm = TRUE)
+
+  if (!real_time) {
+    if (length(group_cols) == 0) {
+      out <- data.frame(total_time = sum(by_time[[value_col]], na.rm = TRUE))
+      return(out)
+    }
+    total_formula <- stats::as.formula(
+      paste(value_col, "~", paste(group_cols, collapse = " + "))
+    )
+    out <- stats::aggregate(total_formula, data = by_time, FUN = sum, na.rm = TRUE)
+    names(out)[names(out) == value_col] <- "total_time"
+    return(out)
+  }
+
+  groups <- split(seq_len(nrow(by_time)), split_key(by_time, group_cols), drop = TRUE)
+  pieces <- lapply(groups, function(idx) {
+    group <- by_time[idx, , drop = FALSE]
+    meta <- group[1, group_cols, drop = FALSE]
+    meta$total_time <- trapezoid_auc(group$time, group[[value_col]])
+    meta
+  })
+  bind_rows_fill(pieces)
+}
+
+time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
+  if (!all(c("boot_id", "time", "tx") %in% colnames(sops))) {
+    stop("Input data frame must contain 'boot_id', 'time', and 'tx' columns.")
+  }
+
+  state_cols_available <- grep("^state_", colnames(sops), value = TRUE)
+  if (length(state_cols_available) == 0) {
+    stop("Input data frame does not contain any columns starting with 'state_'.")
+  }
+
+  target_suffixes <- as.character(target_states)
+  target_cols <- paste0("state_", target_suffixes)
+  missing_cols <- setdiff(target_cols, colnames(sops))
+  if (length(missing_cols) > 0) {
+    stop(paste(
+      "The following target state columns were not found in the bootstrap output:",
+      paste(missing_cols, collapse = ", ")
+    ))
+  }
+
+  prob_target <- if (length(target_cols) == 1) {
+    sops[[target_cols]]
+  } else {
+    rowSums(sops[, target_cols, drop = FALSE])
+  }
+
+  agg_df <- sops[, c("boot_id", "tx", "time")]
+  agg_df$prob <- prob_target
+
+  if (real_time) {
+    groups <- split(seq_len(nrow(agg_df)), split_key(agg_df, c("boot_id", "tx")))
+    res_grouped <- bind_rows_fill(lapply(groups, function(idx) {
+      group <- agg_df[idx, , drop = FALSE]
+      data.frame(
+        boot_id = group$boot_id[1],
+        tx = group$tx[1],
+        prob = trapezoid_auc(group$time, group$prob)
+      )
+    }))
+  } else {
+    res_grouped <- stats::aggregate(
+      prob ~ boot_id + tx,
+      data = agg_df,
+      FUN = sum
+    )
+  }
+
+  res_tx <- res_grouped[res_grouped$tx == 1, c("boot_id", "prob")]
+  res_ctrl <- res_grouped[res_grouped$tx == 0, c("boot_id", "prob")]
+  res_wide <- merge(
+    res_tx,
+    res_ctrl,
+    by = "boot_id",
+    suffixes = c("_tx", "_ctrl")
+  )
+
+  colnames(res_wide)[colnames(res_wide) == "prob_tx"] <- "SOP_tx"
+  colnames(res_wide)[colnames(res_wide) == "prob_ctrl"] <- "SOP_ctrl"
+  res_wide$delta <- res_wide$SOP_tx - res_wide$SOP_ctrl
+  res_wide
+}
+
 #' Compute Total Time in Target State(s)
 #'
 #' Calculates the expected total time spent in specified target state(s).
-#' This function integrates state occupancy probabilities over time assuming unit steps.
+#' By default this sums state occupancy probabilities over visit-scale unit
+#' steps. When `time_map` or `origin_time` is supplied, it maps/interpolates to
+#' real time and uses trapezoidal AUC. Already interpolated SOP output from
+#' [interpolate_sops()] is integrated on its current real-time grid.
 #' It automatically adapts to the input format:
 #' \itemize{
 #'   \item **Patient-Level:** If input is an array from \code{soprob_markov}, it returns time-in-state for each patient.
@@ -1309,6 +2287,18 @@ standardize_sops <- function(
 #' @param target_states Vector of target state(s) to include in the time calculation.
 #'   Can be integer indices or character names (e.g., \code{1} or \code{c("Home", "Rehab")}).
 #'   For bootstrap outputs, these must match the suffix of the `state_` columns (e.g., if column is `state_1`, use `1`).
+#' @param time_map Optional named numeric vector or data frame mapping visit
+#'   labels to real elapsed times. Supplying this switches tidy SOP and array
+#'   inputs to trapezoidal real-time AUC.
+#' @param origin_time Optional real time for an empirical baseline anchor. For
+#'   tidy outputs from [sops()] or [avg_sops()], this is passed to
+#'   [interpolate_sops()].
+#' @param xout Optional numeric real-time grid for tidy SOP outputs when
+#'   `time_map` is supplied. This controls the interpolation grid used for AUC,
+#'   for example `xout = 1:28` with `origin_time = 0` uses day 0 as an anchor
+#'   but starts the AUC at day 1.
+#' @param origin Origin handling for tidy SOP outputs when `origin_time` is
+#'   supplied. See [interpolate_sops()].
 #'
 #' @return
 #' \itemize{
@@ -1329,6 +2319,15 @@ standardize_sops <- function(
 #' sops_arr <- soprob_markov(model, data, times = 1:30, ylevels = 1:6)
 #' days_home <- time_in_state(sops_arr, target_states = 1)
 #'
+#' # Real-time AUC after fitting on factor visit indices
+#' real_days_home <- time_in_state(
+#'   avg,
+#'   target_states = 1,
+#'   time_map = c("1" = 3, "2" = 7, "3" = 14, "4" = 28),
+#'   origin_time = 0,
+#'   xout = 1:28
+#' )
+#'
 #' # --- Scenario 2: Bootstrap Inference ---
 #' bs_res <- bootstrap_standardized_sops(model, data, n_boot=100)
 #' # Get distribution of treatment effects
@@ -1337,88 +2336,86 @@ standardize_sops <- function(
 #'
 #' @keywords time-in-state auc bootstrap
 #' @export
-time_in_state <- function(sops, target_states = 1) {
+time_in_state <- function(
+  sops,
+  target_states = 1,
+  time_map = NULL,
+  origin_time = NULL,
+  xout = NULL,
+  origin = c("empirical_baseline", "none")
+) {
+  origin <- match.arg(origin)
+  use_real_time <- !is.null(time_map) || !is.null(origin_time)
+
+  if (inherits(sops, "markov_interpolated_sops")) {
+    if (!is.null(time_map) || !is.null(origin_time)) {
+      stop(
+        "`markov_interpolated_sops` is already on the real-time scale; ",
+        "omit `time_map` and `origin_time`."
+      )
+    }
+    if (!is.null(xout)) {
+      xout <- validate_sop_xout(xout, min(sops$time), max(sops$time))
+      missing_xout <- setdiff(xout, unique(sops$time))
+      if (length(missing_xout) > 0) {
+        stop(
+          "`xout` for already interpolated SOPs must be contained in ",
+          "the existing `time` values."
+        )
+      }
+      sops <- sops[sops$time %in% xout, , drop = FALSE]
+    }
+    return(time_in_state_tidy(sops, target_states, real_time = TRUE))
+  }
+
+  if (inherits(sops, c("markov_sops", "markov_avg_sops"))) {
+    if (!is.null(xout) && !use_real_time) {
+      stop("`xout` requires `time_map` or an already interpolated SOP object.")
+    }
+    if (use_real_time) {
+      if (is.null(time_map)) {
+        stop("`time_map` must be supplied for real-time AUC.")
+      }
+      sops <- interpolate_sops(
+        sops,
+        time_map = time_map,
+        xout = xout,
+        origin_time = origin_time,
+        origin = origin
+      )
+      return(time_in_state_tidy(sops, target_states, real_time = TRUE))
+    }
+    return(time_in_state_tidy(sops, target_states, real_time = FALSE))
+  }
+
   # =========================================================================
   # BRANCH 1: Bootstrap Data Frame Input
   # =========================================================================
   if (inherits(sops, "data.frame")) {
-    # 1. Validation
-    if (!all(c("boot_id", "time", "tx") %in% colnames(sops))) {
-      stop("Input data frame must contain 'boot_id', 'time', and 'tx' columns.")
+    if (!is.null(xout)) {
+      stop("`xout` is only supported for tidy SOP outputs.")
     }
-
-    # Identify state columns in the dataframe
-    # The bootstrap function outputs columns like "state_1", "state_2", etc.
-    state_cols_available <- grep("^state_", colnames(sops), value = TRUE)
-
-    if (length(state_cols_available) == 0) {
-      stop(
-        "Input data frame does not contain any columns starting with 'state_'."
-      )
+    if (use_real_time) {
+      if (is.null(time_map)) {
+        stop("`time_map` must be supplied for real-time AUC.")
+      }
+      time_map <- standardize_time_map(time_map)
+      sops$time <- map_sop_time_values(sops$time, time_map)
     }
-
-    # 2. Map target_states to column names
-    target_suffixes <- as.character(target_states)
-    target_cols <- paste0("state_", target_suffixes)
-
-    # Check for missing columns
-    missing_cols <- setdiff(target_cols, colnames(sops))
-    if (length(missing_cols) > 0) {
-      stop(paste(
-        "The following target state columns were not found in the bootstrap output:",
-        paste(missing_cols, collapse = ", ")
-      ))
-    }
-
-    # 3. Sum probabilities across target states (Row-wise)
-    # If multiple states are targeted (e.g. Home + Rehab), we sum their probabilities first
-    if (length(target_cols) == 1) {
-      prob_target <- sops[[target_cols]]
-    } else {
-      prob_target <- rowSums(sops[, target_cols, drop = FALSE])
-    }
-
-    # Add temporary column for aggregation
-    # We use base R aggregation for dependency minimization, or dplyr if available
-    # Using dplyr approach as it's cleaner and likely present with the bootstrap workflow
-
-    # We construct a minimal DF to aggregate
-    agg_df <- sops[, c("boot_id", "tx", "time")]
-    agg_df$prob <- prob_target
-
-    # 4. Sum over time (Area Under Curve)
-    # Group by boot_id and tx
-    # Result: One row per boot_id per tx group
-    res_grouped <- stats::aggregate(
-      prob ~ boot_id + tx,
-      data = agg_df,
-      FUN = sum
-    )
-
-    # 5. Pivot to Wide Format (Tx vs Ctrl)
-    # Split into two dataframes
-    res_tx <- res_grouped[res_grouped$tx == 1, c("boot_id", "prob")]
-    res_ctrl <- res_grouped[res_grouped$tx == 0, c("boot_id", "prob")]
-
-    # Merge
-    res_wide <- merge(
-      res_tx,
-      res_ctrl,
-      by = "boot_id",
-      suffixes = c("_tx", "_ctrl")
-    )
-
-    # Calculate difference
-    colnames(res_wide)[colnames(res_wide) == "prob_tx"] <- "SOP_tx"
-    colnames(res_wide)[colnames(res_wide) == "prob_ctrl"] <- "SOP_ctrl"
-    res_wide$delta <- res_wide$SOP_tx - res_wide$SOP_ctrl
-
-    return(res_wide)
+    return(time_in_state_bootstrap_df(
+      sops,
+      target_states = target_states,
+      real_time = use_real_time
+    ))
   }
 
   # =========================================================================
   # BRANCH 2: Array Input (Original Logic)
   # =========================================================================
+
+  if (!is.null(xout)) {
+    stop("`xout` is only supported for tidy SOP outputs.")
+  }
 
   # --- 1. Detect Dimensions ---
   dims <- dim(sops)
@@ -1462,6 +2459,26 @@ time_in_state <- function(sops, target_states = 1) {
   prob_in_target <- apply(sops_slice, (1:ndim)[-state_dim], sum)
 
   # --- 4. Integrate Over Time ---
+  if (use_real_time) {
+    if (is.null(time_map)) {
+      stop("`time_map` must be supplied for real-time AUC.")
+    }
+    if (!is.null(origin_time) && origin == "empirical_baseline") {
+      stop("Empirical `origin_time` anchoring is only supported for tidy SOP outputs.")
+    }
+    time_names <- dnames[[state_dim - 1L]]
+    if (is.null(time_names)) {
+      time_names <- seq_len(dims[state_dim - 1L])
+    }
+    time_map <- standardize_time_map(time_map)
+    real_time <- map_sop_time_values(time_names, time_map)
+
+    if (ndim == 3) {
+      return(apply(prob_in_target, 1, function(z) trapezoid_auc(real_time, z)))
+    }
+    return(apply(prob_in_target, c(1, 2), function(z) trapezoid_auc(real_time, z)))
+  }
+
   if (ndim == 3) {
     # Freq Input -> [Pat, Time] -> Apply over rows
     res <- rowSums(prob_in_target)
@@ -1482,7 +2499,10 @@ time_in_state <- function(sops, target_states = 1) {
 #'   `vglm` models, the family must be `cumulative(reverse = TRUE, ...)`.
 #' @param newdata Optional. A data frame of new data for prediction. If NULL,
 #'   uses the data used to fit the model.
-#' @param times A numeric vector of time points to estimate.
+#' @param times Visit-scale time points to estimate. For numeric time
+#'   variables this is usually a numeric vector. For factor-valued visit
+#'   indices, values are matched to fitted visit levels; if `NULL`, all
+#'   fitted visit levels are used.
 #' @param ylevels A vector of state levels. If NULL, attempts to infer from model.
 #' @param absorb The absorbing state.
 #' @param tvarname Name of the time variable in the model.
@@ -1621,12 +2641,16 @@ sops <- function(
     newdata$rowid <- seq_len(nrow(newdata))
   }
 
-  if (is.null(times)) {
-    if (is.null(tvarname) || !tvarname %in% names(newdata)) {
-      stop("`times` must be specified if `tvarname` is not in data.")
-    }
-    times <- sort(unique(newdata[[tvarname]]))
-  }
+  time_res <- resolve_sop_times(
+    model,
+    newdata,
+    times,
+    tvarname,
+    t_covs = t_covs,
+    default = "unique"
+  )
+  times <- time_res$times
+  validate_factor_gap(gap, t_covs, time_res$time_info)
 
   if (is.null(ylevels)) {
     # Try to infer from model
@@ -2016,7 +3040,10 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'   and control.
 #' @param by Optional character vector of additional variables to group by,
 #' after standardization.
-#' @param times Numeric vector of time points. If NULL, inferred from data.
+#' @param times Visit-scale time points. Numeric time variables use numeric
+#'   values; factor-valued visit indices use fitted visit levels. If `NULL`,
+#'   factor time uses all fitted visit levels and numeric time is inferred from
+#'   `newdata`.
 #' @param id_var Name of the patient ID variable. Required for bootstrap
 #'   inference and for `blrm` random-effect prediction. If `NULL`, defaults to
 #'   `"id"`; for `blrm` models with `include_re = TRUE`, it is first inferred
@@ -2225,6 +3252,7 @@ avg_sops <- function(
     p2varname = p2varname,
     ...
   )
+  resolved_times <- attr(sops_ind, "call_args")$times
 
   # --- 5. Aggregate (Marginalize) ---
   # Group by time, state, and the variables used for standardization
@@ -2268,7 +3296,7 @@ avg_sops <- function(
   attr(result, "avg_args") <- list(
     variables = var_list,
     by = by,
-    times = times,
+    times = resolved_times,
     id_var = id_var
   )
   # Store ORIGINAL newdata for bootstrap (not the expanded counterfactual)
@@ -2303,12 +3331,16 @@ avg_sops_blrm <- function(
   gap <- args$gap %||% NULL
   t_covs <- args$t_covs %||% NULL
 
-  if (is.null(times)) {
-    if (!tvarname %in% names(newdata_expanded)) {
-      stop("`times` must be specified if `tvarname` is not in data.")
-    }
-    times <- sort(unique(newdata_expanded[[tvarname]]))
-  }
+  time_res <- resolve_sop_times(
+    model,
+    newdata_expanded,
+    times,
+    tvarname,
+    t_covs = t_covs,
+    default = "unique"
+  )
+  times <- time_res$times
+  validate_factor_gap(gap, t_covs, time_res$time_info)
 
   missing_by <- setdiff(by %||% character(), names(newdata_expanded))
   if (length(missing_by) > 0) {
@@ -2750,6 +3782,7 @@ inferences_simulation <- function(
   p2varname <- attr(object, "p2varname")
   ylevels <- attr(object, "ylevels")
   absorb <- attr(object, "absorb")
+  gap <- attr(object, "gap")
   t_covs <- attr(object, "t_covs")
 
   # For avg_sops objects
@@ -2862,7 +3895,8 @@ inferences_simulation <- function(
         ylevels = ylevels,
         absorb = absorb,
         tvarname = tvarname,
-        pvarname = pvarname
+        pvarname = pvarname,
+        gap = gap
       ),
       error = function(e) {
         warning(
@@ -2950,6 +3984,7 @@ inferences_simulation <- function(
           tvarname = tvarname,
           pvarname = pvarname,
           p2varname = p2varname,
+          gap = gap,
           t_covs = t_covs
         ),
         error = function(e) {
@@ -3013,6 +4048,7 @@ inferences_simulation <- function(
       "tvarname",
       "pvarname",
       "p2varname",
+      "gap",
       "t_covs",
       "is_avg",
       "grid",
@@ -3469,6 +4505,7 @@ inferences_bootstrap <- function(
   p2varname <- attr(object, "p2varname")
   ylevels <- attr(object, "ylevels")
   absorb <- attr(object, "absorb")
+  gap <- attr(object, "gap")
   t_covs <- attr(object, "t_covs")
 
   variables <- avg_args$variables
@@ -3572,6 +4609,7 @@ inferences_bootstrap <- function(
         tvarname = tvarname,
         pvarname = pvarname,
         p2varname = p2varname,
+        gap = gap,
         t_covs = t_covs
       ),
       error = function(e) {
@@ -3657,6 +4695,7 @@ inferences_bootstrap <- function(
       "pvarname",
       "p2varname",
       "tvarname",
+      "gap",
       "t_covs",
       "n_times",
       "n_states",
@@ -4123,6 +5162,8 @@ get_draws <- function(object) {
 #'   because absorbing states keep their prior probability mass.
 #' @param tvarname Name of time variable
 #' @param pvarname Name of previous state variable
+#' @param gap Optional gap variable. With factor visit time, numeric gap values
+#'   must be supplied in `t_covs`.
 #' @param ... Ignored
 #'
 #' @return A list containing pre-calculated matrices and metadata.
@@ -4137,6 +5178,7 @@ markov_msm_build <- function(
   absorb = NULL,
   tvarname = "time",
   pvarname = "yprev",
+  gap = NULL,
   ...
 ) {
   n_pat <- nrow(data)
@@ -4150,19 +5192,17 @@ markov_msm_build <- function(
     integer(0)
   }
 
-  if (is.null(times)) {
-    times <- if (!is.null(t_covs)) {
-      seq_len(nrow(t_covs))
-    } else if (tvarname %in% names(data)) {
-      sort(unique(data[[tvarname]]))
-    } else {
-      1
-    }
-  }
-
-  if (!is.null(t_covs) && nrow(t_covs) != length(times)) {
-    stop("`t_covs` must have one row per requested time point.")
-  }
+  time_res <- resolve_sop_times(
+    model,
+    data,
+    times,
+    tvarname,
+    t_covs = t_covs,
+    default = "fast"
+  )
+  times <- time_res$times
+  time_info <- time_res$time_info
+  validate_factor_gap(gap, t_covs, time_info)
 
   # Need Gamma structure to know which columns to keep
   Gamma_template <- get_effective_coefs(model)
@@ -4173,7 +5213,7 @@ markov_msm_build <- function(
     data[[pvarname]] <- factor(ylevel_names[1], levels = ylevel_names)
   }
   if (!tvarname %in% names(data)) {
-    data[[tvarname]] <- times[1]
+    data <- assign_sop_time(data, tvarname, times[1], time_info)
   }
 
   is_vglm <- inherits(model, "vglm")
@@ -4219,13 +5259,15 @@ markov_msm_build <- function(
   }
 
   set_time <- function(d, time_idx) {
-    d[[tvarname]] <- times[time_idx]
-    if (!is.null(t_covs)) {
-      for (nm in names(t_covs)) {
-        d[[nm]] <- t_covs[time_idx, nm]
-      }
-    }
-    d
+    assign_sop_visit(
+      d,
+      tvarname = tvarname,
+      times = times,
+      index = time_idx,
+      t_covs = t_covs,
+      gap = gap,
+      time_info = time_info
+    )
   }
 
   # A. Baseline matrix for T=1 uses each patient's observed previous state.
