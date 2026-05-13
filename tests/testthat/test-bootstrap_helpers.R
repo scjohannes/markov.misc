@@ -88,6 +88,55 @@ test_that("apply_to_bootstrap maps deprecated parallel argument to workers", {
   expect_equal(result[[1]], 7)
 })
 
+test_that("apply_to_bootstrap restores future plan after parallel success", {
+  future::plan(future::sequential)
+  withr::defer(future::plan(future::sequential))
+
+  data <- data.frame(id = c(1, 2), y = c(3, 4))
+  boot_samples <- list(
+    data.frame(original_id = c(1, 2), new_id = c("1_1", "2_1"), boot_id = 1)
+  )
+
+  result <- suppressWarnings(
+    apply_to_bootstrap(
+      boot_samples = boot_samples,
+      analysis_fn = function(boot_data) sum(boot_data$y),
+      data = data,
+      id_var = "id",
+      workers = 2,
+      packages = character(0)
+    )
+  )
+
+  expect_equal(result[[1]], 7)
+  expect_equal(future::nbrOfWorkers(), 1L)
+})
+
+test_that("apply_to_bootstrap restores future plan after parallel errors", {
+  future::plan(future::sequential)
+  withr::defer(future::plan(future::sequential))
+
+  data <- data.frame(id = c(1, 2), y = c(3, 4))
+  boot_samples <- list(
+    data.frame(original_id = c(1, 2), new_id = c("1_1", "2_1"), boot_id = 1)
+  )
+
+  expect_error(
+    suppressWarnings(
+      apply_to_bootstrap(
+        boot_samples = boot_samples,
+        analysis_fn = function(boot_data) stop("boom"),
+        data = data,
+        id_var = "id",
+        workers = 2,
+        packages = character(0)
+      )
+    ),
+    "boom"
+  )
+  expect_equal(future::nbrOfWorkers(), 1L)
+})
+
 test_that("bootstrap_analysis_wrapper relevels data and refits models", {
   original_data <- data.frame(
     y = factor(c(1, 2, 3)),

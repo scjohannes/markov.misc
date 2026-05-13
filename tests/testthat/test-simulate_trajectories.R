@@ -223,6 +223,23 @@ test_that("sim_trajectories_markov passes tx even when not requested as a covari
   expect_true(all(result$tx %in% c(0, 1)))
 })
 
+test_that("sim_trajectories_markov preserves character patient IDs", {
+  baseline <- data.frame(id = c("b", "a"), yprev = c(1, 1), tx = c(0, 1))
+
+  result <- sim_trajectories_markov(
+    baseline_data = baseline,
+    follow_up_time = 2,
+    intercepts = 0,
+    lp_function = function(yprev, t, tx, parameter, extra_params) 0,
+    covariate_names = "tx",
+    seed = 1
+  )
+
+  expect_identical(result$id, rep(c("b", "a"), each = 2))
+  expect_equal(result$time, rep(1:2, 2))
+  expect_equal(result$tx, rep(c(0, 1), each = 2))
+})
+
 test_that("sim_trajectories_brownian validates inputs and supports normal link options", {
   expect_error(
     sim_trajectories_brownian(n_patients = 0),
@@ -598,6 +615,57 @@ test_that("sim_trajectories_tte expands event histories into daily states", {
   expect_equal(nrow(result), 6)
   expect_equal(result$time, rep(1:3, 2))
   expect_true(all(result$y %in% 1:3))
+})
+
+test_that("sim_trajectories_tte maps positive tx codes to matching hazard ratios", {
+  baseline <- data.frame(
+    id = 1,
+    tx = 1,
+    state = 1,
+    event_time = 0
+  )
+  observed_param <- numeric()
+
+  with_mocked_bindings(
+    recurr_event = function(id, param, b, follow_up, max_events) {
+      observed_param <<- c(observed_param, param)
+      data.frame(id = numeric(0), event_time = numeric(0))
+    },
+    {
+      sim_trajectories_tte(
+        baseline,
+        states = 1:2,
+        absorbing_states = 2,
+        follow_up_time = 1,
+        param = c(10, 20),
+        hazard_ratios = list(c(0.5, 2)),
+        b = 0,
+        seed = 1
+      )
+    }
+  )
+
+  expect_equal(observed_param, c(5, 40))
+})
+
+test_that("sim_trajectories_tte requires hazard ratios for observed treatment arms", {
+  baseline <- data.frame(
+    id = 1,
+    tx = 2,
+    state = 1,
+    event_time = 0
+  )
+
+  expect_error(
+    sim_trajectories_tte(
+      baseline,
+      states = 1:2,
+      param = c(10, 20),
+      hazard_ratios = list(c(1, 1)),
+      b = 0
+    ),
+    "Missing arm\\(s\\): 2"
+  )
 })
 
 test_that("sim_trajectories_tte generates baseline data and handles absorbing baselines", {

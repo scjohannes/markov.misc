@@ -120,8 +120,15 @@ vglm.markov <- function(
   eval_vcontrol <- make_vgam_vcontrol_eval()
   get_xlevels <- utils::getFromNamespace(".getXlevels", "stats")
 
+  smart_open <- FALSE
   if (smart) {
     setup_smart("write")
+    smart_open <- TRUE
+    on.exit({
+      if (smart_open) {
+        wrapup_smart()
+      }
+    }, add = TRUE)
   }
 
   if (missing(data)) {
@@ -244,6 +251,7 @@ vglm.markov <- function(
   if (smart) {
     fit$smart.prediction <- get_smart_prediction()
     wrapup_smart()
+    smart_open <- FALSE
   }
 
   answer <- methods::new(

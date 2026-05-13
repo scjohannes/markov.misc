@@ -45,9 +45,10 @@ Length must equal \code{length(states)}. These represent the rate parameter λ f
 exponential waiting times in the control group.}
 
 \item{hazard_ratios}{List of numeric vectors. Treatment effects as multiplicative
-factors on the baseline rates for each treatment arm.
-Each list element corresponds to a treatment arm (excluding control, which is 1.0).
-Length of each vector must equal \code{length(states)}.
+factors on the baseline rates for each positive treatment arm. \code{tx = 0}
+uses the control rates in \code{param}, \code{tx = 1} uses \code{hazard_ratios[[1]]},
+\code{tx = 2} uses \code{hazard_ratios[[2]]}, and so on. Length of each vector
+must equal \code{length(states)}.
 Default is \code{list(c(1, 1, 1, 1, 1, 1))} (no treatment effect).}
 
 \item{b}{Numeric. Autoregressive coefficient for recurrent events within a state

@@ -256,10 +256,13 @@ sim_trajectories_markov <- function(
 
   # Convert matrix to long format data frame.
   result <- matrix_to_long(state_matrix, value_name = "y")
-  result$id <- as.integer(result$id)
+  id_key <- as.character(baseline_data$id)
+  id_match <- match(result$id, id_key)
+  result$id <- baseline_data$id[id_match]
   result$time <- as.integer(result$time)
   result <- left_join_preserve_order(result, baseline_data, by = "id")
-  result <- result[order(result$id, result$time), , drop = FALSE]
+  id_order <- match(as.character(result$id), id_key)
+  result <- result[order(id_order, result$time), , drop = FALSE]
   result$yprev <- ave(result$y, result$id, FUN = function(x) c(NA, utils::head(x, -1)))
   result <- result[result$time > 0, , drop = FALSE] # Remove time 0.
   rownames(result) <- NULL
@@ -1389,9 +1392,10 @@ recurr_event <- function(
 #'   Length must equal `length(states)`. These represent the rate parameter λ for
 #'   exponential waiting times in the control group.
 #' @param hazard_ratios List of numeric vectors. Treatment effects as multiplicative
-#'   factors on the baseline rates for each treatment arm.
-#'   Each list element corresponds to a treatment arm (excluding control, which is 1.0).
-#'   Length of each vector must equal `length(states)`.
+#'   factors on the baseline rates for each positive treatment arm. `tx = 0`
+#'   uses the control rates in `param`, `tx = 1` uses `hazard_ratios[[1]]`,
+#'   `tx = 2` uses `hazard_ratios[[2]]`, and so on. Length of each vector
+#'   must equal `length(states)`.
 #'   Default is `list(c(1, 1, 1, 1, 1, 1))` (no treatment effect).
 #' @param b Numeric. Autoregressive coefficient for recurrent events within a state
 #'   (default: 0). The rate for event j in a given state is:
@@ -1549,39 +1553,59 @@ sim_trajectories_tte <- function(
     set.seed(seed)
   }
 
-  # Expand param to include control arm
-  param_list <- list(ctrl = param)
-  for (j in seq_along(hazard_ratios)) {
-    param_list[[j + 1]] <- param * hazard_ratios[[j]]
+  tx_levels <- sort(unique(baseline_data$tx))
+  if (
+    !is.numeric(tx_levels) ||
+      anyNA(tx_levels) ||
+      any(tx_levels < 0) ||
+      any(tx_levels != floor(tx_levels))
+  ) {
+    stop("baseline_data$tx must contain non-negative integer treatment arm codes")
   }
 
-  # Expand b vector for each event type 
+  missing_hr <- tx_levels[tx_levels > length(hazard_ratios)]
+  if (length(missing_hr) > 0) {
+    stop(
+      "hazard_ratios must provide one vector for each positive treatment arm. ",
+      "Missing arm(s): ",
+      paste(missing_hr, collapse = ", ")
+    )
+  }
+
+  params_for_tx <- function(tx) {
+    if (tx == 0) {
+      return(param)
+    }
+    param * hazard_ratios[[tx]]
+  }
+
+  # Expand b vector for each event type
   if (length(b) == 1) {
     # Fixed acceleration
     b <- rep(b, times = length(states))
-    } else {
+  } else {
     # Event-type-specific acceleration: check input
     if (length(b) != length(states)) {
       stop(
-      "Autoregressive parameter b must have length one or equal to length(states)"
-    )
-      }
+        "Autoregressive parameter b must have length one or equal to length(states)"
+      )
     }
+  }
 
   # Generate recurrent events for each treatment arm × state combination
   state_changes <- list()
   m <- 1
-  tx_levels <- sort(unique(baseline_data$tx))
 
-  for (j in seq_along(tx_levels)) {
-    tx_val <- tx_levels[j]
+  for (tx_val in tx_levels) {
     ids_tx <- baseline_data$id[baseline_data$tx == tx_val]
+    tx_param <- params_for_tx(tx_val)
 
-    for (i in states) {
+    for (state_pos in seq_along(states)) {
+      i <- states[state_pos]
       state_change <- recurr_event(
         id = ids_tx,
-        param = param_list[[j]][i],
-        b = b[i],
+        param = tx_param[state_pos],
+        b = b[state_pos],
         follow_up = follow_up_time,
         max_events = NULL
       )

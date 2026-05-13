@@ -1,5 +1,6 @@
 # markov.misc 0.0.2.0000
 
+- Removed stale `taooh*` archive exports and fixed several edge cases in `soprob_markov()`, `states_to_tte()`, `sim_trajectories_markov()`, `sim_trajectories_tte()`, `predict_blrm_response_markov()`, `apply_to_bootstrap()`, `vglm.markov()`, and `lp_violet()`.
 - `soprob_markov()`, `sops()`, and `avg_sops()` now support second-order Markov recursion via `p2varname`, and `rmsb::blrm()` models use sampled posterior draws as the native uncertainty path with optional fitted random effects from `cluster()`.
 - `blrm` SOP prediction now caches fitted random-effect draws once per call and vectorizes posterior recursion within chunks; state-wise median summaries are documented as not necessarily summing to one across states, while draw-level probabilities and mean summaries preserve total probability.
 - `avg_sops()`, `sops()`, and related Markov SOP workflows now reject models fit with offsets because offsets are not supported by the package prediction paths.
