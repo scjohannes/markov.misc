@@ -37,7 +37,10 @@ and control.}
 \item{by}{Optional character vector of additional variables to group by,
 after standardization.}
 
-\item{times}{Numeric vector of time points. If NULL, inferred from data.}
+\item{times}{Visit-scale time points. Numeric time variables use numeric
+values; factor-valued visit indices use fitted visit levels. If \code{NULL},
+factor time uses all fitted visit levels and numeric time is inferred from
+\code{newdata}.}
 
 \item{id_var}{Name of the patient ID variable. Required for bootstrap
 inference and for \code{blrm} random-effect prediction. If \code{NULL}, defaults to

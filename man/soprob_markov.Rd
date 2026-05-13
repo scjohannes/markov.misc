@@ -7,7 +7,7 @@
 soprob_markov(
   object,
   data,
-  times,
+  times = NULL,
   ylevels,
   absorb = NULL,
   tvarname = "time",
@@ -32,8 +32,10 @@ soprob_markov(
 Rows represent unique patients. Columns must contain baseline covariates and
 initial values for time-varying variables.}
 
-\item{times}{A numeric vector of time points to iterate over.
-The function calculates probabilities for each time point in this sequence.}
+\item{times}{Visit-scale time points to iterate over. For numeric time
+variables this is a numeric vector. For factor-valued visit indices,
+values are matched to the fitted factor levels; if \code{NULL}, all fitted
+visit levels are used.}
 
 \item{ylevels}{A character vector defining the names of the outcome levels (states).
 These must match the levels used in the fitted \code{object}.}

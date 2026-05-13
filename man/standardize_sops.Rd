@@ -25,7 +25,8 @@ the family must be \code{cumulative(reverse = TRUE, ...)}.}
 
 \item{data}{A data frame containing patient trajectory data.}
 
-\item{times}{Time points to predict.}
+\item{times}{Visit-scale time points to predict. Factor-valued visit
+indices use fitted factor levels when \code{times = NULL}.}
 
 \item{ylevels}{States in the data.}
 

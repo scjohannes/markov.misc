@@ -13,6 +13,7 @@ markov_msm_build(
   absorb = NULL,
   tvarname = "time",
   pvarname = "yprev",
+  gap = NULL,
   ...
 )
 }
@@ -33,6 +34,9 @@ because absorbing states keep their prior probability mass.}
 \item{tvarname}{Name of time variable}
 
 \item{pvarname}{Name of previous state variable}
+
+\item{gap}{Optional gap variable. With factor visit time, numeric gap values
+must be supplied in \code{t_covs}.}
 
 \item{...}{Ignored}
 }

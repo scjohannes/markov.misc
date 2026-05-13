@@ -75,6 +75,7 @@ The `soprob_markov` function (`R/sops.R`) is the workhorse for estimating probab
     -   With `p2varname`, it carries the joint history distribution forward and uses $P(S_t = k) = \sum_{h,j} P(S_{t-2}=h, S_{t-1}=j) P(S_t=k \mid S_{t-2}=h, S_{t-1}=j)$.
 -   **Vectorization**: The implementation is highly vectorized. It constructs an "expanded" dataset containing all possible transitions for all patients at a given time step, allowing a single `predict()` call to generate the entire transition matrix.
 -   **Fast Path**: For first-order `vglm` and full proportional-odds `orm` models, `markov_msm_build` and `markov_msm_run` pre-compute design matrices by time point and previous state to bypass slow package prediction methods during simulation-based inference. Inline transforms such as `rms::rcs(time, 4)` and `rms::rcs(yprev, 6)` reuse the fitted model terms, while explicit precomputed time-basis columns can still be supplied via `t_covs`. Previous-state expansion preserves the fitted column type, so `yprev` can be categorical, linear numeric, or spline numeric.
+-   **Visit-Time Scale**: SOP prediction is kept on the model's visit scale. Numeric time remains numeric, while factor-valued visit indices are resolved from fitted factor levels and carried through prediction without overwriting factor columns as numeric. Real elapsed-time summaries are a post-processing layer: `interpolate_sops()` maps visits to real time, can add an empirical baseline anchor from stored `newdata_orig`, and `time_in_state(..., time_map = ...)` computes trapezoidal real-time AUC.
 -   **Posterior Path**: For `blrm`, `sops()` and `avg_sops()` compute SOPs over sampled posterior draws. Random-effect draws are cached once per call, predictions are vectorized within draw chunks, and `avg_sops()` marginalizes by draw before summarizing to avoid storage of patient-level posterior arrays. Draw-level probabilities stay normalized; state-wise median summaries are not constrained to sum to one, while mean summaries preserve total probability.
 
 ### 4. Marginalization & G-Computation
@@ -118,7 +119,7 @@ Located in `R/power.R`, this system facilitates large-scale simulation studies t
 |:-----------------------|:-----------------------|:-----------------------|
 | **Simulation** | `R/simulate_trajectories.R` | `sim_trajectories_markov`, `sim_trajectories_brownian`, `sim_trajectories_brownian_gap`, `lp_violet` |
 | **Robust Covariance** | `R/robcov_vglm.R` | `robcov_vglm`, `compute_scores_vglm` |
-| **SOP Core** | `R/sops.R` | `soprob_markov`, `sops`, `avg_sops`, `time_in_state` |
+| **SOP Core** | `R/sops.R` | `soprob_markov`, `sops`, `avg_sops`, `interpolate_sops`, `time_in_state` |
 | **Inference** | `R/sops.R`, `R/bootstrap.R` | `inferences`, `inferences_simulation`, `inferences_bootstrap` |
 | **Optimization** | `R/vgam_helpers.R` | `get_effective_coefs`, `markov_msm_build` |
 | **Power Analysis** | `R/power.R` | `assess_operating_characteristics`, `sample_from_arrow` |
