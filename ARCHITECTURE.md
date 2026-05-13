@@ -2,7 +2,7 @@
 
 ## Overview
 
-`markov.misc` is an R package designed for the simulation, analysis, and visualization of longitudinal ordinal outcomes in clinical trials. Its primary focus is on discrete-time Markov transition models, specifically using (partial) proportional odds logistic regression to estimate transition probabilities between health states (e.g., home, hospital, ICU, death).
+`markov.misc` is an R package designed for the simulation, analysis, and visualization of longitudinal ordinal outcomes in clinical trials. Its primary focus is on discrete-time Markov transition models, specifically using (partial) proportional odds logistic regression to estimate transition probabilities between health states (e.g., home, hospital, ICU, death). SOP calculations support first-order recursions and second-order recursions when a second previous-state column is supplied.
 
 The package bridges the gap between flexible regression models (like those from `VGAM` and `rms`) and practical clinical trial quantities of interest, such as State Occupancy Probabilities (SOPs), Time in State, and Days Alive and Out of Hospital (DAOH). It provides a robust pipeline for:
 
@@ -24,7 +24,7 @@ flowchart TD
     end
 
     subgraph Modeling [Statistical Modeling]
-        Trajectories --> Fit[Model Fitting (vglm/orm)]
+        Trajectories --> Fit[Model Fitting (vglm/orm/blrm)]
         Fit --> RobCov[Robust Covariance (Sandwich)]
         RobCov --> Tidy[Tidy Coefficients]
     end
@@ -63,6 +63,7 @@ The package offers three distinct methodologies for generating longitudinal heal
 This component extends functionality from `VGAM` and `rms` to ensure valid statistical inference in longitudinal settings where observations are correlated.
 
 -   **Robust Covariance** (`R/robcov_vglm.R`): Implements the Huber-White "sandwich" estimator for `vglm` objects. This is critical because standard errors from standard software assume independence, which is violated in longitudinal data. It supports cluster-robust standard errors to account for within-patient correlation.
+-   **Bayesian Ordinal Models** (`R/sops.R`): Supports `rmsb::blrm()` posterior draws directly in `sops()` and `avg_sops()`. Draws are randomly sampled with a reproducible seed, and fitted `cluster()` random effects can be included for known IDs without integrating over the random-effects distribution.
 -   **Unified Interface** (`R/power.R`, `R/misc.R`): The `tidy_po` function provides a standardized way to extract coefficients, standard errors (robust or naive), and p-values from various model objects (`vglm`, `orm`, `clm`, `coxph`, `glm`), abstracting away package-specific differences.
 
 ### 3. State Occupancy Probabilities (SOPs)
@@ -71,8 +72,10 @@ The `soprob_markov` function (`R/sops.R`) is the workhorse for estimating probab
 
 -   **Logic**: It iterates a transition matrix forward in time using the Law of Total Probability.
     -   $P(S_t = k) = \sum_j P(S_{t-1} = j) \times P(S_t = k | S_{t-1} = j)$
+    -   With `p2varname`, it carries the joint history distribution forward and uses $P(S_t = k) = \sum_{h,j} P(S_{t-2}=h, S_{t-1}=j) P(S_t=k \mid S_{t-2}=h, S_{t-1}=j)$.
 -   **Vectorization**: The implementation is highly vectorized. It constructs an "expanded" dataset containing all possible transitions for all patients at a given time step, allowing a single `predict()` call to generate the entire transition matrix.
--   **Fast Path**: For `vglm` and full proportional-odds `orm` models, `markov_msm_build` and `markov_msm_run` pre-compute design matrices by time point and previous state to bypass slow package prediction methods during simulation-based inference. Inline transforms such as `rms::rcs(time, 4)` and `rms::rcs(yprev, 6)` reuse the fitted model terms, while explicit precomputed time-basis columns can still be supplied via `t_covs`. Previous-state expansion preserves the fitted column type, so `yprev` can be categorical, linear numeric, or spline numeric.
+-   **Fast Path**: For first-order `vglm` and full proportional-odds `orm` models, `markov_msm_build` and `markov_msm_run` pre-compute design matrices by time point and previous state to bypass slow package prediction methods during simulation-based inference. Inline transforms such as `rms::rcs(time, 4)` and `rms::rcs(yprev, 6)` reuse the fitted model terms, while explicit precomputed time-basis columns can still be supplied via `t_covs`. Previous-state expansion preserves the fitted column type, so `yprev` can be categorical, linear numeric, or spline numeric.
+-   **Posterior Path**: For `blrm`, `sops()` and `avg_sops()` compute SOPs over sampled posterior draws. Random-effect draws are cached once per call, predictions are vectorized within draw chunks, and `avg_sops()` marginalizes by draw before summarizing to avoid storage of patient-level posterior arrays. Draw-level probabilities stay normalized; state-wise median summaries are not constrained to sum to one, while mean summaries preserve total probability.
 
 ### 4. Marginalization & G-Computation
 
@@ -85,6 +88,8 @@ The `avg_sops` function (`R/sops.R`) implements G-computation to estimate popula
 ## Inference Workflows
 
 The `inferences()` function serves as a unified entry point for estimating uncertainty (`R/sops.R`).
+
+For `blrm`-derived `sops()` and `avg_sops()` objects, posterior uncertainty is already present. `inferences()` returns those objects unchanged; users rerun `sops()` or `avg_sops()` with different `n_draws`, `seed`, or `conf_level` when they want different posterior summaries.
 
 ### Method A: Simulation Engines (No Refit)
 

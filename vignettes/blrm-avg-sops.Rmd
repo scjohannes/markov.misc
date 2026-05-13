@@ -1,0 +1,178 @@
+---
+title: "Marginal SOPs with rmsb::blrm()"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Marginal SOPs with rmsb::blrm()}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 5,
+  out.width = "100%",
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+This vignette shows the basic workflow for using a Bayesian ordinal Markov
+model fit with `rmsb::blrm()` in `avg_sops()`. The example uses a first-order
+Markov model and includes a patient random effect via `cluster(id)`.
+
+The model-fitting chunks are not evaluated when the vignette is built, because
+Stan sampling requires a configured backend and can take several minutes. The
+numbers below are intentionally small for an example: 500 patients, short Stan
+chains, and only 25 posterior draws for the SOP calculation. Increase these for
+an analysis.
+
+## Setup
+
+```{r setup, eval = FALSE}
+library(markov.misc)
+library(ggplot2)
+library(rms)
+library(rmsb)
+
+N_PATIENTS <- 500
+FOLLOW_UP <- 28
+STATE_LEVELS <- 1:8
+ABSORB <- "8"
+SEED <- 20260512
+SOP_DRAWS <- 25
+```
+
+## Simulate ACTT-2-Like Brownian Data
+
+`sim_actt2_brownian()` creates ACTT-2-inspired ordinal trajectories. We keep one
+row per patient for standardization and use the transition-level data for model
+fitting.
+
+```{r data, eval = FALSE}
+brownian_actt2 <- sim_actt2_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  treatment_prob = 0.5,
+  seed = SEED
+)
+
+model_data <- prepare_markov_data(
+  brownian_actt2,
+  absorbing_state = as.integer(ABSORB),
+  factor_previous = TRUE
+)
+
+baseline_data <- model_data[!duplicated(model_data$id), , drop = FALSE]
+
+c(
+  patients = length(unique(brownian_actt2$id)),
+  model_rows = nrow(model_data),
+  baseline_rows = nrow(baseline_data)
+)
+```
+
+## Fit A First-Order blrm Model
+
+The previous state enters through `yprev`, so this is a first-order Markov
+model. The `cluster(id)` term creates fitted patient random effects. Those
+effects can be used later in prediction with `include_re = TRUE` as long as the
+prediction data contain known fitted IDs.
+
+```{r fit, eval = FALSE}
+dd <- datadist(model_data)
+options(datadist = "dd")
+options(mc.cores = 2)
+
+fit_blrm <- blrm(
+  y ~ tx + rcs(time, 4) + yprev + cluster(id),
+  data = model_data,
+  method = "sampling",
+  backend = "cmdstan",
+  chains = 2,
+  iter = 500,
+  refresh = 0,
+  loo = FALSE,
+  seed = SEED
+)
+```
+
+## Compute Marginal SOPs
+
+For `blrm()` fits, `avg_sops()` samples posterior draws and computes the SOPs on
+those draws directly. The `estimate` column is the requested posterior summary
+of the SOP draws, not a plug-in calculation from summarized model parameters.
+If you use `posterior_summary = "median"`, the medians are computed
+state-by-state, so their displayed totals are not guaranteed to sum to exactly
+one. The draw-level probabilities remain normalized; use
+`posterior_summary = "mean"` when the displayed estimates must preserve total
+probability.
+
+Here `include_re = TRUE` adds the fitted patient random effects to the
+predictions. Use `include_re = FALSE` for new IDs or for predictions that omit
+patient effects.
+
+```{r avg-sops, eval = FALSE}
+avg_blrm <- avg_sops(
+  fit_blrm,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_blrm$ylevels,
+  absorb = ABSORB,
+  id_var = "id",
+  include_re = FALSE,
+  n_draws = SOP_DRAWS,
+  seed = SEED,
+  posterior_summary = "mean",
+  conf_level = 0.90,
+  return_draws = TRUE
+)
+
+head(avg_blrm)
+```
+
+There is no separate `inferences()` step for `blrm` SOPs. Posterior uncertainty
+has already been computed by `avg_sops()`. To change the interval level or the
+posterior draws, rerun `avg_sops()` with different `conf_level`, `n_draws`, or
+`seed`.
+
+## Plot The SOPs
+
+`plot_sops()` reads the posterior interval columns and draws uncertainty
+ribbons for line plots.
+
+```{r line-plot, eval = FALSE}
+plot_sops(
+  avg_blrm,
+  geom = "line",
+  facet_var = "tx"
+) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(
+    title = "Posterior Marginal State Occupancy Probabilities",
+    x = "Day",
+    y = "State occupancy probability"
+  )
+```
+
+If `return_draws = TRUE`, stacked bar plots can overlay a small subset of
+posterior draw-specific stacks.
+
+```{r bar-plot, eval = FALSE}
+plot_sops(
+  avg_blrm,
+  geom = "bar",
+  facet_var = "tx",
+  n_draws = 8,
+  draw_alpha = 0.08
+) +
+  labs(
+    title = "Posterior Draws Behind The Marginal SOPs",
+    x = "Day",
+    y = "State occupancy probability"
+  )
+```

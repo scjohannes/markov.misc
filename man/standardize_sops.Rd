@@ -10,9 +10,13 @@ standardize_sops(
   times = NULL,
   ylevels = factor(1:6),
   absorb = 6,
-  varnames = list(tvarname = "time", pvarname = "yprev", id = "id", tx = "tx", gap =
-    NULL),
-  t_covs = NULL
+  varnames = list(tvarname = "time", pvarname = "yprev", p2varname = NULL, id = "id", tx
+    = "tx", gap = NULL),
+  t_covs = NULL,
+  include_re = FALSE,
+  id_var = NULL,
+  n_draws = 100L,
+  seed = NULL
 )
 }
 \arguments{
@@ -27,9 +31,20 @@ the family must be \code{cumulative(reverse = TRUE, ...)}.}
 
 \item{absorb}{Absorbing state name.}
 
-\item{varnames}{List of variable names: tvarname, pvarname, id, tx, gap (optional).}
+\item{varnames}{List of variable names: tvarname, pvarname, p2varname
+(optional second previous-state variable), id, tx, gap (optional).}
 
 \item{t_covs}{Time-dependent covariate lookup table.}
+
+\item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
+fitted random-effect draws in posterior predictions.}
+
+\item{id_var}{Optional patient ID variable. Defaults to \code{varnames$id}.}
+
+\item{n_draws}{Integer number of \code{blrm} posterior draws to sample, or \code{NULL}
+to use all stored draws.}
+
+\item{seed}{Optional random seed for reproducible \code{blrm} draw sampling.}
 }
 \value{
 A list with two components:

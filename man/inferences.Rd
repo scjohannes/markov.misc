@@ -45,7 +45,9 @@ or an \code{orm} model with \code{cluster}, and \code{avg_sops()} objects.
 \code{engine = "score_bootstrap"}. Currently only \code{"exponential"} is supported.}
 
 \item{n_sim}{Number of simulation draws (for simulation) or bootstrap
-iterations (for bootstrap). Default is 1000.}
+iterations (for bootstrap). Default is 1000. For \code{blrm} SOP objects this
+argument is ignored; rerun \code{sops()}/\code{avg_sops()} with \code{n_draws} and \code{seed}
+to change posterior draws.}
 
 \item{vcov}{Optional custom variance-covariance matrix. If provided,
 overrides the vcov extracted from the model.}
@@ -58,7 +60,9 @@ overrides the vcov extracted from the model.}
 sequential processing. If > 1, uses parallel processing with that many
 workers.}
 
-\item{conf_level}{Confidence level for intervals (default 0.95).}
+\item{conf_level}{Confidence level for intervals (default 0.95). For \code{blrm}
+SOP objects this argument is ignored; rerun \code{sops()}/\code{avg_sops()} with
+\code{conf_level} to change posterior intervals.}
 
 \item{conf_type}{Type of confidence interval (simulation method only):
 \itemize{
@@ -90,7 +94,10 @@ with \code{get_draws()}.
 }
 \description{
 Adds confidence intervals to SOP objects using simulation-based or bootstrap
-methods. The default method is simulation.
+methods. The default method is simulation. For objects produced from
+\code{rmsb::blrm()} models, posterior uncertainty is already computed by
+\code{sops()}/\code{avg_sops()}, so \code{inferences()} ignores \code{method} and returns the
+object unchanged.
 }
 \details{
 \subsection{Simulation Method}{

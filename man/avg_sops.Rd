@@ -10,13 +10,20 @@ avg_sops(
   variables = NULL,
   by = NULL,
   times = NULL,
-  id_var = "id",
+  id_var = NULL,
+  p2varname = NULL,
+  include_re = FALSE,
+  n_draws = 100L,
+  seed = NULL,
+  posterior_summary = c("mean", "median"),
+  conf_level = 0.95,
+  return_draws = FALSE,
   ...
 )
 }
 \arguments{
-\item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}). For \code{vglm} models,
-the family \strong{must} be \code{cumulative(reverse = TRUE, ...)}.}
+\item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, or \code{blrm}). For
+\code{vglm} models, the family \strong{must} be \code{cumulative(reverse = TRUE, ...)}.}
 
 \item{newdata}{Data frame for prediction. For \strong{simulation inference}, pass
 baseline data only (one row per patient). For \strong{bootstrap inference}, you
@@ -32,8 +39,30 @@ after standardization.}
 
 \item{times}{Numeric vector of time points. If NULL, inferred from data.}
 
-\item{id_var}{Name of the patient ID variable (default "id"). Required for
-bootstrap inference.}
+\item{id_var}{Name of the patient ID variable. Required for bootstrap
+inference and for \code{blrm} random-effect prediction. If \code{NULL}, defaults to
+\code{"id"}; for \code{blrm} models with \code{include_re = TRUE}, it is first inferred
+from \code{model$clusterInfo$name} when available.}
+
+\item{p2varname}{Optional second previous-state variable. \code{NULL} uses a
+first-order Markov recursion; a non-\code{NULL} column name uses a second-order
+recursion.}
+
+\item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
+fitted random-effect draws in posterior predictions for known IDs.}
+
+\item{n_draws}{Integer number of posterior draws to sample for \code{blrm}, or
+\code{NULL} to use all stored draws. Defaults to 100.}
+
+\item{seed}{Optional random seed for reproducible random draw sampling.}
+
+\item{posterior_summary}{Summary used for \code{blrm} posterior SOP draws:
+\code{"mean"} or \code{"median"}.}
+
+\item{conf_level}{Confidence level for \code{blrm} posterior intervals.}
+
+\item{return_draws}{Logical. For \code{blrm}, store posterior SOP draws for
+extraction with \code{get_draws()}.}
 
 \item{...}{Additional arguments passed to \code{sops()} (e.g., \code{ylevels}, \code{absorb},
 \code{tvarname}, \code{pvarname}, \code{t_covs}). \code{t_covs} is only needed for explicit
@@ -46,6 +75,8 @@ A data frame of class \code{markov_avg_sops} with columns:
 \item{state}{State level}
 \item{(variables)}{Value of standardization variable (e.g., tx)}
 \item{estimate}{Average probability across individuals}
+\item{conf.low, conf.high, std.error}{For \code{blrm} fits, posterior
+uncertainty summaries computed directly from marginalized SOP draws}
 }
 \description{
 Computes standardized (marginal) state occupation probabilities using
@@ -67,6 +98,12 @@ each time-state-treatment combination, yielding population-average
 
 The result represents the expected SOP if the entire population received
 treatment vs. control, averaged over the observed covariate distribution.
+For \code{rmsb::blrm()} models, patient-level posterior arrays are chunked and
+marginalized by draw before summarizing to reduce memory use.
+State-wise medians and interval bounds are not constrained to sum to one
+across states; use \code{posterior_summary = "mean"} when the displayed estimates
+themselves need to preserve total probability. Draw-level probabilities
+stored with \code{return_draws = TRUE} remain normalized within each draw.
 }
 \examples{
 \dontrun{

@@ -12,8 +12,14 @@ soprob_markov(
   absorb = NULL,
   tvarname = "time",
   pvarname = "yprev",
+  p2varname = NULL,
   gap = NULL,
-  t_covs = NULL
+  t_covs = NULL,
+  include_re = FALSE,
+  id_var = NULL,
+  n_draws = 100L,
+  seed = NULL,
+  ...
 )
 }
 \arguments{
@@ -41,6 +47,10 @@ model formula. Defaults to \code{"time"}.}
 \item{pvarname}{A character string specifying the name of the previous state variable
 used in the model formula. Defaults to \code{"yprev"}.}
 
+\item{p2varname}{Optional character string specifying the second previous
+state variable. \code{NULL} uses first-order recursion; any non-\code{NULL} value
+uses second-order recursion with histories \verb{(p2varname, pvarname)}.}
+
 \item{gap}{(Optional) A character string specifying the name of the variable representing
 the time gap (delta time) between observations, if used in the model. Defaults to \code{NULL}.}
 
@@ -54,6 +64,22 @@ or other time-varying covariates.
 Inline model terms such as \code{rms::rcs(time, 4)} do not require
 \code{t_covs}; prediction reuses the fitted model's stored transform
 metadata.}
+
+\item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
+fitted random-effect draws in posterior predictions. This does not
+integrate over the random-effects distribution; it uses the fitted effects
+for known IDs.}
+
+\item{id_var}{Character ID column used when \code{include_re = TRUE}. If \code{NULL}
+for \code{blrm}, inferred from \code{model$clusterInfo$name} when available,
+otherwise \code{"id"}.}
+
+\item{n_draws}{Integer number of posterior draws to sample for \code{blrm}, or
+\code{NULL} to use all stored draws. Defaults to 100.}
+
+\item{seed}{Optional random seed for reproducible \code{blrm} draw sampling.}
+
+\item{...}{Reserved for internal use.}
 }
 \value{
 An array of state probabilities.
