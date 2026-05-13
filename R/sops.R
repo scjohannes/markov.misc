@@ -1191,6 +1191,13 @@ standardize_sops <- function(
     stop("Previous-state variable `", pvar, "` not found in `data`.")
   }
 
+  draw_indices <- NULL
+  gamma_draws <- NULL
+  if (inherits(model, "blrm")) {
+    draw_indices <- select_posterior_draws(model, n_draws, seed)
+    gamma_draws <- cache_blrm_gamma_draws(model, draw_indices, include_re)
+  }
+
   # --- 2. Create Counterfactual Cohorts ---
   # Extract one row per patient (baseline)
   X_base <- data[!duplicated(data[[id_var]]), ]
@@ -1221,7 +1228,9 @@ standardize_sops <- function(
     include_re = include_re,
     id_var = id_var,
     n_draws = n_draws,
-    seed = seed
+    seed = seed,
+    .draw_indices = draw_indices,
+    .gamma_draws = gamma_draws
   )
 
   res_ctrl <- soprob_markov(
@@ -1238,7 +1247,9 @@ standardize_sops <- function(
     include_re = include_re,
     id_var = id_var,
     n_draws = n_draws,
-    seed = seed
+    seed = seed,
+    .draw_indices = draw_indices,
+    .gamma_draws = gamma_draws
   )
 
   # --- 4. Marginalize (Average over Patients) ---

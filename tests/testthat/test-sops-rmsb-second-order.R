@@ -117,6 +117,54 @@ test_that("blrm posterior draw sampling is random, capped, and reproducible", {
   )
 })
 
+test_that("standardize_sops() reuses blrm posterior draws across arms", {
+  model <- make_fake_blrm()
+  data <- data.frame(
+    id = c("a", "b"),
+    time = c(1, 1),
+    yprev = factor(c(1, 2), levels = 1:3),
+    tx = c(0, 1)
+  )
+  captured_draws <- list()
+  select_calls <- 0L
+
+  with_mocked_bindings(
+    select_posterior_draws = function(model, n_draws = 100L, seed = NULL) {
+      select_calls <<- select_calls + 1L
+      c(3L, 1L)
+    },
+    soprob_markov = function(...) {
+      args <- list(...)
+      captured_draws[[length(captured_draws) + 1L]] <<- args$.draw_indices
+      n_draws <- length(args$.draw_indices)
+      n_pat <- nrow(args$data)
+      n_times <- length(args$times)
+      n_states <- length(args$ylevels)
+      array(
+        1 / n_states,
+        dim = c(n_draws, n_pat, n_times, n_states)
+      )
+    },
+    {
+      out <- standardize_sops(
+        model,
+        data = data,
+        times = 1:2,
+        ylevels = 1:3,
+        absorb = 3,
+        n_draws = 2
+      )
+    }
+  )
+
+  expect_equal(select_calls, 1L)
+  expect_length(captured_draws, 2)
+  expect_identical(captured_draws[[1]], c(3L, 1L))
+  expect_identical(captured_draws[[2]], c(3L, 1L))
+  expect_equal(dim(out$sop_tx), c(2L, 2L, 3L))
+  expect_equal(dim(out$sop_ctrl), c(2L, 2L, 3L))
+})
+
 test_that("manual blrm prediction supports PO, constrained PPO, and random effects", {
   gamma <- rbind(
     c(0.50, -0.50),

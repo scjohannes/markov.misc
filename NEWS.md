@@ -7,3 +7,4 @@
 - `plot_sops()` now defaults to line plots with viridis discrete scales and supports model-derived SOP summaries from `avg_sops()` and `inferences()`, including confidence ribbons for line plots and low-alpha draw overlays for stacked bar plots when draws are stored.
 - `prepare_markov_data()`, `soprob_markov()`, `avg_sops()`, and `inferences()` now support numeric previous-state effects, including nonlinear terms such as `rms::rcs(yprev, 6)`, while preserving factor previous-state behavior by default.
 - `robcov_vglm()` now stores `bread = vcov(fit)` and unscaled score crossproducts as `meat`, aligns pre-NA cluster vectors when possible, rejects missing or single-valued clusters, and warns that clustered z-test p-values may be anti-conservative with few clusters.
+- `standardize_sops()` now reuses the same sampled `blrm` posterior draws for treatment and control counterfactuals, preserving draw-wise pairing for downstream contrasts.
