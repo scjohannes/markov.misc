@@ -901,7 +901,7 @@ sim_actt2_brownian <- function(
       mu_treatment_effect = mu_treatment_effect,
       sigma_rw = 0.055,
       x0_sd = 0.35,
-      thresholds = c(-6.42, -4.88, -3.98, -2.16, 0.5, 1.16, 1.8),
+      thresholds = c(-14.42, -4.88, -3.98, -2.16, 0.5, 1.16, 1.8),
       treatment_prob = treatment_prob,
       allowed_start_state = 4:7,
       absorbing_state = 8L,
