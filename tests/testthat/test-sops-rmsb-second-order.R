@@ -102,6 +102,77 @@ test_that("soprob_markov handles second-order recursion and absorbing states", {
   expect_equal(absorb_out[1, 2, ], c("1" = 0, "2" = 0, "3" = 1), tolerance = 1e-12)
 })
 
+test_that("soprob_markov handles single first-order time points", {
+  model <- structure(list(), class = "vglm")
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    predict_vglm_response_markov = function(object, newdata) {
+      out <- matrix(c(0.2, 0.3, 0.5), nrow = nrow(newdata), ncol = 3, byrow = TRUE)
+      colnames(out) <- as.character(1:3)
+      out
+    },
+    {
+      out <- soprob_markov(
+        object = model,
+        data = data.frame(
+          id = 1,
+          time = 1,
+          yprev = factor(1, levels = 1:3)
+        ),
+        times = 1,
+        ylevels = 1:3,
+        absorb = 3
+      )
+    }
+  )
+
+  expect_equal(dim(out), c(1L, 1L, 3L))
+  expect_equal(out[1, 1, ], c("1" = 0.2, "2" = 0.3, "3" = 0.5), tolerance = 1e-12)
+})
+
+test_that("soprob_markov carries absorbing labels that are not column positions", {
+  model <- structure(list(), class = "vglm")
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    predict_vglm_response_markov = function(object, newdata) {
+      out <- matrix(0, nrow = nrow(newdata), ncol = 3)
+      colnames(out) <- c("0", "1", "2")
+
+      if (nrow(newdata) == 1L) {
+        out[1, ] <- c(0.1, 0.2, 0.7)
+        return(out)
+      }
+
+      for (i in seq_len(nrow(newdata))) {
+        out[i, ] <- switch(
+          as.character(newdata$yprev[i]),
+          "0" = c(1, 0, 0),
+          "1" = c(0, 1, 0),
+          "2" = c(0, 0, 1)
+        )
+      }
+      out
+    },
+    {
+      out <- soprob_markov(
+        object = model,
+        data = data.frame(
+          id = 1,
+          time = 1,
+          yprev = factor(0, levels = 0:2)
+        ),
+        times = 1:2,
+        ylevels = 0:2,
+        absorb = 2
+      )
+    }
+  )
+
+  expect_equal(out[1, 2, ], c("0" = 0.1, "1" = 0.2, "2" = 0.7), tolerance = 1e-12)
+})
+
 test_that("blrm posterior draw sampling is random, capped, and reproducible", {
   model <- make_fake_blrm(draws = matrix(0, nrow = 150, ncol = 3))
 
@@ -203,6 +274,24 @@ test_that("manual blrm prediction supports PO, constrained PPO, and random effec
         draw_indices = 1
       )
 
+      cppo_string_test <- function(y) as.numeric(y) - 1
+      ppo_model$cppo <- "cppo_string_test"
+      ppo_string <- markov.misc:::predict_blrm_response_markov(
+        ppo_model,
+        newdata[1, , drop = FALSE],
+        draw_indices = 1
+      )
+
+      ppo_model$cppo <- "function(y) as.numeric(y) - 1"
+      cppo_error <- try(
+        markov.misc:::predict_blrm_response_markov(
+          ppo_model,
+          newdata[1, , drop = FALSE],
+          draw_indices = 1
+        ),
+        silent = TRUE
+      )
+
       unknown <- newdata[1, , drop = FALSE]
       unknown$id <- "z"
       re_error <- try(
@@ -225,6 +314,9 @@ test_that("manual blrm prediction supports PO, constrained PPO, and random effec
   expect_equal(unname(no_re[1, 1, ]), c(expected_p1, expected_p2, expected_p3), tolerance = 1e-12)
   expect_false(isTRUE(all.equal(no_re, with_re)))
   expect_equal(sum(ppo[1, 1, ]), 1, tolerance = 1e-12)
+  expect_equal(ppo_string, ppo, tolerance = 1e-12)
+  expect_s3_class(cppo_error, "try-error")
+  expect_match(as.character(cppo_error), "Inline expressions are not supported")
   expect_s3_class(re_error, "try-error")
   expect_match(as.character(re_error), "not present")
 })

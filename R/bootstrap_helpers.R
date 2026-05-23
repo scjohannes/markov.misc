@@ -270,6 +270,8 @@ apply_to_bootstrap <- function(
 
   # Apply function to bootstrap samples
   if (use_parallel) {
+    old_plan <- plan()
+    on.exit(plan(old_plan), add = TRUE)
     plan(callr, workers = workers)
 
     results <- furrr::future_map(
@@ -280,8 +282,6 @@ apply_to_bootstrap <- function(
         globals = c(globals, "data", "id_var", "analysis_fn")
       )
     )
-
-    plan("sequential")
   } else {
     results <- lapply(boot_samples, wrapper_fn)
   }

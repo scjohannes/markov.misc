@@ -539,32 +539,32 @@ states_to_tte_old <- function(
 
   # Indicate rows with state changes
   data$state_change <- data[["y"]] - data[["yprev"]]
+  available_covs <- if (is.null(covariates)) {
+    character(0)
+  } else {
+    intersect(covariates, colnames(data))
+  }
 
   # Keep state changes and ...
+  keep <- is.na(data[["yprev"]]) |
+    (!is.na(data$state_change) & data$state_change != 0) |
+    # ... the last entry of each individual, unless they died
+    (data[["time"]] == ave(data[["time"]], data[["id"]], FUN = max) &
+      as.character(data[["y"]]) != "6")
   data <- data[
-    data$state_change != 0 |
-      # ... the last entry of each individual, unless they died
-      (data[["time"]] == ave(data[["time"]], data[["id"]], FUN = max) &
-        !data[["y"]] == 6),
+    keep,
+    ,
+    drop = FALSE
   ]
 
   data[["start"]] <- ave(data$time, data$id, FUN = function(t) {
     c(0, t[-length(t)])
   })
   data[["stop"]] <- data[["time"]]
-  data <- data[, c("id", "tx", "yprev", "start", "stop", "y")]
 
   # Add covariates if specified ------------------------------------------------
-  if (!is.null(covariates)) {
-    available_covs <- intersect(covariates, colnames(data))
-    data <- data[,
-      colnames(data) %in%
-        c(
-          c("id", "tx", "yprev", "start", "stop", "y"),
-          available_covs
-        )
-    ]
-  }
+  keep_cols <- c("id", "tx", "yprev", "start", "stop", "y", available_covs)
+  data <- data[, unique(keep_cols), drop = FALSE]
 
   return(result = data)
 }
@@ -617,7 +617,8 @@ states_to_tte <- function(
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  data <- data[data$yprev != absorbing_state, , drop = FALSE]
+  keep <- is.na(data$yprev) | as.character(data$yprev) != as.character(absorbing_state)
+  data <- data[keep, , drop = FALSE]
   data <- data[order(data$id, data$time), , drop = FALSE]
   available_covs <- intersect(covariates, names(data))
 

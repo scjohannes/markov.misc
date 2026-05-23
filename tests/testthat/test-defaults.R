@@ -115,6 +115,28 @@ describe("lp_violet()", {
       expect_false(is.na(lp_state))
     }
   })
+
+  it("uses previous-state labels rather than factor codes", {
+    params <- c(
+      "time" = 0,
+      "time'" = 0,
+      "age" = 0,
+      "sofa" = 0,
+      "yprev=10" = 5
+    )
+
+    result <- lp_violet(
+      yprev = factor(c("2", "10"), levels = c("2", "10")),
+      t = 1,
+      age = c(0, 0),
+      sofa = c(0, 0),
+      tx = c(0, 0),
+      parameter = 0,
+      extra_params = params
+    )
+
+    expect_equal(result, c(0, 5))
+  })
 })
 
 describe("sim_trajectories_markov()", {

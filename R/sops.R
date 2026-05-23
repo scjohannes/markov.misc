@@ -315,6 +315,35 @@ blrm_random_effect_matrix <- function(
   gamma[, gamma_index, drop = FALSE]
 }
 
+resolve_blrm_cppo <- function(cppo, envir = parent.frame()) {
+  if (is.function(cppo)) {
+    return(cppo)
+  }
+
+  if (!is.character(cppo) || length(cppo) != 1L || is.na(cppo) || !nzchar(cppo)) {
+    stop("Only constrained partial proportional odds `blrm` models are supported.")
+  }
+
+  is_syntactic_name <- make.names(cppo) == cppo && !grepl("^\\.[0-9]", cppo)
+  if (!is_syntactic_name) {
+    stop(
+      "String `cppo` values must name an available function. ",
+      "Inline expressions are not supported."
+    )
+  }
+
+  tryCatch(
+    get(cppo, mode = "function", envir = envir, inherits = TRUE),
+    error = function(e) {
+      stop(
+        "String `cppo` values must name an available function. ",
+        "Could not find function `", cppo, "`.",
+        call. = FALSE
+      )
+    }
+  )
+}
+
 predict_blrm_response_markov <- function(
   object,
   newdata,
@@ -362,13 +391,7 @@ predict_blrm_response_markov <- function(
       pppo <- object$pppo %||% 0L
       has_npo <- pppo > 0
       if (has_npo) {
-        cppo <- object$cppo
-        if (is.character(cppo)) {
-          cppo <- eval(parse(text = cppo))
-        }
-        if (!is.function(cppo)) {
-          stop("Only constrained partial proportional odds `blrm` models are supported.")
-        }
+        cppo <- resolve_blrm_cppo(object$cppo, envir = parent.frame())
         Z <- blrm_design_matrix(object, newdata = newdata, second = TRUE)
         tau_draws <- draws[, tau_names, drop = FALSE]
         zt <- tau_draws %*% t(Z)
@@ -995,7 +1018,9 @@ soprob_markov <- function(
   ylevel_names <- as_state_labels(ylevels)
   absorb_names <- as_state_labels(absorb)
   n_states <- length(ylevel_names)
-  yna <- ylevel_names[!ylevel_names %in% absorb_names] # Non-absorbing states
+  absorb_idx <- which(ylevel_names %in% absorb_names)
+  non_absorb_idx <- setdiff(seq_len(n_states), absorb_idx)
+  yna <- ylevel_names[non_absorb_idx] # Non-absorbing states
   n_yna <- length(yna)
 
   # Check Bayesian draws
@@ -1055,6 +1080,10 @@ soprob_markov <- function(
       t_covs = t_covs,
       time_info = time_info
     ))
+  }
+
+  if (n_times < 2) {
+    return(P)
   }
 
   # --- 3. Prepare Expansion Data for Transitions ---
@@ -1118,8 +1147,8 @@ soprob_markov <- function(
 
       # Add contribution from Absorbing States (if any)
       # Absorbing states transition to themselves with Prob 1
-      if (!is.null(absorb)) {
-        for (a_state in absorb) {
+      if (length(absorb_idx) > 0) {
+        for (a_state in absorb_idx) {
           # If you were in absorb state at t-1, you are in absorb state at t
           p_current[, a_state] <- p_current[, a_state] + P[, it - 1, a_state]
         }
@@ -1143,8 +1172,8 @@ soprob_markov <- function(
         }
       }
 
-      if (!is.null(absorb)) {
-        for (a_state in absorb) {
+      if (length(absorb_idx) > 0) {
+        for (a_state in absorb_idx) {
           # total dead at t = new deaths + already dead
           p_current[, , a_state] <- p_current[, , a_state] +
             P[, , it - 1, a_state]
@@ -2627,13 +2656,7 @@ sops <- function(
   validate_markov_model(model)
 
   if (is.null(newdata)) {
-    # newdata <- model$x
-    # if (is.null(newdata)) {
-    #   newdata <- tryCatch(model.frame(model), error = function(e) NULL)
-    # }
-    # if (is.null(newdata)) {
     stop("Please provide `newdata` (should be baseline data).")
-    # }
   }
 
   # Ensure rowid exists for tracking
@@ -3152,14 +3175,7 @@ avg_sops <- function(
   }
 
   if (is.null(newdata)) {
-    # this creates too many issues
-    # newdata <- model$x
-    # if (is.null(newdata)) {
-    #   newdata <- tryCatch(model.frame(model), error = function(e) NULL)
-    # }
-    # if (is.null(newdata)) {
     stop("Provide newdata or ensure model stores data (x = TRUE).")
-    # }
   }
 
   if (inherits(model, "blrm") && isTRUE(include_re)) {
@@ -3207,17 +3223,6 @@ avg_sops <- function(
   }
 
   grid <- do.call(expand.grid, var_list)
-
-  # expanded_data_list <- vector("list", nrow(grid))
-  # for (i in seq_len(nrow(grid))) {
-  #   dt_copy <- baseline_data
-  #   for (v in names(grid)) {s
-  #     dt_copy[[v]] <- grid[i, v]
-  #   }
-  #   expanded_data_list[[i]] <- dt_copy
-  # }
-
-  # newdata_expanded <- do.call(rbind, expanded_data_list)
 
   newdata_expanded <- create_counterfactual_data(baseline_data, grid, var_list)
 

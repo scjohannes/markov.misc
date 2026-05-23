@@ -522,7 +522,6 @@ assess_operating_characteristics <- function(
   }
 
   out_dir_details <- paste0(output_path, "/details")
-  #out_dir_summary <- paste0(output_path, "/summary")
 
   results_list <- list()
 
@@ -563,7 +562,7 @@ assess_operating_characteristics <- function(
     # All of the fit functions must return a list
     # The first element should always be a one row tibble (or df) of summary
     # results
-    # The second element contains everything else (may be multiplpe data frames)
+    # The second element contains everything else (may be multiple data frames)
     # The second element should be saved to disk
     results <- fit_functions[[analysis_name]](
       data = sampled_data,
@@ -575,22 +574,6 @@ assess_operating_characteristics <- function(
         "Fitting function must return a list with the first element as a data frame of results. You likely used an old fit function."
       )
     }
-
-    # Save summary (deprecated)
-    #analysis_dir_summary <- file.path(out_dir_summary, analysis_name)
-
-    #if (!dir.exists(analysis_dir_summary)) {
-    #  dir.create(analysis_dir_summary, recursive = TRUE, showWarnings = FALSE)
-    #}
-
-    # save summary
-    #saveRDS(
-    #  results[[1]],
-    #  file = file.path(
-    #    analysis_dir_summary,
-    #    paste0(analysis_name, "_iter_", iter_num, ".rds")
-    #  )
-    #)
 
     # Save additional details to disk if present
     if (length(results[-1]) > 0) {

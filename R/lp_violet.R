@@ -121,12 +121,13 @@ lp_violet <- function(yprev, t, age, sofa, tx, parameter = 0, extra_params) {
   # Initialize to zero (reference level)
   yprev_effect <- rep(0, length(yprev))
   yprev_time_effect <- rep(0, length(yprev))
+  yprev_label <- as.character(yprev)
 
   # For each non-reference state, add its effect
-  for (state in unique(yprev)) {
-    if (state != 2) {
+  for (state in unique(yprev_label)) {
+    if (!is.na(state) && state != "2") {
       # Skip reference level
-      state_idx <- which(yprev == state)
+      state_idx <- which(yprev_label == state)
 
       # Main effect of previous state
       yprev_coef_name <- paste0('yprev=', state)

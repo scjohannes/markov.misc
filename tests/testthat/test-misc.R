@@ -203,11 +203,33 @@ test_that("states_to_tte_old and states_to_tte collapse trajectories", {
   old <- states_to_tte_old(data, covariates = "age")
   current <- states_to_tte(data, covariates = "age", absorbing_state = 6)
 
-  expect_equal(names(old), c("id", "tx", "yprev", "start", "stop", "y"))
+  expect_equal(names(old), c("id", "tx", "yprev", "start", "stop", "y", "age"))
   expect_equal(current$id, c(1, 1, 2, 2, 2))
   expect_equal(current$start, c(0, 2, 0, 2, 3))
   expect_equal(current$stop, c(2, 5, 2, 3, 4))
   expect_equal(current$age, c(50, 50, 60, 60, 60))
+})
+
+test_that("states_to_tte functions keep baseline rows with missing previous state", {
+  data <- data.frame(
+    id = rep(1:2, each = 3),
+    time = rep(1:3, 2),
+    y = c(2, 2, 1, 3, 6, 6),
+    yprev = c(NA, 2, 2, NA, 3, 6),
+    tx = rep(c(0, 1), each = 3),
+    age = rep(c(50, 60), each = 3)
+  )
+
+  old <- states_to_tte_old(data, covariates = "age")
+  current <- states_to_tte(data, covariates = "age", absorbing_state = 6)
+
+  expect_equal(old$id, c(1, 1, 2, 2))
+  expect_equal(old$yprev, c(NA, 2, NA, 3))
+  expect_equal(old$age, c(50, 50, 60, 60))
+  expect_equal(current$id, c(1, 1, 2, 2))
+  expect_equal(current$yprev, c(NA, 2, NA, 3))
+  expect_equal(current$age, c(50, 50, 60, 60))
+  expect_false(any(is.na(current$id)))
 })
 
 test_that("format_competing_risks supports old and new status logic", {
