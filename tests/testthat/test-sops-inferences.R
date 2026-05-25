@@ -482,9 +482,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(attr(inferred, "method"), "simulation")
     expect_equal(attr(inferred, "engine"), "mvn")
     expect_equal(attr(inferred, "n_successful"), 3L)
-    expect_false(anyNA(inferred$conf.low))
-    expect_false(anyNA(inferred$conf.high))
-    expect_true(all(inferred$conf.low <= inferred$conf.high))
+    expect_inference_intervals(inferred)
     expect_equal(sort(unique(draws$draw_id)), 1:3)
 
     expect_snapshot_value(
@@ -529,7 +527,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(attr(inferred, "method"), "simulation")
     expect_equal(attr(inferred, "engine"), "mvn")
     expect_equal(attr(inferred, "n_successful"), 2L)
-    expect_false(anyNA(inferred$conf.low))
+    expect_inference_intervals(inferred)
     expect_equal(sort(unique(draws$draw_id)), 1:2)
   })
 
@@ -567,9 +565,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(attr(inferred, "method"), "bootstrap")
     expect_equal(attr(inferred, "n_boot"), 2)
     expect_equal(attr(inferred, "n_successful"), 2L)
-    expect_false(anyNA(inferred$conf.low))
-    expect_false(anyNA(inferred$conf.high))
-    expect_true(all(inferred$conf.low <= inferred$conf.high))
+    expect_inference_intervals(inferred)
     expect_equal(sort(unique(draws$draw_id)), 1:2)
 
     expect_snapshot_value(
@@ -610,8 +606,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     expect_equal(attr(inferred, "method"), "bootstrap")
     expect_equal(attr(inferred, "n_successful"), 1L)
-    expect_false(anyNA(inferred$conf.low))
-    expect_false(anyNA(inferred$conf.high))
+    expect_inference_intervals(inferred)
   })
 
   test_that("Brownian avg_sops() supports score-bootstrap simulation on the fast path", {
@@ -651,10 +646,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(attr(inferred, "engine"), "score_bootstrap")
     expect_equal(attr(inferred, "score_weight_dist"), "exponential")
     expect_equal(attr(inferred, "n_successful"), 3L)
-    expect_false(anyNA(inferred$conf.low))
-    expect_false(anyNA(inferred$conf.high))
-    expect_true(all(inferred$std.error >= 0))
-    expect_true(any(inferred$std.error > 0))
+    expect_inference_intervals(inferred, require_positive_std_error = TRUE)
     expect_equal(sort(unique(draws$draw_id)), 1:3)
 
     expect_snapshot_value(
@@ -698,8 +690,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(attr(inferred, "method"), "simulation")
     expect_equal(attr(inferred, "engine"), "score_bootstrap")
     expect_equal(attr(inferred, "n_successful"), 2L)
-    expect_false(anyNA(inferred$conf.low))
-    expect_false(anyNA(inferred$conf.high))
+    expect_inference_intervals(inferred)
   })
 
   test_that("inline rcs() and explicit basis agree for MVN simulation inference", {

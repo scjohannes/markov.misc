@@ -14,7 +14,6 @@ make_test_data <- function(
   seed = 123,
   treatment_effect = 0
 ) {
-  set.seed(seed)
   raw_data <- sim_trajectories_brownian(
     n_patients = n_patients,
     follow_up_time = follow_up_time,
@@ -34,6 +33,14 @@ make_test_data <- function(
   data$time_nlin_1 <- as.vector(time_spl_m[, 2])
 
   return(data)
+}
+
+make_time_covariates <- function(data, time_col = "time", ...) {
+  cols <- c(time_col, ...)
+  out <- unique(data[cols])
+  out <- out[order(out[[time_col]]), , drop = FALSE]
+  rownames(out) <- NULL
+  out
 }
 
 #' Fit a standard VGLM model for testing
@@ -59,4 +66,21 @@ make_test_model <- function(data, robust = FALSE, cluster = NULL) {
   }
 
   m
+}
+
+make_score_bootstrap_case <- function(seed, n_patients = 60, follow_up_time = 10) {
+  data <- make_test_data(
+    n_patients = n_patients,
+    seed = seed,
+    follow_up_time = follow_up_time
+  )
+
+  list(
+    data = data,
+    baseline = data[data$time == 1, , drop = FALSE],
+    model = make_test_model(data, robust = TRUE),
+    times = seq_len(follow_up_time),
+    ylevels = 1:6,
+    absorb = 6
+  )
 }

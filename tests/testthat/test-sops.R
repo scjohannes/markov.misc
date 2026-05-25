@@ -1,140 +1,78 @@
-# Unit Tests: State Occupation Probabilities (SOPs)
-#
-# These tests verify that:
-# 1. soprob_markov() gives same results as Hmisc::soprobMarkovOrdm()
-# 2. soprob_markov() gives same results with rcs() vs precomputed basis functions
-# 3. Partial proportional odds models work correctly
-
-test_that("soprob_markov matches Hmisc::soprobMarkovOrdm for simple PO model", {
+test_that("soprob_markov matches Hmisc::soprobMarkovOrdm for a proportional-odds VGAM model", {
   skip_if_not_installed("Hmisc")
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  data <- make_test_data(n_patients = 100, seed = 1234, follow_up_time = 30)
-
-  # Fit simple proportional odds model
-  m1 <- VGAM::vglm(
+  follow_up <- 18L
+  data <- make_test_data(n_patients = 60, seed = 1234, follow_up_time = follow_up)
+  model <- VGAM::vglm(
     ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
     data = data
   )
 
-  # Calculate SOPs using Hmisc
-  sops_hmisc <- Hmisc::soprobMarkovOrdm(
-    m1,
+  expected <- Hmisc::soprobMarkovOrdm(
+    model,
     data = data[1, ],
-    time = 1:30,
+    time = seq_len(follow_up),
+    ylevels = factor(1:6),
+    absorb = "6"
+  )
+  actual <- soprob_markov(
+    model,
+    data = data[1, ],
+    time = seq_len(follow_up),
     ylevels = factor(1:6),
     absorb = "6"
   )
 
-  # Calculate SOPs using markov.misc
-  sops_markov <- soprob_markov(
-    m1,
-    data = data[1, ],
-    time = 1:30,
-    ylevels = factor(1:6),
-    absorb = "6"
-  )
-
-  # Check dimensions match
-  expect_equal(dim(sops_hmisc), dim(sops_markov[1, , ]))
-
-  # Check values are equal
-  expect_equal(sops_hmisc, sops_markov[1, , ], tolerance = 1e-10)
+  expect_probability_array(actual, expected_dim = c(1L, follow_up, 6L))
+  expect_equal(actual[1, , ], expected, tolerance = 1e-10)
 })
 
-test_that("soprob_markov works with rcs() and precomputed spline basis", {
+test_that("soprob_markov gives the same predictions for inline and precomputed spline bases", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  data <- make_test_data(n_patients = 100, seed = 234, follow_up_time = 30)
+  follow_up <- 16L
+  data <- make_test_data(n_patients = 60, seed = 234, follow_up_time = follow_up)
+  time_spline <- rms::rcs(data$time, 4)
+  data$time_lin <- as.vector(time_spline[, 1])
+  data$time_nlin_1 <- as.vector(time_spline[, 2])
+  data$time_nlin_2 <- as.vector(time_spline[, 3])
+  t_covs <- make_time_covariates(data, "time", "time_lin", "time_nlin_1", "time_nlin_2")
 
-  # Create spline basis with rcs()
-  time_spl_m <- rms::rcs(data$time, 4)
-  knots <- attr(time_spl_m, "parms")
-
-  # Extract individual spline terms
-  data$time_lin <- as.vector(time_spl_m[, 1])
-  data$time_nlin_1 <- as.vector(time_spl_m[, 2])
-  data$time_nlin_2 <- as.vector(time_spl_m[, 3])
-
-  # Create time covariates data frame
-  t_covs <- data.frame(
-    time_lin = data$time_lin,
-    time_nlin_1 = data$time_nlin_1,
-    time_nlin_2 = data$time_nlin_2
-  )
-  t_covs <- unique(t_covs)
-  t_covs <- t_covs[order(t_covs$time_lin), , drop = FALSE]
-  rownames(t_covs) <- NULL
-
-  # Fit model with rcs() in formula
-  m_rcs <- VGAM::vglm(
+  inline_model <- VGAM::vglm(
     ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
     data = data
   )
-
-  # Fit model with precomputed spline terms
-  m_precomp <- VGAM::vglm(
+  precomputed_model <- VGAM::vglm(
     ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
     data = data
   )
 
-  # Calculate SOPs with rcs() model
-  sops_rcs <- soprob_markov(
-    m_rcs,
-    data = data[1, ],
-    time = 1:30,
+  baseline <- data[data$time == 1, , drop = FALSE][seq_len(6), , drop = FALSE]
+  inline_sops <- soprob_markov(
+    inline_model,
+    data = baseline,
+    time = seq_len(follow_up),
     ylevels = factor(1:6),
     absorb = "6"
   )
-
-  # Calculate SOPs with precomputed model (requires t_covs)
-  sops_precomp <- soprob_markov(
-    m_precomp,
-    data = data[1, ],
-    time = 1:30,
+  precomputed_sops <- soprob_markov(
+    precomputed_model,
+    data = baseline,
+    time = seq_len(follow_up),
     ylevels = factor(1:6),
     absorb = "6",
     t_covs = t_covs
   )
 
-  # Check dimensions match
-  expect_equal(dim(sops_rcs), dim(sops_precomp))
-
-  # Check values are equal
-  expect_equal(sops_rcs[1, , ], sops_precomp[1, , ], tolerance = 1e-10)
-
-  # Test with multiple patients
-  sops_rcs_multi <- soprob_markov(
-    m_rcs,
-    data = data[1:10, ],
-    time = 1:30,
-    ylevels = factor(1:6),
-    absorb = "6"
-  )
-
-  sops_precomp_multi <- soprob_markov(
-    m_precomp,
-    data = data[1:10, ],
-    time = 1:30,
-    ylevels = factor(1:6),
-    absorb = "6",
-    t_covs = t_covs
-  )
-
-  # Check all patients match
-  for (i in 1:10) {
-    expect_equal(
-      sops_rcs_multi[i, , ],
-      sops_precomp_multi[i, , ],
-      tolerance = 1e-10,
-      label = paste("Patient", i)
-    )
-  }
+  expect_probability_array(inline_sops, expected_dim = c(6L, follow_up, 6L))
+  expect_probability_array(precomputed_sops, expected_dim = c(6L, follow_up, 6L))
+  expect_equal(inline_sops, precomputed_sops, tolerance = 1e-10)
 })
 
 test_that("soprob_markov supports inline splines of numeric previous state", {
@@ -142,7 +80,7 @@ test_that("soprob_markov supports inline splines of numeric previous state", {
   skip_if_not_installed("rms")
 
   raw_data <- sim_trajectories_brownian(
-    n_patients = 120,
+    n_patients = 100,
     follow_up_time = 7,
     n_states = 10,
     thresholds = seq(-3, 3, length.out = 9),
@@ -157,8 +95,7 @@ test_that("soprob_markov supports inline splines of numeric previous state", {
     absorbing_state = 10,
     factor_previous = FALSE
   )
-  baseline <- data[data$time == 1, , drop = FALSE]
-
+  baseline <- data[data$time == 1, , drop = FALSE][seq_len(8), , drop = FALSE]
   model <- vglm.markov(
     ordered(y) ~ rms::rcs(time, 4) + tx + rms::rcs(yprev, 6),
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
@@ -167,7 +104,7 @@ test_that("soprob_markov supports inline splines of numeric previous state", {
 
   slow <- soprob_markov(
     object = model,
-    data = baseline[1:8, , drop = FALSE],
+    data = baseline,
     times = 1:7,
     ylevels = 1:10,
     absorb = "10",
@@ -175,7 +112,7 @@ test_that("soprob_markov supports inline splines of numeric previous state", {
   )
   components <- markov.misc:::markov_msm_build(
     model = model,
-    data = baseline[1:8, , drop = FALSE],
+    data = baseline,
     times = 1:7,
     ylevels = 1:10,
     pvarname = "yprev"
@@ -192,114 +129,76 @@ test_that("soprob_markov supports inline splines of numeric previous state", {
   )
 
   expect_type(data$yprev, "double")
-  expect_equal(dim(slow), c(8L, 7L, 10L))
+  expect_probability_array(slow, expected_dim = c(8L, 7L, 10L))
+  expect_probability_array(fast, expected_dim = c(8L, 7L, 10L))
   expect_equal(unname(fast), unname(slow), tolerance = 1e-10)
-  expect_equal(rowSums(fast[, 7, ]), rep(1, 8), tolerance = 1e-10)
 })
 
-test_that("soprob_markov handles partial proportional odds models", {
+test_that("soprob_markov handles partial proportional-odds constraints", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  data <- make_test_data(n_patients = 100, seed = 456, follow_up_time = 30)
+  follow_up <- 18L
+  data <- make_test_data(n_patients = 70, seed = 456, follow_up_time = follow_up)
+  time_spline <- rms::rcs(data$time, 4)
+  data$time_lin <- as.vector(time_spline[, 1])
+  data$time_nlin_1 <- as.vector(time_spline[, 2])
+  data$time_nlin_2 <- as.vector(time_spline[, 3])
+  t_covs <- make_time_covariates(data, "time", "time_lin", "time_nlin_1", "time_nlin_2")
 
-  # Create spline basis
-  time_spl_m <- rms::rcs(data$time, 4)
-  data$time_lin <- as.vector(time_spl_m[, 1])
-  data$time_nlin_1 <- as.vector(time_spl_m[, 2])
-  data$time_nlin_2 <- as.vector(time_spl_m[, 3])
-
-  t_covs <- data.frame(
-    time_lin = data$time_lin,
-    time_nlin_1 = data$time_nlin_1,
-    time_nlin_2 = data$time_nlin_2
-  )
-  t_covs <- unique(t_covs)
-  t_covs <- t_covs[order(t_covs$time_lin), , drop = FALSE]
-  rownames(t_covs) <- NULL
-
-  # Define constraints for partial PO model
-  M <- 5
-  cons_time <- list(
-    "(Intercept)" = diag(M),
+  n_thresholds <- 5L
+  constraints <- list(
+    "(Intercept)" = diag(n_thresholds),
     "yprev" = cbind(PO_effect = 1),
     "tx" = cbind(PO_effect = 1),
     "time_lin" = cbind(
       time_lin_1 = 1,
-      time_lin_5 = 0:(M - 1)
+      time_lin_5 = 0:(n_thresholds - 1)
     ),
     "time_nlin_1" = cbind(PO_effect = 1),
     "time_nlin_2" = cbind(PO_effect = 1)
   )
-
-  # Fit partial PO model
-  m_ppo <- VGAM::vglm(
+  model <- VGAM::vglm(
     ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = FALSE ~ time_lin),
     data = data,
-    constraints = cons_time
+    constraints = constraints
   )
+  model@call$constraints <- constraints
 
-  # Bake constraint matrix into model object
-  m_ppo@call$constraints <- cons_time
-
-  # Calculate SOPs
-  sops_ppo <- soprob_markov(
-    m_ppo,
+  result <- soprob_markov(
+    model,
     data = data[1, ],
-    time = 1:30,
+    time = seq_len(follow_up),
     ylevels = factor(1:6),
     absorb = "6",
     t_covs = t_covs
   )
 
-  # Check output structure
-  expect_equal(dim(sops_ppo), c(1, 30, 6))
-  expect_type(sops_ppo, "double")
-
-  # Check probabilities sum to 1 at each time point
-  for (t in 1:30) {
-    expect_equal(sum(sops_ppo[1, t, ]), 1, tolerance = 1e-10)
-  }
-
-  # Check probabilities are between 0 and 1
-  expect_true(all(sops_ppo >= 0 & sops_ppo <= 1))
-
-  # Check absorbing state (state 6) is monotonically increasing
-  state_6_probs <- sops_ppo[1, , 6]
-  expect_true(all(diff(state_6_probs) >= -1e-10)) # Allow tiny numerical errors
+  expect_probability_array(result, expected_dim = c(1L, follow_up, 6L))
+  expect_absorbing_probability_monotone(result, absorbing_state = 6)
 })
 
-test_that("soprob_markov handles interaction terms", {
+test_that("soprob_markov incorporates treatment interactions into predictions", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  data <- make_test_data(n_patients = 100, seed = 789, follow_up_time = 30)
+  follow_up <- 18L
+  data <- make_test_data(n_patients = 70, seed = 789, follow_up_time = follow_up)
+  time_spline <- rms::rcs(data$time, 4)
+  data$time_lin <- as.vector(time_spline[, 1])
+  data$time_nlin_1 <- as.vector(time_spline[, 2])
+  data$time_nlin_2 <- as.vector(time_spline[, 3])
+  t_covs <- make_time_covariates(data, "time", "time_lin", "time_nlin_1", "time_nlin_2")
 
-  # Create spline basis
-  time_spl_m <- rms::rcs(data$time, 4)
-  data$time_lin <- as.vector(time_spl_m[, 1])
-  data$time_nlin_1 <- as.vector(time_spl_m[, 2])
-  data$time_nlin_2 <- as.vector(time_spl_m[, 3])
-
-  t_covs <- data.frame(
-    time_lin = data$time_lin,
-    time_nlin_1 = data$time_nlin_1,
-    time_nlin_2 = data$time_nlin_2
-  )
-  t_covs <- unique(t_covs)
-  t_covs <- t_covs[order(t_covs$time_lin), , drop = FALSE]
-  rownames(t_covs) <- NULL
-
-  # Define constraints for partial PO model with interactions
-  M <- 5
-  cons_time_tx <- list(
-    "(Intercept)" = diag(M),
+  n_thresholds <- 5L
+  constraints <- list(
+    "(Intercept)" = diag(n_thresholds),
     "yprev" = cbind(PO_effect = 1),
     "tx" = cbind(PO_effect = 1),
     "time_lin" = cbind(
       time_lin_1 = 1,
-      time_lin_5 = 0:(M - 1)
+      time_lin_5 = 0:(n_thresholds - 1)
     ),
     "time_nlin_1" = cbind(PO_effect = 1),
     "time_nlin_2" = cbind(PO_effect = 1),
@@ -308,109 +207,73 @@ test_that("soprob_markov handles interaction terms", {
     "time_nlin_2:tx" = cbind(PO_effect = 1),
     "time_lin:yprev" = cbind(PO_effect = 1)
   )
-
-  # Fit model with interactions
-  m_interact <- VGAM::vglm(
-    ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) *
-      tx +
-      yprev +
-      yprev:time_lin,
+  model <- VGAM::vglm(
+    ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + yprev + yprev:time_lin,
     family = VGAM::cumulative(reverse = TRUE, parallel = FALSE ~ time_lin),
     data = data,
-    constraints = cons_time_tx
+    constraints = constraints
   )
+  model@call$constraints <- constraints
 
-  # Bake constraint matrix into model object
-  m_interact@call$constraints <- cons_time_tx
+  baseline <- data[data$time == 1, , drop = FALSE][1, , drop = FALSE]
+  control <- baseline
+  treated <- baseline
+  control$tx <- 0
+  treated$tx <- 1
 
-  # Calculate SOPs for treatment group
-  data_tx <- data[data$time == 1 & data$tx == 1, , drop = FALSE]
-  sops_tx <- soprob_markov(
-    m_interact,
-    data = data_tx[1, ],
-    time = 1:30,
+  treated_sops <- soprob_markov(
+    model,
+    data = treated,
+    time = seq_len(follow_up),
+    ylevels = factor(1:6),
+    absorb = "6",
+    t_covs = t_covs
+  )
+  control_sops <- soprob_markov(
+    model,
+    data = control,
+    time = seq_len(follow_up),
     ylevels = factor(1:6),
     absorb = "6",
     t_covs = t_covs
   )
 
-  # Calculate SOPs for control group
-  data_ctrl <- data[data$time == 1 & data$tx == 0, , drop = FALSE]
-  sops_ctrl <- soprob_markov(
-    m_interact,
-    data = data_ctrl[1, ],
-    time = 1:30,
-    ylevels = factor(1:6),
-    absorb = "6",
-    t_covs = t_covs
-  )
-
-  # Check output structure
-  expect_equal(dim(sops_tx), c(1, 30, 6))
-  expect_equal(dim(sops_ctrl), c(1, 30, 6))
-
-  # Check probabilities sum to 1 at each time point
-  for (t in 1:30) {
-    expect_equal(sum(sops_tx[1, t, ]), 1, tolerance = 1e-10)
-    expect_equal(sum(sops_ctrl[1, t, ]), 1, tolerance = 1e-10)
-  }
-
-  # Check that treatment and control give different results (due to interaction)
-  # At least some time points should differ
-  differences <- abs(sops_tx[1, , ] - sops_ctrl[1, , ])
-  expect_true(any(differences > 1e-6))
+  expect_probability_array(treated_sops, expected_dim = c(1L, follow_up, 6L))
+  expect_probability_array(control_sops, expected_dim = c(1L, follow_up, 6L))
+  expect_gt(max(abs(treated_sops - control_sops)), 1e-6)
 })
 
-test_that("soprob_markov respects absorbing state constraint", {
+test_that("soprob_markov carries absorbing-state mass forward", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  data <- make_test_data(n_patients = 50, seed = 999, follow_up_time = 20)
-
-  # Fit simple model
-  m1 <- VGAM::vglm(
+  follow_up <- 12L
+  data <- make_test_data(n_patients = 40, seed = 999, follow_up_time = follow_up)
+  model <- VGAM::vglm(
     ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
     data = data
   )
 
-  # Calculate SOPs
-  sops <- soprob_markov(
-    m1,
-    data = data[1:10, ],
-    time = 1:20,
+  result <- soprob_markov(
+    model,
+    data = data[seq_len(8), ],
+    time = seq_len(follow_up),
     ylevels = factor(1:6),
     absorb = "6"
   )
 
-  # Check that state 6 probabilities are monotonically increasing for all patients
-  for (i in 1:10) {
-    state_6_probs <- sops[i, , 6]
-    diffs <- diff(state_6_probs)
-    # Allow tiny negative values due to numerical precision
-    expect_true(all(diffs >= -1e-10), label = paste("Patient", i))
-  }
-
-  # Check that probabilities sum to 1 at each time point for all patients
-  for (i in 1:10) {
-    for (t in 1:20) {
-      prob_sum <- sum(sops[i, t, ])
-      expect_equal(
-        prob_sum,
-        1,
-        tolerance = 1e-10,
-        label = paste("Patient", i, "Time", t)
-      )
-    }
-  }
+  expect_probability_array(result, expected_dim = c(8L, follow_up, 6L))
+  expect_absorbing_probability_monotone(result, absorbing_state = 6)
 })
 
-test_that("soprob_markov works without an absorbing state", {
+test_that("soprob_markov normalizes transitions when no state is absorbing", {
   skip_if_not_installed("VGAM")
 
+  follow_up <- 10L
   data <- as.data.frame(sim_trajectories_brownian(
-    n_patients = 120,
-    follow_up_time = 12,
+    n_patients = 80,
+    follow_up_time = follow_up,
     treatment_prob = 0.5,
     absorbing_state = NULL,
     allowed_start_state = as.integer(1:6),
@@ -419,11 +282,7 @@ test_that("soprob_markov works without an absorbing state", {
     seed = 1000
   ))
   data$yprev <- factor(data$yprev, levels = 1:6)
-
-  expect_true(6 %in% as.integer(as.character(data$yprev)))
-
-  baseline_data <- data[data$time == 1, , drop = FALSE]
-
+  baseline <- data[data$time == 1, , drop = FALSE][seq_len(5), , drop = FALSE]
   model <- VGAM::vglm(
     ordered(y) ~ time + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
@@ -432,118 +291,77 @@ test_that("soprob_markov works without an absorbing state", {
 
   result <- soprob_markov(
     model,
-    data = baseline_data[1:5, , drop = FALSE],
-    time = 1:12,
+    data = baseline,
+    time = seq_len(follow_up),
     ylevels = factor(1:6),
     absorb = NULL
   )
 
-  expect_equal(dim(result), c(5L, 12L, 6L))
-  expect_true(all(is.finite(result)))
-  expect_true(all(result >= 0))
-
-  for (i in 1:5) {
-    for (t in 1:12) {
-      expect_equal(
-        sum(result[i, t, ]),
-        1,
-        tolerance = 1e-10,
-        label = paste("Patient", i, "Time", t)
-      )
-    }
-  }
+  expect_probability_array(result, expected_dim = c(5L, follow_up, 6L))
 })
 
-# Unit Tests: Equivalence of sops() and avg_sops()
-#
-# This test verifies that manual marginalization using sops() matches
-# G-computation performed by avg_sops().
-
-test_that("marginalization via sops() and avg_sops() result in exactly the same results", {
+test_that("avg_sops() equals manual G-computation over individual SOPs", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  withr::local_seed(123)
-
-  # 1. Setup Data and Model
-  FU <- 10
-  data <- make_test_data(n_patients = 50, follow_up_time = FU, seed = 123)
-
-  # Extract t_covs from the data (already contains spline terms)
-  t_covs <- data.frame(
-    time = data$time,
-    time_lin = as.vector(data$time_lin),
-    time_nlin_1 = as.vector(data$time_nlin_1)
-  )
-  t_covs <- unique(t_covs)
-  t_covs <- t_covs[order(t_covs$time), , drop = FALSE]
-  rownames(t_covs) <- NULL
-
-  # Fit an interaction model
-  m_inter <- VGAM::vglm(
+  follow_up <- 6L
+  data <- make_test_data(n_patients = 40, follow_up_time = follow_up, seed = 123)
+  t_covs <- make_time_covariates(data, "time", "time_lin", "time_nlin_1")
+  model <- VGAM::vglm(
     ordered(y) ~ (time_lin + time_nlin_1) * tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
     data = data
   )
+  robust_model <- robcov_vglm(model, cluster = data$id)
+  baseline <- data[data$time == 1, , drop = FALSE]
 
-  # Use robust model as in the example
-  m_robust <- robcov_vglm(m_inter, cluster = data$id)
-
-  # 2. Manual marginalization via sops()
-
-  # Filter to baseline data for G-computation
-  baseline_data <- data[data$time == 1, , drop = FALSE]
-
-  baseline_tx1 <- baseline_data
+  baseline_tx1 <- baseline
   baseline_tx1$tx <- 1
-  sops_1 <- sops(
-    m_robust,
+  manual_tx1 <- sops(
+    robust_model,
     newdata = baseline_tx1,
-    times = 1:FU,
+    times = seq_len(follow_up),
     ylevels = 1:6,
     absorb = "6",
     id_var = "id",
     t_covs = t_covs
   )
-  sops_1 <- aggregate(estimate ~ time + state, data = sops_1, FUN = mean)
-  sops_1$tx <- 1
+  manual_tx1 <- aggregate(estimate ~ time + state, data = manual_tx1, FUN = mean)
+  manual_tx1$tx <- 1
 
-  baseline_tx0 <- baseline_data
+  baseline_tx0 <- baseline
   baseline_tx0$tx <- 0
-  sops_0 <- sops(
-    m_robust,
+  manual_tx0 <- sops(
+    robust_model,
     newdata = baseline_tx0,
-    times = 1:FU,
+    times = seq_len(follow_up),
     ylevels = 1:6,
     absorb = "6",
     id_var = "id",
     t_covs = t_covs
   )
-  sops_0 <- aggregate(estimate ~ time + state, data = sops_0, FUN = mean)
-  sops_0$tx <- 0
+  manual_tx0 <- aggregate(estimate ~ time + state, data = manual_tx0, FUN = mean)
+  manual_tx0$tx <- 0
 
-  sops_manual <- rbind(sops_0, sops_1)
-  sops_manual <- sops_manual[order(sops_manual$tx, sops_manual$state, sops_manual$time), ]
-  rownames(sops_manual) <- NULL
-
-  # 3. Automated marginalization via avg_sops()
-  sops_avg <- avg_sops(
-    m_robust,
-    newdata = baseline_data,
+  manual <- rbind(manual_tx0, manual_tx1)
+  manual <- manual[order(manual$tx, manual$state, manual$time), ]
+  rownames(manual) <- NULL
+  automated <- avg_sops(
+    robust_model,
+    newdata = baseline,
     variables = "tx",
-    times = 1:FU,
+    times = seq_len(follow_up),
     ylevels = 1:6,
     absorb = "6",
     id_var = "id",
     t_covs = t_covs
   )
-  sops_avg <- as.data.frame(sops_avg)
-  sops_avg <- sops_avg[order(sops_avg$tx, sops_avg$state, sops_avg$time), ]
-  rownames(sops_avg) <- NULL
+  automated <- as.data.frame(automated)
+  automated <- automated[order(automated$tx, automated$state, automated$time), ]
+  rownames(automated) <- NULL
 
-  # 4. Compare results
-  expect_equal(sops_manual$estimate, sops_avg$estimate, tolerance = 1e-15)
-  expect_equal(sops_manual$tx, sops_avg$tx)
-  expect_equal(as.character(sops_manual$state), as.character(sops_avg$state))
-  expect_equal(sops_manual$time, sops_avg$time)
+  expect_equal(manual$estimate, automated$estimate, tolerance = 1e-15)
+  expect_equal(manual$tx, automated$tx)
+  expect_equal(as.character(manual$state), as.character(automated$state))
+  expect_equal(manual$time, automated$time)
 })

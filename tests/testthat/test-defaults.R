@@ -8,43 +8,30 @@
 
 describe("violet_baseline", {
   it("exists and has correct structure", {
-    # Load the dataset
     data("violet_baseline", package = "markov.misc")
-    expect_true(exists("violet_baseline"))
 
-    # Check dimensions
     expect_equal(nrow(violet_baseline), 250000)
     expect_equal(ncol(violet_baseline), 5)
 
-    # Check columns exist
     expected_cols <- c("id", "yprev", "age", "sofa", "tx")
     expect_named(violet_baseline, expected_cols, ignore.order = TRUE)
 
-    # Check data types
     expect_type(violet_baseline$id, "integer")
     expect_type(violet_baseline$yprev, "double")
     expect_type(violet_baseline$age, "integer")
     expect_type(violet_baseline$sofa, "integer")
     expect_type(violet_baseline$tx, "double")
 
-    # Check no missing values in required columns
     expect_all_false(is.na(violet_baseline$id))
     expect_all_false(is.na(violet_baseline$yprev))
     expect_all_false(is.na(violet_baseline$age))
     expect_all_false(is.na(violet_baseline$sofa))
     expect_all_false(is.na(violet_baseline$tx))
 
-    # Check yprev values are valid states (1-6)
     expect_all_true(violet_baseline$yprev %in% 1:6)
-
-    # Check tx is binary (0 or 1)
     expect_all_true(violet_baseline$tx %in% c(0, 1))
-
-    # Check age is reasonable (e.g., 18-120)
     expect_gte(min(violet_baseline$age), 18)
     expect_lte(max(violet_baseline$age), 120)
-
-    # Check sofa is reasonable (0-24)
     expect_gte(min(violet_baseline$sofa), 0)
     expect_lte(max(violet_baseline$sofa), 24)
   })
@@ -81,13 +68,14 @@ describe("lp_violet()", {
     expect_all_false(is.na(test_lp))
     expect_type(test_lp, "double")
     expect_all_true(is.finite(test_lp))
-
-    # Snapshot the values to catch regressions
-    expect_snapshot(test_lp)
+    expect_equal(
+      test_lp,
+      c(-0.5053652, -0.536200751, 5.791844249),
+      tolerance = 1e-9
+    )
   })
 
   it("handles edge cases", {
-    # Test with single patient
     single_lp <- lp_violet(
       yprev = 2,
       t = 1,
@@ -101,19 +89,17 @@ describe("lp_violet()", {
     expect_length(single_lp, 1)
     expect_false(is.na(single_lp))
 
-    # Test with different previous states
-    for (state in 1:5) {
-      lp_state <- lp_violet(
-        yprev = state,
-        t = 5,
-        age = 65,
-        sofa = 5,
-        tx = 0,
-        parameter = 0,
-        extra_params = extra_params
-      )
-      expect_false(is.na(lp_state))
-    }
+    lp_states <- lp_violet(
+      yprev = 1:5,
+      t = 5,
+      age = rep(65, 5),
+      sofa = rep(5, 5),
+      tx = rep(0, 5),
+      parameter = 0,
+      extra_params = extra_params
+    )
+    expect_length(lp_states, 5)
+    expect_false(anyNA(lp_states))
   })
 
   it("uses previous-state labels rather than factor codes", {
@@ -151,31 +137,17 @@ describe("sim_trajectories_markov()", {
       seed = 12345
     )
 
-    expect_equal(nrow(trajectories), 100 * 30)
-    expect_contains(
-      names(trajectories),
-      c("id", "time", "y", "yprev", "age", "sofa", "tx")
+    expect_trajectory_contract(
+      trajectories,
+      expected_cols = c("id", "time", "y", "yprev", "age", "sofa", "tx"),
+      n_patients = 100,
+      follow_up_time = 30,
+      states = 1:6
     )
     expect_type(trajectories$id, "integer")
     expect_type(trajectories$time, "integer")
     expect_type(trajectories$y, "double")
     expect_type(trajectories$yprev, "double")
-
-    expect_equal(unique(trajectories$time), 1:30)
-    expect_true(all(table(trajectories$id) == 30))
-    expect_all_true(trajectories$y %in% 1:6)
-    expect_all_true(trajectories$yprev %in% 1:6)
-
-    # Check death state (6) is absorbing
-    deaths <- trajectories[trajectories$y == 6, ]
-    if (nrow(deaths) > 0) {
-      for (patient_id in unique(deaths$id)) {
-        patient_data <- trajectories[trajectories$id == patient_id, ]
-        first_death <- min(patient_data$time[patient_data$y == 6])
-        subsequent_states <- patient_data$y[patient_data$time >= first_death]
-        expect_all_true(subsequent_states == 6)
-      }
-    }
   })
 
   it("works with minimal arguments", {
@@ -186,11 +158,12 @@ describe("sim_trajectories_markov()", {
       seed = 99999
     )
 
-    expect_equal(nrow(trajectories_minimal), 50 * 60) # Default follow_up_time = 60
-    expect_s3_class(trajectories_minimal, "data.frame")
-    expect_contains(
-      names(trajectories_minimal),
-      c("id", "time", "y", "yprev", "age", "sofa", "tx")
+    expect_trajectory_contract(
+      trajectories_minimal,
+      expected_cols = c("id", "time", "y", "yprev", "age", "sofa", "tx"),
+      n_patients = 50,
+      follow_up_time = 60,
+      states = 1:6
     )
   })
 
@@ -246,7 +219,6 @@ describe("sim_trajectories_markov()", {
     )
     expect_equal(nrow(traj_neg), 50 * 20)
 
-    # Test with positive effect
     traj_pos <- sim_trajectories_markov(
       baseline_data = test_baseline,
       follow_up_time = 20,
@@ -254,5 +226,6 @@ describe("sim_trajectories_markov()", {
       seed = 123
     )
     expect_equal(nrow(traj_pos), 50 * 20)
+    expect_false(identical(traj_null$y, traj_pos$y))
   })
 })
