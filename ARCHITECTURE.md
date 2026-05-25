@@ -572,6 +572,9 @@ Important validation checks include:
   from raw `times`.
 - `validate_coef_vcov()` requires coefficient vectors and covariance matrices to
   have matching dimensions and names.
+- `get_vcov_robust()` prefers an explicit `data` argument over evaluating a
+  model call's stored `data` symbol when resolving formula-based clusters,
+  avoiding environment-dependent cluster alignment.
 - Bootstrap helpers preserve missing-state information so predictions can be
   expanded back to the original state support.
 

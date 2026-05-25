@@ -271,11 +271,15 @@ get_vcov_robust <- function(
       )
     }
 
-    # Try to extract cluster from model's original fitting data first
-    # This is critical because cluster must match model's n_obs, not newdata
+    # Prefer the explicit `data` argument when supplied. Model calls often store
+    # only a symbol such as `data`, and evaluating that symbol from a caller can
+    # resolve to an unrelated object in interactive/test wrapper environments.
     model_data <- NULL
+    if (!is.null(data) && cluster_var %in% names(data)) {
+      model_data <- data
+    }
 
-    if (inherits(model, c("vglm", "vgam"))) {
+    if (is.null(model_data) && inherits(model, c("vglm", "vgam"))) {
       # For S4 vglm/vgam objects, try to evaluate the data from the call
       if (!is.null(model@call$data)) {
         model_data <- tryCatch(
@@ -283,7 +287,7 @@ get_vcov_robust <- function(
           error = function(e) NULL
         )
       }
-    } else if (!is.null(model$call$data)) {
+    } else if (is.null(model_data) && !is.null(model$call$data)) {
       # For S3 objects (orm, lrm), try to evaluate data from call
       model_data <- tryCatch(
         eval(model$call$data, envir = parent.frame(2)),
@@ -322,12 +326,8 @@ get_vcov_robust <- function(
       cluster_values
     }
 
-    # Check if we found the cluster variable in model's data
     if (!is.null(model_data) && cluster_var %in% names(model_data)) {
       cluster <- align_cluster(model_data[[cluster_var]], model_data)
-    } else if (!is.null(data) && cluster_var %in% names(data)) {
-      # Fall back to user-provided data
-      cluster <- align_cluster(data[[cluster_var]], data)
     } else {
       stop(
         "Cluster variable '",

@@ -40,7 +40,10 @@ describe("MVN Simulation-Based Inference for SOPs", {
 
       expect_equal(set_coef(lrm_model, 3)$coefficients, c(a = 3))
       expect_equal(set_coef(rms_model, 4)$coefficients, c(a = 4))
-      expect_equal(set_coef(robust_model, c(5, 6))$coefficients, c(a = 5, b = 6))
+      expect_equal(
+        set_coef(robust_model, c(5, 6))$coefficients,
+        c(a = 5, b = 6)
+      )
     })
 
     it("works for vglm models", {
@@ -128,12 +131,18 @@ describe("MVN Simulation-Based Inference for SOPs", {
         fixed = TRUE
       )
       expect_error(
-        get_vcov_robust(structure(list(call = list()), class = "orm"), cluster = ~a + b),
+        get_vcov_robust(
+          structure(list(call = list()), class = "orm"),
+          cluster = ~ a + b
+        ),
         "cluster formula must specify exactly one variable",
         fixed = TRUE
       )
       expect_error(
-        get_vcov_robust(structure(list(call = list()), class = "orm"), cluster = ~id),
+        get_vcov_robust(
+          structure(list(call = list()), class = "orm"),
+          cluster = ~id
+        ),
         "Cluster variable 'id' not found",
         fixed = TRUE
       )
@@ -216,6 +225,34 @@ describe("MVN Simulation-Based Inference for SOPs", {
         cluster = ~id,
         data = data_with_extra
       )
+
+      expect_true(is.matrix(V_robust))
+      expect_equal(nrow(V_robust), length(coef(m_vglm)))
+      expect_equal(ncol(V_robust), length(coef(m_vglm)))
+    })
+
+    it("uses explicit formula cluster data before evaluating model call data", {
+      skip_if_not_installed("VGAM")
+
+      source_data <- make_test_data(
+        n_patients = 30,
+        seed = 444,
+        follow_up_time = 15
+      )
+      m_vglm <- make_test_model(source_data)
+
+      with_shadowed_call_data <- function(model, source_data) {
+        data <- source_data[seq_len(2), , drop = FALSE]
+        data$y <- NA
+
+        inner <- function() {
+          get_vcov_robust(model, cluster = ~id, data = source_data)
+        }
+
+        inner()
+      }
+
+      V_robust <- with_shadowed_call_data(m_vglm, source_data)
 
       expect_true(is.matrix(V_robust))
       expect_equal(nrow(V_robust), length(coef(m_vglm)))
@@ -364,7 +401,10 @@ describe("MVN Simulation-Based Inference for SOPs", {
         return_draws = TRUE
       )
 
-      expect_contains(names(result_score), c("conf.low", "conf.high", "std.error"))
+      expect_contains(
+        names(result_score),
+        c("conf.low", "conf.high", "std.error")
+      )
       expect_equal(attr(result_score, "method"), "simulation")
       expect_equal(attr(result_score, "engine"), "score_bootstrap")
       expect_equal(attr(result_score, "score_weight_dist"), "exponential")
@@ -372,7 +412,10 @@ describe("MVN Simulation-Based Inference for SOPs", {
 
       draws <- get_draws(result_score)
       expect_s3_class(draws, "data.frame")
-      expect_contains(names(draws), c("draw_id", "estimate", "time", "state", "tx"))
+      expect_contains(
+        names(draws),
+        c("draw_id", "estimate", "time", "state", "tx")
+      )
       expect_lte(length(unique(draws$draw_id)), 60)
     })
 
