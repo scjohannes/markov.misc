@@ -582,6 +582,37 @@ When adding new functionality, prefer adding validation at the boundary where
 the user still sees the original argument names rather than deeper inside array
 or matrix code.
 
+## Testing Architecture
+
+The test suite mirrors the workflow boundaries in this document rather than only
+mirroring individual source files. Tests in `tests/testthat/` are organized
+around simulation contracts, model-adapter behavior, SOP recursion, inference
+engines, bootstrap infrastructure, endpoint summaries, operating-characteristic
+helpers, and plotting output.
+
+Reusable test support is split by purpose:
+
+- `tests/testthat/helper-simulation.R` builds deterministic trajectory/model
+  fixtures for SOP, bootstrap, and inference tests. It owns package-specific
+  factories such as `make_test_data()`, `make_test_model()`,
+  `make_time_covariates()`, and `make_score_bootstrap_case()`.
+- `tests/testthat/helper-expectations.R` defines domain expectations for
+  trajectory tables, sticky absorbing states, normalized SOP probability arrays,
+  monotone absorbing-state probabilities, and inference interval outputs.
+
+The intent is for high-level tests to state behavioral contracts directly.
+For example, SOP tests should assert "this is a normalized patient-time-state
+probability array" through `expect_probability_array()` instead of repeating
+manual row-sum loops. Simulation tests should force absorbing-state scenarios
+when testing absorbing behavior and then use `expect_absorbing_state_sticky()`;
+they should not pass conditionally when a random fixture happens not to enter the
+absorbing state.
+
+Regression tests use deterministic seeds and small fixtures where possible.
+Snapshot tests are reserved for complex rendered summaries or compact regression
+signatures. For scalar or low-dimensional numerical behavior, tests should prefer
+explicit known-good expected values, as in the `lp_violet()` defaults tests.
+
 ## Extension Guide
 
 ### Add a New Model Backend
@@ -696,6 +727,8 @@ interfaces or examples change.
 | `R/power.R` | `sample_from_arrow()`, `tidy_po()`, `assess_operating_characteristics()`, `summarize_oc_results()` | Operating-characteristic simulation helpers. |
 | `R/viz.R` | `plot_sops()`, `plot_results()`, `plot_bootstrap_sops()` | SOP, bootstrap, and operating-characteristic plots. |
 | `R/globals.R` | `utils::globalVariables()` | CRAN/R CMD check global variable declarations. |
+| `tests/testthat/helper-simulation.R` | `make_test_data()`, `make_test_model()`, `make_time_covariates()`, `make_score_bootstrap_case()` | Deterministic fixtures for simulation, SOP, bootstrap, and inference tests. |
+| `tests/testthat/helper-expectations.R` | `expect_trajectory_contract()`, `expect_probability_array()`, `expect_inference_intervals()` | Domain-specific test expectations for package contracts. |
 
 ## Glossary
 

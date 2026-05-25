@@ -2,18 +2,15 @@ test_that("score-bootstrap simulation adds CIs and metadata for avg_sops", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
+  case <- make_score_bootstrap_case(seed = 2001)
   withr::local_seed(2001)
-  data <- make_test_data(n_patients = 60, seed = 2001, follow_up_time = 10)
-  baseline_data <- data[data$time == 1, ]
-  model <- make_test_model(data, robust = TRUE)
-
   result <- avg_sops(
-    model = model,
-    newdata = baseline_data,
+    model = case$model,
+    newdata = case$baseline,
     variables = list(tx = c(0, 1)),
-    times = 1:10,
-    ylevels = 1:6,
-    absorb = 6,
+    times = case$times,
+    ylevels = case$ylevels,
+    absorb = case$absorb,
     id_var = "id"
   ) |>
     inferences(
@@ -23,33 +20,28 @@ test_that("score-bootstrap simulation adds CIs and metadata for avg_sops", {
       return_draws = TRUE
     )
 
-  expect_contains(names(result), c("conf.low", "conf.high", "std.error"))
   expect_equal(attr(result, "method"), "simulation")
   expect_equal(attr(result, "engine"), "score_bootstrap")
   expect_equal(attr(result, "score_weight_dist"), "exponential")
   expect_equal(attr(result, "n_sim"), 40)
   expect_true(attr(result, "n_successful") <= 40)
   expect_true(attr(result, "n_successful") > 0)
-  expect_all_true(result$std.error >= 0)
-  expect_true(any(result$std.error > 0, na.rm = TRUE))
+  expect_inference_intervals(result, require_positive_std_error = TRUE)
 })
 
 test_that("score-bootstrap simulation stores draw-level output with expected structure", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
+  case <- make_score_bootstrap_case(seed = 2002)
   withr::local_seed(2002)
-  data <- make_test_data(n_patients = 60, seed = 2002, follow_up_time = 10)
-  baseline_data <- data[data$time == 1, ]
-  model <- make_test_model(data, robust = TRUE)
-
   result <- avg_sops(
-    model = model,
-    newdata = baseline_data,
+    model = case$model,
+    newdata = case$baseline,
     variables = list(tx = c(0, 1)),
-    times = 1:10,
-    ylevels = 1:6,
-    absorb = 6,
+    times = case$times,
+    ylevels = case$ylevels,
+    absorb = case$absorb,
     id_var = "id"
   ) |>
     inferences(
@@ -72,18 +64,15 @@ test_that("score-bootstrap simulation does not expose draws when return_draws is
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
+  case <- make_score_bootstrap_case(seed = 2003)
   withr::local_seed(2003)
-  data <- make_test_data(n_patients = 60, seed = 2003, follow_up_time = 10)
-  baseline_data <- data[data$time == 1, ]
-  model <- make_test_model(data, robust = TRUE)
-
   result <- avg_sops(
-    model = model,
-    newdata = baseline_data,
+    model = case$model,
+    newdata = case$baseline,
     variables = list(tx = c(0, 1)),
-    times = 1:10,
-    ylevels = 1:6,
-    absorb = 6,
+    times = case$times,
+    ylevels = case$ylevels,
+    absorb = case$absorb,
     id_var = "id"
   ) |>
     inferences(
@@ -100,19 +89,16 @@ test_that("score-bootstrap simulation rejects user-supplied vcov", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  withr::local_seed(2004)
-  data <- make_test_data(n_patients = 60, seed = 2004, follow_up_time = 10)
-  baseline_data <- data[data$time == 1, ]
-  model <- make_test_model(data, robust = TRUE)
-  custom_vcov <- diag(length(coef(model)))
+  case <- make_score_bootstrap_case(seed = 2004)
+  custom_vcov <- diag(length(coef(case$model)))
 
   avg_result <- avg_sops(
-    model = model,
-    newdata = baseline_data,
+    model = case$model,
+    newdata = case$baseline,
     variables = list(tx = c(0, 1)),
-    times = 1:10,
-    ylevels = 1:6,
-    absorb = 6,
+    times = case$times,
+    ylevels = case$ylevels,
+    absorb = case$absorb,
     id_var = "id"
   )
 
@@ -132,18 +118,14 @@ test_that("score-bootstrap simulation validates score_weight_dist", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  withr::local_seed(2005)
-  data <- make_test_data(n_patients = 60, seed = 2005, follow_up_time = 10)
-  baseline_data <- data[data$time == 1, ]
-  model <- make_test_model(data, robust = TRUE)
-
+  case <- make_score_bootstrap_case(seed = 2005)
   avg_result <- avg_sops(
-    model = model,
-    newdata = baseline_data,
+    model = case$model,
+    newdata = case$baseline,
     variables = list(tx = c(0, 1)),
-    times = 1:10,
-    ylevels = 1:6,
-    absorb = 6,
+    times = case$times,
+    ylevels = case$ylevels,
+    absorb = case$absorb,
     id_var = "id"
   )
 
@@ -163,14 +145,11 @@ test_that("generate_score_bootstrap_draws returns valid dimensions and normalize
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  withr::local_seed(2006)
-  data <- make_test_data(n_patients = 35, seed = 2006, follow_up_time = 8)
-  model <- make_test_model(data, robust = TRUE)
-  baseline_data <- data[data$time == 1, ]
+  case <- make_score_bootstrap_case(seed = 2006, n_patients = 35, follow_up_time = 8)
 
   draws <- generate_score_bootstrap_draws(
-    model = model,
-    baseline_data = baseline_data,
+    model = case$model,
+    baseline_data = case$baseline,
     id_var = "id",
     n_sim = 25
   )
@@ -178,9 +157,9 @@ test_that("generate_score_bootstrap_draws returns valid dimensions and normalize
   expect_true(is.matrix(draws$beta_draws))
   expect_true(is.matrix(draws$baseline_weights))
   expect_equal(nrow(draws$beta_draws), 25)
-  expect_equal(ncol(draws$beta_draws), length(model$coefficients))
+  expect_equal(ncol(draws$beta_draws), length(case$model$coefficients))
   expect_equal(nrow(draws$baseline_weights), 25)
-  expect_equal(ncol(draws$baseline_weights), nrow(baseline_data))
+  expect_equal(ncol(draws$baseline_weights), nrow(case$baseline))
   expect_equal(
     as.numeric(rowSums(draws$baseline_weights)),
     rep(1, 25),
