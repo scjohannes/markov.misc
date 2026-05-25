@@ -56,7 +56,7 @@ markov_data <- sim_actt2_brownian(
   mu_treatment_effect = 0
 )
 
-set.seed(SEED + 1)
+set.seed(SEED)
 age_lookup <- data.frame(
   id = sort(unique(markov_data$id)),
   age = rnorm(length(unique(markov_data$id)), mean = 65, sd = 12)
@@ -279,7 +279,7 @@ plot_sops(
   sops_score,
   geom = "bar",
   facet_var = "tx",
-  show_uncertainty = TRUE
+  show_uncertainty = FALSE
 ) +
   labs(
     title = "Score-Bootstrap SOP Draws",

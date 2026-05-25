@@ -210,7 +210,7 @@ test_that("bootstrap_analysis_wrapper reports model fitting failures", {
   expect_equal(result$missing_states, character(0))
 })
 
-test_that("bootstrap_analysis_wrapper updates orm datadist", {
+test_that("bootstrap_analysis_wrapper scopes orm datadist updates", {
   skip_if_not_installed("rms")
 
   update.orm <- function(object, data, ...) {
@@ -218,10 +218,12 @@ test_that("bootstrap_analysis_wrapper updates orm datadist", {
   }
   assign("update.orm", update.orm, envir = globalenv())
   withr::defer(rm("update.orm", envir = globalenv()))
+
+  old_dd <- structure(list(source = "existing"), class = "datadist")
+  assign("dd", old_dd, envir = globalenv())
+  options(datadist = "existing_dd")
   withr::defer(options(datadist = NULL))
-  withr::defer(
-    if (exists("dd", envir = globalenv())) rm("dd", envir = globalenv())
-  )
+  withr::defer(rm("dd", envir = globalenv()))
 
   boot_data <- data.frame(y = factor(c(1, 2, 3)), x = c(0, 1, 2))
   result <- bootstrap_analysis_wrapper(
@@ -233,8 +235,8 @@ test_that("bootstrap_analysis_wrapper updates orm datadist", {
   )
 
   expect_s3_class(result$model, "orm")
-  expect_equal(getOption("datadist"), "dd")
-  expect_true(exists("dd", envir = globalenv()))
+  expect_equal(getOption("datadist"), "existing_dd")
+  expect_identical(get("dd", envir = globalenv()), old_dd)
 })
 
 test_that("bootstrap_analysis_wrapper falls back when coefstart update fails", {

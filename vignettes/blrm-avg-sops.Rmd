@@ -38,7 +38,7 @@ library(ggplot2)
 library(rms)
 library(rmsb)
 
-N_PATIENTS <- 500
+N_PATIENTS <- 200
 FOLLOW_UP <- 28
 STATE_LEVELS <- 1:8
 ABSORB <- "8"
@@ -124,7 +124,7 @@ avg_blrm <- avg_sops(
   ylevels = fit_blrm$ylevels,
   absorb = ABSORB,
   id_var = "id",
-  include_re = FALSE,
+  include_re = TRUE,
   n_draws = SOP_DRAWS,
   seed = SEED,
   posterior_summary = "mean",

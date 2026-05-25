@@ -354,8 +354,24 @@ bootstrap_analysis_wrapper <- function(
 
   # Update datadist if needed (only for orm models)
   if (update_datadist && inherits(model, "orm")) {
+    dd_env <- globalenv()
+    old_datadist <- getOption("datadist")
+    old_dd_exists <- exists("dd", envir = dd_env, inherits = FALSE)
+    old_dd <- if (old_dd_exists) get("dd", envir = dd_env) else NULL
+    on.exit(
+      {
+        options(datadist = old_datadist)
+        if (old_dd_exists) {
+          assign("dd", old_dd, envir = dd_env)
+        } else if (exists("dd", envir = dd_env, inherits = FALSE)) {
+          remove(list = "dd", envir = dd_env)
+        }
+      },
+      add = TRUE
+    )
+
     dd <- rms::datadist(boot_data)
-    assign("dd", dd, envir = .GlobalEnv)
+    assign("dd", dd, envir = dd_env)
     options(datadist = "dd")
   }
 

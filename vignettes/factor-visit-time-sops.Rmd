@@ -74,7 +74,7 @@ levels. The plain `avg_sops()` result contains the standardized point estimates.
 
 ```{r}
 fit <- vglm.markov(
-  ordered(y) ~ time + tx + yprev,
+  ordered(y) ~ tx + time + yprev,
   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
   data = model_data
 )
