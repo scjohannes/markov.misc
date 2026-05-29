@@ -24,7 +24,7 @@
 #' covariates will be kept in the output.
 #'
 #' @export
-states_to_tte_old <- function(
+states_to_tte <- function(
   data,
   covariates = c("age", "sofa")
 ) {
@@ -70,7 +70,7 @@ states_to_tte_old <- function(
 }
 
 
-#' Convert Markov Data to Time-to-Event (Start-Stop) Format
+#' Convert Markov Data to Time-to-Event (Start-Stop) Format (deprecated version)
 #'
 #' Converts a longitudinal dataset of daily states into a collapsed
 #' start-stop format suitable for survival analysis
@@ -99,13 +99,13 @@ states_to_tte_old <- function(
 #' # After simulating trajectories
 #' trajectories <- sim_trajectories_markov(baseline_data, follow_up_time = 60,
 #'                                         lp_function = my_lp)
-#' tte_data <- states_to_tte(trajectories)
+#' tte_data <- states_to_tte_v2(trajectories)
 #'
 #' # With different covariates
 #' tte_data <- states_to_tte(trajectories, covariates = c("age", "sofa", "baseline_severity"))
 #' }
 #' @export
-states_to_tte <- function(
+states_to_tte_v2 <- function(
   data,
   covariates = c("age", "sofa"),
   absorbing_state = 6
@@ -117,7 +117,8 @@ states_to_tte <- function(
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  keep <- is.na(data$yprev) | as.character(data$yprev) != as.character(absorbing_state)
+  keep <- is.na(data$yprev) |
+    as.character(data$yprev) != as.character(absorbing_state)
   data <- data[keep, , drop = FALSE]
   data <- data[order(data$id, data$time), , drop = FALSE]
   available_covs <- intersect(covariates, names(data))
@@ -289,7 +290,10 @@ calc_time_in_state_diff <- function(
   }
 
   if (!reference_level %in% treatment_levels) {
-    stop("reference_level must be one of: ", paste(treatment_levels, collapse = ", "))
+    stop(
+      "reference_level must be one of: ",
+      paste(treatment_levels, collapse = ", ")
+    )
   }
 
   state_results <- lapply(target_state, function(state_value) {
@@ -320,12 +324,19 @@ calc_time_in_state_diff <- function(
     )
     sops_complete[["sop"]][is.na(sops_complete[["sop"]])] <- 0
 
-    reference_sops <- sops_complete[sops_complete[[".treatment"]] == reference_level, ]
+    reference_sops <- sops_complete[
+      sops_complete[[".treatment"]] == reference_level,
+    ]
     reference_sops <- reference_sops[, c(".time", "sop"), drop = FALSE]
     names(reference_sops)[names(reference_sops) == "sop"] <- "reference_sop"
 
-    comparison_sops <- sops_complete[sops_complete[[".treatment"]] != reference_level, ]
-    comparison_sops <- comparison_sops[, c(".treatment", ".time", "sop"), drop = FALSE]
+    comparison_sops <- sops_complete[
+      sops_complete[[".treatment"]] != reference_level,
+    ]
+    comparison_sops <- comparison_sops[,
+      c(".treatment", ".time", "sop"),
+      drop = FALSE
+    ]
     names(comparison_sops) <- c("treatment_level", ".time", "treatment_sop")
 
     estimand_data <- merge(
@@ -335,7 +346,9 @@ calc_time_in_state_diff <- function(
       all.x = TRUE,
       sort = FALSE
     )
-    estimand_data[["reference_sop"]][is.na(estimand_data[["reference_sop"]])] <- 0
+    estimand_data[["reference_sop"]][is.na(estimand_data[[
+      "reference_sop"
+    ]])] <- 0
     estimand_data[["effect"]] <- estimand_data[["treatment_sop"]] -
       estimand_data[["reference_sop"]]
 
@@ -375,8 +388,12 @@ calc_time_in_state_diff <- function(
     )
     names(time_summary) <- c(".treatment", "mean_time", "sd_time")
 
-    reference_summary <- time_summary[time_summary[[".treatment"]] == reference_level, ]
-    comparison_summary <- time_summary[time_summary[[".treatment"]] != reference_level, ]
+    reference_summary <- time_summary[
+      time_summary[[".treatment"]] == reference_level,
+    ]
+    comparison_summary <- time_summary[
+      time_summary[[".treatment"]] != reference_level,
+    ]
 
     result <- merge(
       comparison_summary,

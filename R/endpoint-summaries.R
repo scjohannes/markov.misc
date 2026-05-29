@@ -149,7 +149,7 @@ states_to_ttest <- function(data, target_state = 1) {
 #'   columns: `id`, `time`, `y` (state), and `tx` (treatment).
 #' @param follow_up_time Integer. Total follow-up time used in the simulation.
 #'   This is needed to calculate days at home from the last discharge.
-#' @param target_state Integer. The state representing "home" or "baseline" (default: 1).
+#' @param target_state Integer or integer vector. The state representing "home" or "baseline" (default: 1).
 #' @param death_state Integer. The state representing death (default: 6).
 #' @param covariates Character vector of additional covariate names to include in
 #'   the output (default: c("age", "sofa")). The first value of each covariate
@@ -203,7 +203,7 @@ states_to_drs <- function(
   result <- bind_rows_fill(lapply(ids, function(id) {
     group_data <- data[data$id == id, , drop = FALSE]
     group_data <- group_data[order(group_data$time), , drop = FALSE]
-    last_not_home <- max(0, which(group_data$y != target_state))
+    last_not_home <- max(0, which(!(group_data$y %in% target_state)))
     dead <- any(group_data$y == death_state)
     data.frame(
       id = id,
