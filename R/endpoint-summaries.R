@@ -65,7 +65,7 @@ jackknife_mcse <- function(estimates, statistic = mean) {
 #' @param data A data frame containing trajectory data, typically the output from
 #'   `sim_trajectories_markov()` or `sim_trajectories_brownian()`. Must contain
 #'   columns: `id`, `y` (state), and `tx` (treatment).
-#' @param target_state Integer. The state to count (default: 1, representing Home/Discharged).
+#' @param target_state Integer or integer vector. The state to count (default: 1, representing Home/Discharged).
 #'
 #' @return A data frame with columns:
 #'   - id: patient identifier
@@ -82,6 +82,35 @@ jackknife_mcse <- function(estimates, statistic = mean) {
 #' # After simulating trajectories
 #' trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
 #' t_data <- states_to_ttest(trajectories, target_state = 1)
+#'
+#' # Compare performance to bind_rows_fill + group_by + summarise
+#' microbenchmark::microbenchmark(
+#'   original = {
+#'  ids <- unique(trajectories$id)
+#'  result <- bind_rows_fill(lapply(ids, function(id) {
+#'    rows <- trajectories$id == id
+#'    data.frame(
+#'      id = id,
+#'      y = sum(trajectories$y[rows] == 1),
+#'      tx = trajectories$tx[rows][1],
+#'      check.names = FALSE
+#'    )
+#' return(result)
+#'  }))
+#'  },
+#'  vectorized = {
+#'  y_count <- tapply(trajectories$y == 1, trajectories$id, sum)
+#'
+#'  # get tx per id (first observed)
+#'  tx_first <- tapply(trajectories$tx, trajectories$id, function(x) x[1])
+#'
+#'  return(data.frame(
+#'    id = as.integer(names(y_count)),
+#'    y = as.integer(y_count),
+#'    tx = as.integer(tx_first),
+#'    check.names = FALSE
+#'  ))}
+#'  )
 #' }
 #'
 #' @export
@@ -93,18 +122,18 @@ states_to_ttest <- function(data, target_state = 1) {
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  ids <- unique(data$id)
-  result <- bind_rows_fill(lapply(ids, function(id) {
-    rows <- data$id == id
-    data.frame(
-      id = id,
-      y = sum(data$y[rows] == target_state),
-      tx = data$tx[rows][1],
-      check.names = FALSE
-    )
-  }))
+  # count days in target_state per id
+  y_count <- tapply(data$y %in% target_state, data$id, sum)
 
-  return(result)
+  # get tx per id (first observed)
+  tx_first <- tapply(data$tx, data$id, function(x) x[1])
+
+  data.frame(
+    id = as.integer(names(y_count)),
+    y = as.integer(y_count),
+    tx = as.integer(tx_first),
+    check.names = FALSE
+  )
 }
 
 
