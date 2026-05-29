@@ -59,13 +59,62 @@ in and out of the hospital.
 \examples{
 \dontrun{
 # After simulating trajectories
-trajectories <- sim_trajectories_markov(baseline_data, follow_up_time = 60,
-                                        lp_function = my_lp)
+trajectories <- sim_actt2_brownian()
 drs_data <- states_to_drs(trajectories, follow_up_time = 60)
 
 # With different covariates
 drs_data <- states_to_drs(trajectories, follow_up_time = 60,
                           covariates = c("age", "sofa", "baseline_severity"))
+
+# Compare performance to bind_rows_fill + group_by + summarise
+follow_up_time <- 28
+microbenchmark::microbenchmark(
+  original = {
+ ids <- unique(trajectories$id)
+ result <- bind_rows_fill(lapply(ids, function(id) {
+   rows <- trajectories$id == id
+   last_not_home <- max(trajectories$time[rows][trajectories$y[rows] != 1], na.rm = TRUE)
+   dead <- any(trajectories$y[rows] == 8)
+   data.frame(
+     id = id,
+     tx = trajectories$tx[rows][1],
+     drs = ifelse(
+       dead,
+       follow_up_time + 2,
+        ifelse(
+           follow_up_time == last_not_home,
+           follow_up_time + 1,
+           follow_up_time - last_not_home
+     )
+   ),
+     check.names = FALSE
+   )
+ }))
+ },
+ vectorized = {
+ last_not_home <- tapply(
+   ifelse(trajectories$y != 1, trajectories$time, NA_real_),
+   trajectories$id,
+   function(x) if (all(is.na(x))) 0 else max(x, na.rm = TRUE))
+ dead <- tapply(trajectories$y == 8, trajectories$id, any)
+ tx_first <- tapply(trajectories$tx, trajectories$id, function(x) x[1])
+
+ result <- data.frame(
+   id = as.integer(names(last_not_home)),
+   tx = as.integer(tx_first),
+   drs = ifelse(
+     dead,
+     follow_up_time + 2,
+     ifelse(
+       follow_up_time == last_not_home,
+       follow_up_time + 1,
+       follow_up_time - last_not_home
+     )
+   ),
+   check.names = FALSE
+ )
+result
+})
 }
 
 }
