@@ -2,9 +2,9 @@
 % Please edit documentation in R/endpoint-tte.R
 \name{states_to_tte}
 \alias{states_to_tte}
-\title{Convert Markov Data to Time-to-Event (Start-Stop) Format}
+\title{Convert State Trajectory Data to Time-to-event data}
 \usage{
-states_to_tte(data, covariates = c("age", "sofa"), absorbing_state = 6)
+states_to_tte(data, covariates = c("age", "sofa"))
 }
 \arguments{
 \item{data}{A data frame containing trajectory data, typically the output from
@@ -14,33 +14,24 @@ columns: \code{id}, \code{time}, \code{y} (state), and \code{tx} (treatment).}
 \item{covariates}{Character vector of additional covariate names to include in
 the output (default: c("age", "sofa")). The first value of each covariate
 per patient will be retained.}
-
-\item{absorbing_state}{Integer. The absorbing state code (e.g., 6 for death).
-Rows where \code{yprev} equals the absorbing state are filtered out, as
-transitions from the absorbing state are not meaningful. Default is 6.}
 }
 \value{
-A tibble in start-stop format with columns:
-\code{id}, \code{tx}, \code{start}, \code{stop}, \code{y}, \code{yprev},
-and specified covariates.
+A data frame with columns:
+\itemize{
+\item id: patient identifier
+\item tx: treatment assignment
+\item start: start of the interval, first value per participant is zero
+\item stop: end of the interval
+\item y: state at the end of the interval
+\item any additional covariates specified
+}
 }
 \description{
-Converts a longitudinal dataset of daily states into a collapsed
-start-stop format suitable for survival analysis
+This function calculates time-to-event for usage in Cox or recurrent event
+models.
 }
 \details{
 Each event change within a participant concludes a time interval indicated by
 start and stop and the state at the end of the interval. Columns given in
 covariates will be kept in the output.
-}
-\examples{
-\dontrun{
-# After simulating trajectories
-trajectories <- sim_trajectories_markov(baseline_data, follow_up_time = 60,
-                                        lp_function = my_lp)
-tte_data <- states_to_tte(trajectories)
-
-# With different covariates
-tte_data <- states_to_tte(trajectories, covariates = c("age", "sofa", "baseline_severity"))
-}
 }

@@ -20,7 +20,7 @@ columns: \code{id}, \code{time}, \code{y} (state), and \code{tx} (treatment).}
 \item{follow_up_time}{Integer. Total follow-up time used in the simulation.
 This is needed to calculate days at home from the last discharge.}
 
-\item{target_state}{Integer. The state representing "home" or "baseline" (default: 1).}
+\item{target_state}{Integer or integer vector. The state representing "home" or "baseline" (default: 1).}
 
 \item{death_state}{Integer. The state representing death (default: 6).}
 
