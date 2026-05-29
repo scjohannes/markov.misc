@@ -200,7 +200,7 @@ states_to_ttest <- function(data, target_state = 1) {
 #'         ifelse(
 #'            follow_up_time == last_not_home,
 #'            follow_up_time + 1,
-#'            follow_up_time - last_not_home
+#'            last_not_home
 #'      )
 #'    ),
 #'      check.names = FALSE
@@ -224,7 +224,7 @@ states_to_ttest <- function(data, target_state = 1) {
 #'      ifelse(
 #'        follow_up_time == last_not_home,
 #'        follow_up_time + 1,
-#'        follow_up_time - last_not_home
+#'        last_not_home
 #'      )
 #'    ),
 #'    check.names = FALSE
@@ -270,7 +270,7 @@ states_to_drs <- function(
       ifelse(
         follow_up_time == last_not_home,
         follow_up_time + 1,
-        follow_up_time - last_not_home
+        last_not_home
       )
     ),
     check.names = FALSE
