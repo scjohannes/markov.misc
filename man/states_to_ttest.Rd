@@ -11,7 +11,7 @@ states_to_ttest(data, target_state = 1)
 \code{sim_trajectories_markov()} or \code{sim_trajectories_brownian()}. Must contain
 columns: \code{id}, \code{y} (state), and \code{tx} (treatment).}
 
-\item{target_state}{Integer. The state to count (default: 1, representing Home/Discharged).}
+\item{target_state}{Integer or integer vector. The state to count (default: 1, representing Home/Discharged).}
 }
 \value{
 A data frame with columns:
@@ -37,6 +37,35 @@ target state. This outcome can be analyzed with standard two-sample tests.
 # After simulating trajectories
 trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
 t_data <- states_to_ttest(trajectories, target_state = 1)
+
+# Compare performance to bind_rows_fill + group_by + summarise
+microbenchmark::microbenchmark(
+  original = {
+ ids <- unique(trajectories$id)
+ result <- bind_rows_fill(lapply(ids, function(id) {
+   rows <- trajectories$id == id
+   data.frame(
+     id = id,
+     y = sum(trajectories$y[rows] == 1),
+     tx = trajectories$tx[rows][1],
+     check.names = FALSE
+   )
+return(result)
+ }))
+ },
+ vectorized = {
+ y_count <- tapply(trajectories$y == 1, trajectories$id, sum)
+
+ # get tx per id (first observed)
+ tx_first <- tapply(trajectories$tx, trajectories$id, function(x) x[1])
+
+ return(data.frame(
+   id = as.integer(names(y_count)),
+   y = as.integer(y_count),
+   tx = as.integer(tx_first),
+   check.names = FALSE
+ ))}
+ )
 }
 
 }
