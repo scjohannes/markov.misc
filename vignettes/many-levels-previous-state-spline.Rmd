@@ -1,0 +1,134 @@
+---
+title: "Many Outcome Levels with a Previous-State Spline"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Many Outcome Levels with a Previous-State Spline}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.8,
+  out.width = "100%",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+When the outcome has many ordered levels, a categorical previous-state effect can become too large. We can instead model the previous state effect using a restricted cubic spline to allow for non-linear effects.
+
+This vignette simulates a 30-level quality-of-life outcome and fits an `orm()`
+transition model with `rms::rcs(yprev, 5)`.
+
+## Simulate Many Ordered States
+
+```{r setup}
+library(markov.misc)
+library(ggplot2)
+library(rms)
+
+N_PATIENTS <- 220
+FOLLOW_UP <- 14
+N_QOL <- 30
+STATE_LEVELS <- as.character(seq_len(N_QOL))
+SEED <- 20260530
+
+thresholds <- stats::qnorm(seq(0.02, 0.98, length.out = N_QOL - 1L))
+
+raw_data <- sim_trajectories_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  n_states = length(STATE_LEVELS),
+  thresholds = thresholds,
+  allowed_start_state = as.integer(12:28),
+  absorbing_state = NULL,
+  x0_sd = 1.1,
+  sigma_rw = 0.18,
+  mu_drift = -0.08,
+  mu_quad = 0.005,
+  mu_treatment_effect = -0.01,
+  treatment_prob = 0.5,
+  drift_change_times = NULL,
+  latent_dist = "normal",
+  seed = SEED
+)
+
+summary_table <- data.frame(
+  patients = length(unique(raw_data$id)),
+  rows = nrow(raw_data),
+  observed_states = length(unique(raw_data$y))
+)
+summary_table
+```
+
+## Fit `rcs(yprev, 5)`
+
+`prepare_markov_data(..., factor_previous = FALSE)` keeps `yprev` numeric so it
+can enter the model as a smooth previous-state effect.
+
+```{r fit-model}
+model_data <- prepare_markov_data(
+  raw_data,
+  absorbing_state = NULL,
+  factor_previous = FALSE
+)
+model_data$y <- ordered(model_data$y, levels = STATE_LEVELS)
+
+dd <- rms::datadist(model_data)
+options(datadist = "dd")
+
+fit_many <- rms::orm(
+  y ~ rms::rcs(time, 4) + tx + rms::rcs(yprev, 5),
+  data = model_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE,
+  penalty = 0.1,
+  maxit = 100
+)
+
+fit_many
+```
+
+## SOPs
+
+```{r avg-sops}
+baseline_data <- model_data[model_data$time == 1, , drop = FALSE]
+
+sop_many <- avg_sops(
+  fit_many,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_many$yunique,
+  pvarname = "yprev",
+  id_var = "id"
+)
+
+sop_many[
+  sop_many$time == FOLLOW_UP &
+    sop_many$state %in% c("5", "15", "25", "30"),
+]
+```
+
+With many states, a stacked distribution is usually easier to read than one
+line per state.
+
+```{r plot-sops}
+plot_sops(
+  sop_many,
+  geom = "bar",
+  facet_var = "tx",
+  n_draws = 0
+) +
+  scale_x_continuous(breaks = c(1, 7, 14)) +
+  labs(
+    x = "Week",
+    y = "State occupancy probability"
+  )
+```

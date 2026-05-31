@@ -1,0 +1,116 @@
+---
+title: "Bayesian SOPs with rmsb::blrm()"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Bayesian SOPs with rmsb::blrm()}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.8,
+  out.width = "100%",
+  message = FALSE,
+  warning = FALSE
+)
+RUN_BAYESIAN <- identical(
+  Sys.getenv("MARKOV_MISC_RUN_BAYESIAN_VIGNETTE"),
+  "true"
+) && requireNamespace("rmsb", quietly = TRUE)
+```
+
+`Markov.misc` also supports Bayesian transition models fitted with `rmsb::blrm()`. In this vignette we use a small number of MCMC iterations and SOP draws for demonstration.
+
+## Data
+
+```{r setup}
+library(markov.misc)
+library(ggplot2)
+library(rms)
+
+N_PATIENTS <- 200
+FOLLOW_UP <- 14
+SEED <- 20260601
+STATE_LEVELS <- as.character(1:8)
+ABSORB <- "8"
+SOP_DRAWS <- 20
+
+raw_data <- sim_actt2_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  mu_treatment_effect = -0.03,
+  seed = SEED
+)
+
+model_data <- prepare_markov_data(raw_data, absorbing_state = 8)
+baseline_data <- model_data[!duplicated(model_data$id), , drop = FALSE]
+```
+
+As usual, we plot the raw data.
+
+```{r}
+plot_sops(raw_data)
+```
+
+## Fit `blrm()`
+
+The `ppo = ~ time` term marks `time` as non-proportional. The `cppo` function
+constrains that deviation to be linear in the cumulative logit index.
+
+```{r fit-blrm, eval = RUN_BAYESIAN}
+dd <- rms::datadist(model_data)
+options(datadist = "dd")
+
+fit_blrm <- rmsb::blrm(
+  y ~ yprev + rms::rcs(time, 4) * tx,
+  ppo = ~ time,
+  cppo = function(y) y,
+  data = model_data,
+  iter = 300,
+  warmup = 150,
+  chains = 2,
+  refresh = 0,
+  seed = SEED
+)
+```
+
+## Posterior SOPs
+
+For Bayesian fits, `avg_sops()` evaluates the SOP recursion on posterior draws.
+There is no separate `inferences()` step. [add section on options / chunking the draws]
+
+```{r avg-sops, eval = RUN_BAYESIAN}
+sop_blrm <- avg_sops(
+  fit_blrm,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_blrm$ylevels,
+  absorb = ABSORB,
+  id_var = "id",
+  include_re = FALSE,
+  n_draws = SOP_DRAWS,
+  seed = SEED,
+  posterior_summary = "mean",
+  conf_level = 0.90,
+  return_draws = TRUE
+)
+
+head(sop_blrm)
+```
+
+```{r plot-sops, eval = RUN_BAYESIAN}
+plot_sops(
+  sop_blrm,
+  geom = "line",
+  facet_var = "tx"
+) +
+  labs(
+    x = "Day",
+    y = "Posterior state occupancy probability"
+  )
+```
