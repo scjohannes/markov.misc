@@ -320,14 +320,26 @@ apply_to_bootstrap <- function(
 #' This function wraps common bootstrap operations:
 #' 1. Relevel factors to consecutive integers if states are missing
 #' 2. Update datadist for rms models
-
 #' 3. Refit the model on the bootstrap data
+#'
+#' @examples
+#' original_data <- data.frame(y = 1:5, x = 1:5)
+#' fit <- lm(y ~ x, data = original_data)
+#' boot_data <- original_data[c(1, 1, 2, 3, 4), ]
+#'
+#' result <- bootstrap_analysis_wrapper(
+#'   boot_data = boot_data,
+#'   model = fit,
+#'   factor_cols = character(0),
+#'   original_data = original_data,
+#'   update_datadist = FALSE
+#' )
+#' names(result)
 #'
 #' @seealso [relevel_factors_consecutive()], [fast_group_bootstrap()],
 #'   [apply_to_bootstrap()]
 #'
 #' @export
-
 bootstrap_analysis_wrapper <- function(
   boot_data,
   model,

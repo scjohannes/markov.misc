@@ -134,3 +134,26 @@ where \eqn{\odot} denotes element-wise multiplication.
 If an absorbing state \eqn{a} is present, the update logic handles the accumulation of probability mass:
 \deqn{P(S_t = a) = P(S_{t-1} = a) + \sum_{j \neq a} P(S_{t-1} = j) \times P(S_t = a | S_{t-1} = j)}
 }
+\examples{
+\dontshow{if (rlang::is_installed("rms")) withAutoprint(\{ # examplesIf}
+trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
+markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+fit <- rms::orm(
+  y ~ time + tx + yprev,
+  data = markov_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE
+)
+baseline <- markov_data[!duplicated(markov_data$id), , drop = FALSE]
+probabilities <- soprob_markov(
+  fit,
+  data = baseline,
+  times = 1:3,
+  ylevels = fit$yunique,
+  absorb = "8"
+)
+dim(probabilities)
+\dontshow{\}) # examplesIf}
+}

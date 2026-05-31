@@ -1,0 +1,140 @@
+---
+title: "Partial Proportional-Odds SOPs with vglm()"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Partial Proportional-Odds SOPs with vglm()}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.8,
+  out.width = "100%",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+Partial proportional-odds models can relax the proportional-odds assumption for selected predictors while keeping the rest of the transition model parsimonious. This vignette fits such a model with `vglm.markov()`, allowing the linear time basis to deviate from
+proportional odds while treatment and previous state remain proportional.
+
+## Simulate Data
+
+We collapse the 8 state data into 6 states the make the linear deviation from proportional odds more stable.
+
+```{r setup}
+library(markov.misc)
+library(ggplot2)
+library(rms)
+library(VGAM)
+
+N_PATIENTS <- 200
+FOLLOW_UP <- 14
+SEED <- 20260528
+STATE_LEVELS <- as.character(1:6)
+ABSORB <- "6"
+
+collapse_actt2_states <- function(data) {
+  data$y <- ifelse(
+    data$y %in% c(1L, 2L),
+    1L,
+    ifelse(data$y %in% c(3L, 4L), 2L, data$y - 2L)
+  )
+  data$yprev <- ifelse(
+    data$yprev %in% c(1L, 2L),
+    1L,
+    ifelse(data$yprev %in% c(3L, 4L), 2L, data$yprev - 2L)
+  )
+  data
+}
+
+raw_data <- sim_actt2_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  mu_treatment_effect = -0.03,
+  seed = SEED
+) |>
+  collapse_actt2_states()
+
+model_data <- prepare_markov_data(raw_data, absorbing_state = 6)
+baseline_data <- model_data[!duplicated(model_data$id), , drop = FALSE]
+```
+
+## Constraint
+```{r fit-ppo}
+form <- ordered(y) ~ tx + rms::rcs(time, 4) + yprev
+
+fit_po <- vglm.markov(
+  form,
+  family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+  data = model_data
+)
+
+constraints <- fit_po@constraints
+linear_time_term <- grep(
+  "^rms::rcs\\(time, 4\\).*time$",
+  names(constraints),
+  value = TRUE
+)[[1]]
+n_thresholds <- nrow(constraints[[linear_time_term]])
+
+yprev_terms <- grep("^yprev", names(constraints), value = TRUE)
+constraints[yprev_terms] <- NULL
+constraints[["yprev"]] <- cbind(PO_effect = rep(1, n_thresholds))
+constraints[[linear_time_term]] <- cbind(
+  PO_effect = rep(1, n_thresholds),
+  linear_deviation = seq_len(n_thresholds) - 1
+)
+
+fit_ppo <- vglm.markov(
+  form,
+  family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
+  data = model_data,
+  constraints = constraints,
+  etastart = fit_po@predictors
+)
+fit_ppo@call$constraints <- constraints
+
+data.frame(
+  model = c("Full PO", "Linear-time PPO"),
+  log_likelihood = c(
+    as.numeric(stats::logLik(fit_po)),
+    as.numeric(stats::logLik(fit_ppo))
+  ),
+  coefficients = c(length(stats::coef(fit_po)), length(stats::coef(fit_ppo)))
+)
+```
+
+## SOPs
+
+```{r avg-sops}
+sop_ppo <- avg_sops(
+  fit_ppo,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = factor(STATE_LEVELS, levels = STATE_LEVELS),
+  absorb = ABSORB,
+  id_var = "id"
+)
+
+head(sop_ppo)
+```
+
+```{r plot-ppo}
+plot_sops(
+  sop_ppo,
+  geom = "line",
+  facet_var = "tx"
+) +
+  labs(
+    x = "Day",
+    y = "State occupancy probability"
+  )
+```
+
+## References

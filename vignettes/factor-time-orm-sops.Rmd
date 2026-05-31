@@ -1,0 +1,145 @@
+---
+title:  "Time as a Factor with orm()"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Time as a Factor with orm()}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.8,
+  out.width = "100%",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+Outcome assessments may happen at scheduled visits rather than a regular daily
+grid, without the possibility of accurately reconstructing daily states. This
+vignette starts from simulated daily ACTT-2-style trajectories, keeps only days
+3, 7, 14, and 21, and fits an `rms::orm()` transition model where `time` is a
+visit factor.
+
+## Visit Data
+
+```{r setup}
+library(markov.misc)
+library(ggplot2)
+library(rms)
+
+N_PATIENTS <- 220
+SEED <- 20260531
+VISIT_DAYS <- stats::setNames(c(3, 7, 14, 21), as.character(1:4))
+STATE_LEVELS <- as.character(1:8)
+ABSORB <- 8L
+
+raw_data <- sim_actt2_brownian(
+  n_patients = N_PATIENTS,
+  mu_treatment_effect = -0.03,
+  seed = SEED
+)
+
+baseline_state <- raw_data[raw_data$time == 1, c("id", "yprev")]
+names(baseline_state)[2] <- "baseline_yprev"
+
+visit_data <- raw_data[
+  raw_data$time %in% unname(VISIT_DAYS),
+  c("id", "tx", "time", "y", "yprev")
+]
+visit_data <- merge(
+  visit_data,
+  baseline_state,
+  by = "id",
+  all.x = TRUE,
+  sort = FALSE
+)
+visit_data <- visit_data[order(visit_data$id, visit_data$time), ]
+visit_data$visit_day <- visit_data$time
+visit_data$time <- factor(
+  match(visit_data$visit_day, unname(VISIT_DAYS)),
+  levels = seq_along(VISIT_DAYS),
+  labels = names(VISIT_DAYS)
+)
+visit_data$yprev <- ave(
+  visit_data$y,
+  visit_data$id,
+  FUN = function(y) c(NA_integer_, y[-length(y)])
+)
+first_visit <- !duplicated(visit_data$id)
+visit_data$yprev[first_visit] <- visit_data$baseline_yprev[first_visit]
+visit_data$baseline_yprev <- NULL
+
+model_data <- prepare_markov_data(
+  visit_data,
+  absorbing_state = ABSORB,
+  factor_previous = TRUE
+)
+
+head(model_data)
+```
+
+## Fit And Predict On The Visit Scale
+
+When `times = NULL`, `avg_sops()` obtains the factor levels from the fitted
+model. The returned SOPs are on the visit scale.
+
+```{r fit-model}
+dd <- rms::datadist(model_data)
+options(datadist = "dd")
+
+fit_visit <- rms::orm(
+  y ~ tx + time + yprev,
+  data = model_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE,
+  penalty = 0.1,
+  maxit = 100
+)
+
+baseline_data <- model_data[!duplicated(model_data$id), , drop = FALSE]
+
+sop_visit <- avg_sops(
+  fit_visit,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = NULL,
+  ylevels = fit_visit$yunique,
+  id_var = "id"
+)
+
+attr(sop_visit, "avg_args")$times
+```
+
+## Interpolate To Calendar Days
+
+The model is fit on visit labels. `interpolate_sops()` maps those labels to
+nominal calendar days, adds an empirical day-0 baseline anchor, and linearly
+interpolates probabilities between observed visits.
+
+```{r plot-sops}
+sop_days <- interpolate_sops(
+  sop_visit,
+  time_map = VISIT_DAYS,
+  xout = 0:max(VISIT_DAYS),
+  origin_time = 0
+)
+
+plot_sops(
+  sop_days,
+  time_var = "time",
+  geom = "line",
+  facet_var = "tx"
+) +
+  scale_x_continuous(breaks = c(0, unname(VISIT_DAYS))) +
+  labs(
+    x = "Calendar day",
+    y = "State occupancy probability"
+  )
+```

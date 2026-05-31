@@ -1,0 +1,166 @@
+---
+title: "MVN Simulation Versus Bootstrap for orm() SOPs"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{MVN Simulation Versus Bootstrap for orm() SOPs}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.8,
+  out.width = "100%",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+This vignette fits one full proportional-odds `rms::orm()` transition model and
+compares two uncertainty routes for marginal SOPs:
+
+1. Multivariate-normal (MVN) simulation from the fitted coefficient covariance.
+2. Patient bootstrap with model refitting.
+
+Simulation from MVN keeps the standardization sample fixed and varies the model coefficients. 
+The nonparametric patient bootstrap resamples the empirical covariate and baseline-state distribution.
+
+The number of draws is deliberately tiny for vignette runtime.
+
+## Fit The Model
+
+```{r setup}
+library(markov.misc)
+library(ggplot2)
+library(rms)
+
+N_PATIENTS <- 200
+FOLLOW_UP <- 10
+N_SIM <- 6
+SEED <- 20260602
+STATE_LEVELS <- as.character(1:8)
+ABSORB <- "8"
+
+raw_data <- sim_actt2_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  mu_treatment_effect = -0.03,
+  seed = SEED
+)
+
+set.seed(SEED)
+age_lookup <- data.frame(
+  id = sort(unique(raw_data$id)),
+  age = stats::rnorm(length(unique(raw_data$id)), mean = 65, sd = 12)
+)
+raw_data <- merge(raw_data, age_lookup, by = "id", sort = FALSE)
+raw_data <- raw_data[order(raw_data$id, raw_data$time), ]
+
+model_data <- prepare_markov_data(raw_data, absorbing_state = as.integer(ABSORB))
+baseline_data <- model_data[!duplicated(model_data$id), , drop = FALSE]
+
+dd <- rms::datadist(model_data)
+options(datadist = "dd")
+
+fit_orm <- rms::orm(
+  y ~ tx + age + rms::rcs(time, 4) + yprev,
+  data = model_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE,
+  maxit = 100
+)
+
+fit_robust <- rms::robcov(fit_orm, cluster = model_data$id)
+robust_vcov <- as.matrix(fit_robust$var)
+robust_vcov <- (robust_vcov + t(robust_vcov)) / 2
+```
+
+## Create SOP Targets
+
+Bootstrap inference needs the full transition data so each bootstrap draw can
+resample patients and refit the model. MVN simulation uses only the
+baseline rows because the fitted model and covariance are already fixed.
+
+```{r avg-sops}
+avg_mvn <- avg_sops(
+  fit_robust,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_orm$yunique,
+  absorb = ABSORB,
+  id_var = "id"
+)
+
+avg_boot <- avg_sops(
+  fit_orm,
+  newdata = model_data,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_orm$yunique,
+  absorb = ABSORB,
+  id_var = "id"
+)
+```
+
+## Run Both Methods
+
+```{r run-inference}
+set.seed(SEED)
+sop_mvn <- inferences(
+  avg_mvn,
+  method = "simulation",
+  engine = "mvn",
+  n_sim = N_SIM,
+  vcov = robust_vcov,
+  workers = 1,
+  return_draws = TRUE
+)
+
+set.seed(SEED)
+sop_boot <- inferences(
+  avg_boot,
+  method = "bootstrap",
+  n_sim = N_SIM,
+  workers = 1,
+  return_draws = TRUE
+)
+
+data.frame(
+  method = c("MVN simulation", "Patient bootstrap"),
+  successful_draws = c(
+    attr(sop_mvn, "n_successful"),
+    attr(sop_boot, "n_successful")
+  )
+)
+```
+
+## Compare
+
+```{r compare}
+comparison <- rbind(
+  data.frame(method = "MVN simulation", as.data.frame(sop_mvn)),
+  data.frame(method = "Patient bootstrap", as.data.frame(sop_boot))
+)
+
+plot_sops(
+  comparison,
+  geom = "line",
+  facet_var = c("method", "tx")
+) +
+  labs(
+    x = "Day",
+    y = "State occupancy probability"
+  )
+```
+
+The point estimates are based on the same transition model. The confidence-band widths differ (especially close to baseline) because the two procedures target the variance of different estimands.
+
+## References
+
+Magirr D, Wang C, Przybylski A, Baillie M. Estimating the Variance of Covariate-Adjusted Estimators of Average Treatment Effects in Clinical Trials With Binary Endpoints. Pharm Stat. 2025 Jul-Aug;24(4):e70021. doi: 10.1002/pst.70021.

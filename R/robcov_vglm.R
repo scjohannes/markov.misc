@@ -437,6 +437,17 @@ align_cluster_vglm <- function(fit, cluster, n) {
 #' @return Invisibly returns a list containing the coefficient table and
 #'   summary statistics.
 #'
+#' @examplesIf rlang::is_installed("VGAM")
+#' trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
+#' markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+#' fit <- vglm.markov(
+#'   ordered(y) ~ time + tx + yprev,
+#'   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+#'   data = markov_data
+#' )
+#' robust_fit <- robcov_vglm(fit, cluster = markov_data$id)
+#' summary(robust_fit)
+#'
 #' @method summary robcov_vglm
 #' @export
 summary.robcov_vglm <- function(object, ...) {
@@ -511,6 +522,17 @@ summary.robcov_vglm <- function(object, ...) {
 #'
 #' @return Invisibly returns the input object.
 #'
+#' @examplesIf rlang::is_installed("VGAM")
+#' trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
+#' markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+#' fit <- vglm.markov(
+#'   ordered(y) ~ time + tx + yprev,
+#'   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+#'   data = markov_data
+#' )
+#' robust_fit <- robcov_vglm(fit, cluster = markov_data$id)
+#' print(robust_fit)
+#'
 #' @method print robcov_vglm
 #' @export
 print.robcov_vglm <- function(x, ...) {
@@ -553,6 +575,17 @@ print.robcov_vglm <- function(x, ...) {
 #'
 #' @return Named numeric vector of coefficients.
 #'
+#' @examplesIf rlang::is_installed("VGAM")
+#' trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
+#' markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+#' fit <- vglm.markov(
+#'   ordered(y) ~ time + tx + yprev,
+#'   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+#'   data = markov_data
+#' )
+#' robust_fit <- robcov_vglm(fit, cluster = markov_data$id)
+#' coef(robust_fit)
+#'
 #' @method coef robcov_vglm
 #' @export
 coef.robcov_vglm <- function(object, ...) {
@@ -568,6 +601,17 @@ coef.robcov_vglm <- function(object, ...) {
 #' @param ... Additional arguments (ignored).
 #'
 #' @return The robust variance-covariance matrix.
+#'
+#' @examplesIf rlang::is_installed("VGAM")
+#' trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
+#' markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+#' fit <- vglm.markov(
+#'   ordered(y) ~ time + tx + yprev,
+#'   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+#'   data = markov_data
+#' )
+#' robust_fit <- robcov_vglm(fit, cluster = markov_data$id)
+#' vcov(robust_fit)
 #'
 #' @method vcov robcov_vglm
 #' @export

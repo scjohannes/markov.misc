@@ -33,12 +33,22 @@
 #'   absorbing state (default: 6). Once entered, patients remain there.
 #'   Set to NULL if no absorbing state is desired.
 #' @param drift_change_times Numeric vector of length 2 specifying when drift
-#'   begins to decline and when it reaches zero (default: c(25, 50)).
+#'   begins to decline and when it reaches zero after drift has started
+#'   (default: c(25, 50)).
+#' @param drift_start Numeric scalar, numeric vector of length `n_patients`, or
+#'   function. Day when deterministic drift starts for each patient (default:
+#'   0). A function is called as `drift_start(n_patients)` and must return a
+#'   non-negative numeric scalar or vector of length `n_patients`.
 #' @param latent_dist Character. The distribution used to link the latent variable
 #'   to observed states. Options are "logistic" (default) or "normal".
 #' @param refresh_rate Numeric scalar. Exponential rate per day for the next
 #'   non-absorbing state refresh (default: 0.048). Lower values create longer
 #'   dwell times between observed state updates.
+#' @param threshold_time_effect_factors Numeric vector of length K-1 or `NULL`.
+#'   Multipliers for how strongly the common deterministic latent drift affects
+#'   each threshold over time (default: `NULL`, equivalent to all 1s). Values
+#'   below 1 attenuate the time effect for a threshold; values above 1 amplify
+#'   it. The induced day-specific thresholds must remain strictly increasing.
 #' @param seed Integer. Random seed for reproducibility (default: NULL).
 #'
 #' @return A data frame (tibble) with columns:
@@ -75,7 +85,7 @@
 #' )
 #' }
 #'
-#' @importFrom stats rnorm plogis pnorm rexp runif
+#' @importFrom stats rnorm plogis pnorm rexp runif rpois
 #'
 #' @export
 sim_trajectories_brownian_gap <- function(
@@ -94,8 +104,10 @@ sim_trajectories_brownian_gap <- function(
   allowed_start_state = 2:5,
   absorbing_state = 6,
   drift_change_times = c(25, 50),
+  drift_start = 0,
   latent_dist = c("logistic", "normal"),
   refresh_rate = 0.048,
+  threshold_time_effect_factors = NULL,
   seed = NULL
 ) {
   if (n_patients < 1 || !is.numeric(n_patients)) {
@@ -127,11 +139,31 @@ sim_trajectories_brownian_gap <- function(
     stop("thresholds must be a strictly increasing numeric vector")
   }
 
+  if (is.null(threshold_time_effect_factors)) {
+    threshold_time_effect_factors <- rep(1, n_states - 1)
+  }
+
+  if (
+    !is.numeric(threshold_time_effect_factors) ||
+      length(threshold_time_effect_factors) != (n_states - 1) ||
+      any(!is.finite(threshold_time_effect_factors))
+  ) {
+    stop(
+      "threshold_time_effect_factors must be NULL or a finite numeric vector ",
+      "with length n_states - 1"
+    )
+  }
+
   if (treatment_prob < 0 || treatment_prob > 1) {
     stop("treatment_prob must be between 0 and 1")
   }
 
-  if (!is.numeric(refresh_rate) || length(refresh_rate) != 1 || refresh_rate <= 0) {
+  if (
+    !is.numeric(refresh_rate) ||
+      length(refresh_rate) != 1 ||
+      any(!is.finite(refresh_rate)) ||
+      any(refresh_rate <= 0)
+  ) {
     stop("refresh_rate must be a positive numeric scalar")
   }
 
@@ -180,6 +212,24 @@ sim_trajectories_brownian_gap <- function(
   )
   drift_random_effect <- stats::rnorm(n_patients, mean = 0, sd = mu_drift_sd)
 
+  if (is.function(drift_start)) {
+    drift_start <- drift_start(n_patients)
+  }
+
+  if (
+    !is.numeric(drift_start) ||
+      !(length(drift_start) %in% c(1, n_patients)) ||
+      any(!is.finite(drift_start)) ||
+      any(drift_start < 0)
+  ) {
+    stop(
+      "drift_start must be a non-negative numeric scalar, a numeric vector ",
+      "of length n_patients, or a function returning one of those"
+    )
+  }
+
+  drift_start <- rep(drift_start, length.out = n_patients)
+
   X <- matrix(NA_real_, n_patients, follow_up_time + 1)
   Y <- matrix(NA_integer_, n_patients, follow_up_time + 1)
 
@@ -187,14 +237,18 @@ sim_trajectories_brownian_gap <- function(
     max(1L, ceiling(stats::rexp(1, rate = refresh_rate)))
   }
 
-  calc_piecewise_factor <- function(day) {
-    if (is.null(drift_change_times) || day <= drift_change_times[1]) {
+  calc_piecewise_factor <- function(elapsed_day) {
+    if (elapsed_day < 0) {
+      return(0)
+    }
+
+    if (is.null(drift_change_times) || elapsed_day <= drift_change_times[1]) {
       return(1)
     }
 
-    if (day <= drift_change_times[2]) {
+    if (elapsed_day <= drift_change_times[2]) {
       return(
-        (drift_change_times[2] - day) /
+        (drift_change_times[2] - elapsed_day) /
           (drift_change_times[2] - drift_change_times[1])
       )
     }
@@ -202,25 +256,66 @@ sim_trajectories_brownian_gap <- function(
     0
   }
 
-  calc_drift <- function(day, tx, drift_i) {
-    mu_base <- mu_drift + drift_i + mu_quad * day + mu_quad2 * day^2
+  calc_drift <- function(day, tx, drift_i, drift_start_i) {
+    elapsed_day <- day - drift_start_i
+    if (elapsed_day < 0) {
+      return(0)
+    }
+
+    mu_base <- mu_drift +
+      drift_i +
+      mu_quad * elapsed_day +
+      mu_quad2 * elapsed_day^2
     mu_i <- mu_base + tx * mu_treatment_effect
 
-    mu_i * calc_piecewise_factor(day)
+    mu_i * calc_piecewise_factor(elapsed_day)
   }
 
-  threshold_matrix <- matrix(
-    thresholds,
-    nrow = follow_up_time + 1,
-    ncol = n_states - 1,
-    byrow = TRUE
-  )
+  threshold_matrix_cache <- new.env(parent = emptyenv())
+  make_threshold_matrix <- function(drift_start_i) {
+    cache_key <- as.character(drift_start_i)
+    if (exists(cache_key, envir = threshold_matrix_cache, inherits = FALSE)) {
+      return(get(cache_key, envir = threshold_matrix_cache, inherits = FALSE))
+    }
+
+    common_drift <- numeric(follow_up_time + 1)
+    for (t in 2:(follow_up_time + 1)) {
+      day <- t - 1
+      elapsed_day <- day - drift_start_i
+      if (elapsed_day < 0) {
+        common_drift[t] <- common_drift[t - 1]
+      } else {
+        common_drift[t] <- common_drift[t - 1] +
+          (mu_drift + mu_quad * elapsed_day + mu_quad2 * elapsed_day^2) *
+            calc_piecewise_factor(elapsed_day)
+      }
+    }
+
+    threshold_matrix <- matrix(
+      thresholds,
+      nrow = follow_up_time + 1,
+      ncol = n_states - 1,
+      byrow = TRUE
+    ) +
+      outer(common_drift, 1 - threshold_time_effect_factors)
+
+    if (!all(apply(threshold_matrix, 1, function(x) all(diff(x) > 0)))) {
+      stop(
+        "threshold_time_effect_factors induce crossing thresholds; ",
+        "use factors that keep thresholds strictly increasing over follow-up"
+      )
+    }
+
+    assign(cache_key, threshold_matrix, envir = threshold_matrix_cache)
+    threshold_matrix
+  }
 
   for (i in seq_len(n_patients)) {
+    threshold_matrix_i <- make_threshold_matrix(drift_start[i])
     X[i, 1] <- stats::rnorm(1, 0, x0_sd)
 
     # sample initial state occupancy probabilities
-    pcat0 <- diff(c(0, cdf_fun(threshold_matrix[1, ] - X[i, 1]), 1))
+    pcat0 <- diff(c(0, cdf_fun(threshold_matrix_i[1, ] - X[i, 1]), 1))
 
     # set probabilities to 0 for states that are not allowed at baseline
     if (!is.null(allowed_start_state)) {
@@ -244,10 +339,15 @@ sim_trajectories_brownian_gap <- function(
       }
 
       day <- t - 1
-      mu_t <- calc_drift(day, treatment[i], drift_random_effect[i])
+      mu_t <- calc_drift(
+        day,
+        treatment[i],
+        drift_random_effect[i],
+        drift_start[i]
+      )
       X[i, t] <- stats::rnorm(1, mean = X[i, t - 1] + mu_t, sd = sigma_rw)
 
-      pcat <- diff(c(0, cdf_fun(threshold_matrix[t, ] - X[i, t]), 1))
+      pcat <- diff(c(0, cdf_fun(threshold_matrix_i[t, ] - X[i, t]), 1))
 
       # patients can enter absorbing state on any day, not just refresh days
       died_today <- !is.null(absorbing_state) &&
@@ -292,10 +392,10 @@ sim_trajectories_brownian_gap <- function(
 #' Simulate ACTT-2-Inspired Ordinal Trajectories
 #'
 #' Generates synthetic ACTT-2-like ordinal outcome data using the Brownian gap
-#' simulator with defaults tuned to roughly match the control-arm state
-#' occupancy, cumulative death, and low rehospitalization patterns described in
-#' the ACTT-2 trial. The defaults are null-aligned, so there is no built-in
-#' treatment difference unless `mu_treatment_effect` is changed.
+#' simulator with defaults tuned to roughly preserve control-arm state
+#' occupancy while reducing rehospitalization-like movement from recovered
+#' states 1/2 into states 3:7. The defaults are null-aligned, so there is no
+#' built-in treatment difference unless `mu_treatment_effect` is changed.
 #'
 #' This is intended as a convenient starting point for simulation studies, not
 #' as an exact recreation of the original trial.
@@ -337,20 +437,22 @@ sim_actt2_brownian <- function(
       n_patients = n_patients,
       follow_up_time = 28,
       n_states = 8,
-      mu_drift = -2.65,
+      mu_drift = -2.2,
       mu_drift_sd = 1, #0.28,
-      mu_quad = 0.1,
+      mu_quad = 0,
       mu_quad2 = -0.001,
       mu_treatment_effect = mu_treatment_effect,
       sigma_rw = 0.055,
       x0_sd = 0.35,
-      thresholds = c(-14.42, -4.88, -3.98, -2.16, 0.5, 1.16, 1.8),
+      thresholds = c(-7.0, -4.88, -3.98, -2.16, 0.3, 1.16, 9),
       treatment_prob = treatment_prob,
       allowed_start_state = 4:7,
       absorbing_state = 8L,
-      drift_change_times = NULL,
+      drift_change_times = c(10, 28),
+      drift_start = function(n) rpois(n, 3.2),
       latent_dist = "logistic",
-      refresh_rate = 0.067,
+      refresh_rate = 0.32,
+      threshold_time_effect_factors = c(0.45, 0.5, 0.5, 0.5, 0.5, 0.49, 0.5), #c(0.45, rep(0.5, 5), 1),
       seed = seed
     ),
     list(...)

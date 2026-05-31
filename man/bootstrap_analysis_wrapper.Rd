@@ -57,6 +57,21 @@ This function wraps common bootstrap operations:
 \item Refit the model on the bootstrap data
 }
 }
+\examples{
+original_data <- data.frame(y = 1:5, x = 1:5)
+fit <- lm(y ~ x, data = original_data)
+boot_data <- original_data[c(1, 1, 2, 3, 4), ]
+
+result <- bootstrap_analysis_wrapper(
+  boot_data = boot_data,
+  model = fit,
+  factor_cols = character(0),
+  original_data = original_data,
+  update_datadist = FALSE
+)
+names(result)
+
+}
 \seealso{
 \code{\link[=relevel_factors_consecutive]{relevel_factors_consecutive()}}, \code{\link[=fast_group_bootstrap]{fast_group_bootstrap()}},
 \code{\link[=apply_to_bootstrap]{apply_to_bootstrap()}}

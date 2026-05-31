@@ -1,0 +1,219 @@
+---
+title: "Full Proportional-Odds SOPs with vglm() and orm()"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Full Proportional-Odds SOPs with vglm() and orm()}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.8,
+  out.width = "100%",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+This vignette follows the ordinal transition-model and state occupancy
+probability (SOP) framework of Rohde et al. (2024).
+
+We fit the same full proportional-odds first-order transition model using two
+backends:
+
+1. `vglm.markov()`, which returns a `VGAM::vglm()` object.
+2. `rms::orm()`.
+
+The vignette uses 200 simulated ACTT-2-style patients on the simulator's native
+8-state outcome scale and a shortened follow-up window to keep computation time
+short.
+
+## Data
+
+```{r setup}
+library(markov.misc)
+library(ggplot2)
+library(rms)
+library(VGAM)
+
+N_PATIENTS <- 200
+FOLLOW_UP <- 14
+SEED <- 20260527
+STATE_LEVELS <- as.character(1:8)
+ABSORB <- "8"
+
+raw_data <- sim_actt2_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  mu_treatment_effect = -0.03,
+  seed = SEED
+)
+
+model_data <- prepare_markov_data(
+  raw_data,
+  absorbing_state = as.integer(ABSORB),
+  factor_previous = TRUE
+)
+baseline_data <- model_data[!duplicated(model_data$id), , drop = FALSE]
+
+c(
+  patients = length(unique(raw_data$id)),
+  transitions = nrow(model_data),
+  states = length(STATE_LEVELS)
+)
+```
+
+## Recursion
+
+Let $Y_{it}$ be the ordinal outcome for patient $i$ at prediction time
+$t$, and let $\mathbf{X}_{it}$ collect treatment, time, and other covariates.
+The state occupancy probability (SOP) for state $l$ is
+
+$$
+S_{it}(l) =
+  \Pr(Y_{it} = l \mid \mathbf{X}_{i1}, \ldots, \mathbf{X}_{it}, Y_{i0}).
+$$
+
+For a first-order transition model, the conditional probability of moving from
+state $k$ at time $t - 1$ to state $l$ at time $t$ is
+
+$$
+T_{it}(l \mid k) =
+  \Pr(Y_{it} = l \mid Y_{i,t-1} = k, \mathbf{X}_{it}).
+$$
+
+For a single patient, collect these probabilities in the transition matrix
+$\mathbf{P}_{it}$, where row $k$, column $l$ is
+$P_{it,kl} = T_{it}(l \mid k)$. If
+$\mathbf{s}_{it}$ is the row vector with entries $S_{it}(l)$, then the
+matrix recursion is
+
+$$
+\mathbf{s}_{i0} = \mathbf{e}_{Y_{i0}}, \qquad
+\mathbf{s}_{it} = \mathbf{s}_{i,t-1} \mathbf{P}_{it}, \quad t = 1,\ldots,d.
+$$
+
+The implementation batches this same calculation across patients. For each
+possible previous state $k$, it predicts an $n \times K$ matrix
+$\mathbf{P}^{(k)}_t$ whose $i,l$ entry is $T_{it}(l \mid k)$. The
+batched update is
+
+$$
+S_{t,il} =
+  \sum_{k \notin \mathcal{A}}
+    S_{t-1,ik} P^{(k)}_{t,il}.
+$$
+
+Equivalently, in vector form over patients,
+
+$$
+\mathbf{S}_{t,l} =
+  \sum_{k \notin \mathcal{A}}
+    \mathbf{S}_{t-1,k} \odot \mathbf{P}^{(k)}_{t,l},
+$$
+
+where $\odot$ denotes elementwise multiplication and $\mathcal{A}$ is the set
+of absorbing states. For an absorbing state $a \in \mathcal{A}$, the code
+does not need a model prediction from $a$; it carries that probability mass
+forward:
+
+$$
+\mathbf{S}_{t,a} \leftarrow
+  \mathbf{S}_{t,a} + \mathbf{S}_{t-1,a}.
+$$
+
+The marginal arm-specific SOP used below is the average of these patient-level
+SOPs after setting treatment to the desired counterfactual arm:
+
+$$
+\bar{S}_t(l; a) =
+  n^{-1} \sum_{i=1}^n S_{it}(l; \operatorname{tx}=a).
+$$
+
+## Fit Models
+
+```{r fit-models}
+fit_vglm <- vglm.markov(
+  ordered(y) ~ tx + rms::rcs(time, 4) + yprev,
+  family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+  data = model_data
+)
+
+dd <- rms::datadist(model_data)
+options(datadist = "dd")
+
+fit_orm <- rms::orm(
+  y ~ tx + rms::rcs(time, 4) + yprev,
+  data = model_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE,
+  maxit = 100
+)
+
+data.frame(
+  backend = c("VGAM vglm", "rms orm"),
+  log_likelihood = c(
+    as.numeric(stats::logLik(fit_vglm)),
+    as.numeric(stats::logLik(fit_orm))
+  ),
+  coefficients = c(length(stats::coef(fit_vglm)), length(stats::coef(fit_orm)))
+)
+```
+
+## Compute And Plot SOPs
+
+```{r compute-sops}
+sop_vglm <- avg_sops(
+  fit_vglm,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = factor(STATE_LEVELS, levels = STATE_LEVELS),
+  absorb = ABSORB,
+  id_var = "id"
+)
+
+sop_orm <- avg_sops(
+  fit_orm,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_orm$yunique,
+  absorb = ABSORB,
+  id_var = "id"
+)
+
+combined_sops <- rbind(
+  data.frame(backend = "VGAM vglm", as.data.frame(sop_vglm)),
+  data.frame(backend = "rms orm", as.data.frame(sop_orm))
+)
+
+head(combined_sops)
+```
+
+```{r plot-sops}
+plot_sops(
+  combined_sops,
+  geom = "line",
+  facet_var = c("backend", "tx")
+) +
+  labs(
+    x = "Day",
+    y = "State occupancy probability"
+  )
+```
+
+## References
+
+Rohde MD, French B, Stewart TG, Harrell FE. Bayesian transition models for
+ordinal longitudinal outcomes. *Statistics in Medicine*. 2024. doi:
+10.1002/sim.10133.
+
+The associated code repository is
+<https://github.com/maxdrohde/bayesian_ordinal_transition>.

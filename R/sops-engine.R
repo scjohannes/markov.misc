@@ -99,6 +99,27 @@
 #'   \item **Bayesian fit:** An array of dimension \code{[n_draws x n_patients x n_times x n_states]}.
 #' }
 #'
+#' @examplesIf rlang::is_installed("rms")
+#' trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
+#' markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+#' fit <- rms::orm(
+#'   y ~ time + tx + yprev,
+#'   data = markov_data,
+#'   x = TRUE,
+#'   y = TRUE,
+#'   opt_method = "LM",
+#'   scale = TRUE
+#' )
+#' baseline <- markov_data[!duplicated(markov_data$id), , drop = FALSE]
+#' probabilities <- soprob_markov(
+#'   fit,
+#'   data = baseline,
+#'   times = 1:3,
+#'   ylevels = fit$yunique,
+#'   absorb = "8"
+#' )
+#' dim(probabilities)
+#'
 #' @export
 soprob_markov <- function(
   object,

@@ -33,10 +33,10 @@ A tibble with the same columns returned by
 }
 \description{
 Generates synthetic ACTT-2-like ordinal outcome data using the Brownian gap
-simulator with defaults tuned to roughly match the control-arm state
-occupancy, cumulative death, and low rehospitalization patterns described in
-the ACTT-2 trial. The defaults are null-aligned, so there is no built-in
-treatment difference unless \code{mu_treatment_effect} is changed.
+simulator with defaults tuned to roughly preserve control-arm state
+occupancy while reducing rehospitalization-like movement from recovered
+states 1/2 into states 3:7. The defaults are null-aligned, so there is no
+built-in treatment difference unless \code{mu_treatment_effect} is changed.
 }
 \details{
 This is intended as a convenient starting point for simulation studies, not
