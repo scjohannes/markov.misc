@@ -20,8 +20,10 @@ sim_trajectories_brownian_gap(
   allowed_start_state = 2:5,
   absorbing_state = 6,
   drift_change_times = c(25, 50),
+  drift_start = 0,
   latent_dist = c("logistic", "normal"),
   refresh_rate = 0.048,
+  threshold_time_effect_factors = NULL,
   seed = NULL
 )
 }
@@ -68,7 +70,13 @@ absorbing state (default: 6). Once entered, patients remain there.
 Set to NULL if no absorbing state is desired.}
 
 \item{drift_change_times}{Numeric vector of length 2 specifying when drift
-begins to decline and when it reaches zero (default: c(25, 50)).}
+begins to decline and when it reaches zero after drift has started
+(default: c(25, 50)).}
+
+\item{drift_start}{Numeric scalar, numeric vector of length \code{n_patients}, or
+function. Day when deterministic drift starts for each patient (default:
+0). A function is called as \code{drift_start(n_patients)} and must return a
+non-negative numeric scalar or vector of length \code{n_patients}.}
 
 \item{latent_dist}{Character. The distribution used to link the latent variable
 to observed states. Options are "logistic" (default) or "normal".}
@@ -76,6 +84,12 @@ to observed states. Options are "logistic" (default) or "normal".}
 \item{refresh_rate}{Numeric scalar. Exponential rate per day for the next
 non-absorbing state refresh (default: 0.048). Lower values create longer
 dwell times between observed state updates.}
+
+\item{threshold_time_effect_factors}{Numeric vector of length K-1 or \code{NULL}.
+Multipliers for how strongly the common deterministic latent drift affects
+each threshold over time (default: \code{NULL}, equivalent to all 1s). Values
+below 1 attenuate the time effect for a threshold; values above 1 amplify
+it. The induced day-specific thresholds must remain strictly increasing.}
 
 \item{seed}{Integer. Random seed for reproducibility (default: NULL).}
 }

@@ -204,8 +204,12 @@ data-generating mechanism:
   thresholded into ordinal states.
 - `sim_trajectories_brownian_gap()` separates daily latent severity evolution
   from observed state refreshes, which reduces unrealistic day-to-day switching.
+  It supports exponential refresh gaps, sampled patient-specific drift starts,
+  and threshold-specific time-effect multipliers for calibrated ordinal
+  occupancy over follow-up.
 - `sim_actt2_brownian()` wraps the Brownian-gap simulator with ACTT-2-inspired
-  defaults.
+  defaults that preserve broad state occupancy while producing rare state `1`
+  to state `3:7` rehospitalization with reduced state `1:2` to `3:7` churn.
 - `sim_trajectories_deterministic()` implements a line-of-destiny latent
   trajectory with absorbing recovery and death states.
 - `sim_trajectories_tte()` uses recurrent event times and last-observation

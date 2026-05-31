@@ -81,6 +81,26 @@ test_that("sim_trajectories_brownian_gap supports patient-specific drift heterog
   )
 })
 
+test_that("sim_trajectories_brownian_gap supports delayed drift starts", {
+  traj_immediate <- sim_trajectories_brownian_gap(
+    n_patients = 40,
+    follow_up_time = 8,
+    drift_start = 0,
+    seed = 123
+  )
+
+  traj_delayed <- sim_trajectories_brownian_gap(
+    n_patients = 40,
+    follow_up_time = 8,
+    drift_start = function(n) sample(0:4, n, replace = TRUE),
+    seed = 123
+  )
+
+  expect_identical(names(traj_immediate), names(traj_delayed))
+  expect_identical(dim(traj_immediate), dim(traj_delayed))
+  expect_gt(sum(traj_immediate$y != traj_delayed$y), 0)
+})
+
 test_that("sim_trajectories_brownian_gap validates refresh rate", {
   traj <- sim_trajectories_brownian_gap(
     n_patients = 30,
@@ -344,6 +364,25 @@ test_that("sim_trajectories_brownian_gap validates additional inputs", {
   expect_error(
     sim_trajectories_brownian_gap(thresholds = c(1, 1, 2, 3, 4)),
     "thresholds must be a strictly increasing"
+  )
+  expect_error(
+    sim_trajectories_brownian_gap(threshold_time_effect_factors = c(0, 1)),
+    "threshold_time_effect_factors must be NULL"
+  )
+  expect_error(
+    sim_trajectories_brownian_gap(drift_start = -1),
+    "drift_start must be a non-negative numeric scalar"
+  )
+  expect_error(
+    sim_trajectories_brownian_gap(n_patients = 3, drift_start = c(0, 1)),
+    "drift_start must be a non-negative numeric scalar"
+  )
+  expect_error(
+    sim_trajectories_brownian_gap(
+      thresholds = c(-1, 0, 1, 2, 3),
+      threshold_time_effect_factors = c(0, 10, 0, 0, 0)
+    ),
+    "threshold_time_effect_factors induce crossing thresholds"
   )
   expect_error(sim_trajectories_brownian_gap(treatment_prob = -1), "treatment_prob must")
   expect_error(
