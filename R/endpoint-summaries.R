@@ -65,7 +65,7 @@ jackknife_mcse <- function(estimates, statistic = mean) {
 #' @param data A data frame containing trajectory data, typically the output from
 #'   `sim_trajectories_markov()` or `sim_trajectories_brownian()`. Must contain
 #'   columns: `id`, `y` (state), and `tx` (treatment).
-#' @param target_state Integer. The state to count (default: 1, representing Home/Discharged).
+#' @param target_state Integer or integer vector. The state to count (default: 1, representing Home/Discharged).
 #'
 #' @return A data frame with columns:
 #'   - id: patient identifier
@@ -82,6 +82,35 @@ jackknife_mcse <- function(estimates, statistic = mean) {
 #' # After simulating trajectories
 #' trajectories <- sim_trajectories_markov(baseline_data, lp_function = my_lp)
 #' t_data <- states_to_ttest(trajectories, target_state = 1)
+#'
+#' # Compare performance to bind_rows_fill + group_by + summarise
+#' microbenchmark::microbenchmark(
+#'   original = {
+#'  ids <- unique(trajectories$id)
+#'  result <- bind_rows_fill(lapply(ids, function(id) {
+#'    rows <- trajectories$id == id
+#'    data.frame(
+#'      id = id,
+#'      y = sum(trajectories$y[rows] == 1),
+#'      tx = trajectories$tx[rows][1],
+#'      check.names = FALSE
+#'    )
+#' return(result)
+#'  }))
+#'  },
+#'  vectorized = {
+#'  y_count <- tapply(trajectories$y == 1, trajectories$id, sum)
+#'
+#'  # get tx per id (first observed)
+#'  tx_first <- tapply(trajectories$tx, trajectories$id, function(x) x[1])
+#'
+#'  return(data.frame(
+#'    id = as.integer(names(y_count)),
+#'    y = as.integer(y_count),
+#'    tx = as.integer(tx_first),
+#'    check.names = FALSE
+#'  ))}
+#'  )
 #' }
 #'
 #' @export
@@ -93,18 +122,18 @@ states_to_ttest <- function(data, target_state = 1) {
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  ids <- unique(data$id)
-  result <- bind_rows_fill(lapply(ids, function(id) {
-    rows <- data$id == id
-    data.frame(
-      id = id,
-      y = sum(data$y[rows] == target_state),
-      tx = data$tx[rows][1],
-      check.names = FALSE
-    )
-  }))
+  # count days in target_state per id
+  y_count <- tapply(data$y %in% target_state, data$id, sum)
 
-  return(result)
+  # get tx per id (first observed)
+  tx_first <- tapply(data$tx, data$id, function(x) x[1])
+
+  data.frame(
+    id = as.integer(names(y_count)),
+    y = as.integer(y_count),
+    tx = as.integer(tx_first),
+    check.names = FALSE
+  )
 }
 
 
@@ -120,7 +149,7 @@ states_to_ttest <- function(data, target_state = 1) {
 #'   columns: `id`, `time`, `y` (state), and `tx` (treatment).
 #' @param follow_up_time Integer. Total follow-up time used in the simulation.
 #'   This is needed to calculate days at home from the last discharge.
-#' @param target_state Integer. The state representing "home" or "baseline" (default: 1).
+#' @param target_state Integer or integer vector. The state representing "home" or "baseline" (default: 1).
 #' @param death_state Integer. The state representing death (default: 6).
 #' @param covariates Character vector of additional covariate names to include in
 #'   the output (default: c("age", "sofa")). The first value of each covariate
@@ -146,13 +175,62 @@ states_to_ttest <- function(data, target_state = 1) {
 #' @examples
 #' \dontrun{
 #' # After simulating trajectories
-#' trajectories <- sim_trajectories_markov(baseline_data, follow_up_time = 60,
-#'                                         lp_function = my_lp)
+#' trajectories <- sim_actt2_brownian()
 #' drs_data <- states_to_drs(trajectories, follow_up_time = 60)
 #'
 #' # With different covariates
 #' drs_data <- states_to_drs(trajectories, follow_up_time = 60,
 #'                           covariates = c("age", "sofa", "baseline_severity"))
+#'
+#' # Compare performance to bind_rows_fill + group_by + summarise
+#' follow_up_time <- 28
+#' microbenchmark::microbenchmark(
+#'   original = {
+#'  ids <- unique(trajectories$id)
+#'  result <- bind_rows_fill(lapply(ids, function(id) {
+#'    rows <- trajectories$id == id
+#'    last_not_home <- max(trajectories$time[rows][trajectories$y[rows] != 1], na.rm = TRUE)
+#'    dead <- any(trajectories$y[rows] == 8)
+#'    data.frame(
+#'      id = id,
+#'      tx = trajectories$tx[rows][1],
+#'      drs = ifelse(
+#'        dead,
+#'        follow_up_time + 2,
+#'         ifelse(
+#'            follow_up_time == last_not_home,
+#'            follow_up_time + 1,
+#'            last_not_home
+#'      )
+#'    ),
+#'      check.names = FALSE
+#'    )
+#'  }))
+#'  },
+#'  vectorized = {
+#'  last_not_home <- tapply(
+#'    ifelse(trajectories$y != 1, trajectories$time, NA_real_),
+#'    trajectories$id,
+#'    function(x) if (all(is.na(x))) 0 else max(x, na.rm = TRUE))
+#'  dead <- tapply(trajectories$y == 8, trajectories$id, any)
+#'  tx_first <- tapply(trajectories$tx, trajectories$id, function(x) x[1])
+#'
+#'  result <- data.frame(
+#'    id = as.integer(names(last_not_home)),
+#'    tx = as.integer(tx_first),
+#'    drs = ifelse(
+#'      dead,
+#'      follow_up_time + 2,
+#'      ifelse(
+#'        follow_up_time == last_not_home,
+#'        follow_up_time + 1,
+#'        last_not_home
+#'      )
+#'    ),
+#'    check.names = FALSE
+#'  )
+#' result
+#' })
 #' }
 #'
 #' @export
@@ -170,33 +248,39 @@ states_to_drs <- function(
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
-  ids <- unique(data$id)
-  result <- bind_rows_fill(lapply(ids, function(id) {
-    group_data <- data[data$id == id, , drop = FALSE]
-    group_data <- group_data[order(group_data$time), , drop = FALSE]
-    last_not_home <- max(0, which(group_data$y != target_state))
-    dead <- any(group_data$y == death_state)
-    data.frame(
-      id = id,
-      tx = group_data$tx[1],
-      drs = if (dead) -1 else follow_up_time - last_not_home,
-      check.names = FALSE
-    )
-  }))
+  # ensure sorted so "first" is consistent
+  data <- data[order(data$id, data$time), , drop = FALSE]
 
-  # Add covariates if specified
+  # last time not in target_state (0 if never left target)
+  last_not_home <- tapply(
+    ifelse(!(data$y %in% target_state), data$time, NA_real_),
+    data$id,
+    function(x) if (all(is.na(x))) 0 else max(x, na.rm = TRUE)
+  )
+
+  dead <- tapply(data$y == death_state, data$id, any)
+  tx_first <- tapply(data$tx, data$id, function(x) x[1])
+
+  result <- data.frame(
+    id = as.integer(names(last_not_home)),
+    tx = as.integer(tx_first),
+    drs = ifelse(
+      dead,
+      follow_up_time + 2,
+      ifelse(
+        follow_up_time == last_not_home,
+        follow_up_time + 1,
+        last_not_home
+      )
+    ),
+    check.names = FALSE
+  )
+
+  # add covariates (first value per id)
   if (!is.null(covariates)) {
     available_covs <- intersect(covariates, names(data))
-    if (length(available_covs) > 0) {
-      cov_data <- bind_rows_fill(lapply(ids, function(id) {
-        group_data <- data[data$id == id, , drop = FALSE]
-        out <- data.frame(id = id, check.names = FALSE)
-        for (cov in available_covs) {
-          out[[cov]] <- group_data[[cov]][1]
-        }
-        out
-      }))
-      result <- left_join_preserve_order(result, cov_data, by = "id")
+    for (cov in available_covs) {
+      result[[cov]] <- tapply(data[[cov]], data$id, function(x) x[1])
     }
   }
 
