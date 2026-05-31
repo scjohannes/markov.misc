@@ -1,0 +1,205 @@
+---
+title: "Second-Order SOPs with orm()"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Second-Order SOPs with orm()}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.8,
+  out.width = "100%",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+For a second-order transition model, the transition probability depends on the
+two previous states. The recursion therefore tracks a joint distribution over
+the last two states, then marginalizes it back to SOPs.
+
+This example uses `rms::orm()` with `yprev` and `ypprev`.
+
+## Data
+
+```{r setup}
+library(markov.misc)
+library(ggplot2)
+library(rms)
+
+N_PATIENTS <- 200
+FOLLOW_UP <- 14
+SEED <- 20260529
+STATE_LEVELS <- as.character(1:8)
+ABSORB <- "8"
+
+raw_data <- sim_actt2_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  mu_treatment_effect = -0.03,
+  seed = SEED
+)
+
+model_data <- prepare_markov_data(
+  raw_data,
+  absorbing_state = as.integer(ABSORB),
+  factor_previous = TRUE
+)
+model_data <- model_data[order(model_data$id, model_data$time), ]
+model_data$ypprev <- ave(
+  model_data$yprev,
+  model_data$id,
+  FUN = function(x) c(x[1], head(x, -1))
+)
+model_data$ypprev <- factor(model_data$ypprev, levels = levels(model_data$yprev))
+
+baseline_data <- model_data[!duplicated(model_data$id), , drop = FALSE]
+
+head(model_data[c("id", "time", "tx", "ypprev", "yprev", "y")])
+```
+
+## Second-Order Recursion
+
+For a second-order transition model, the SOP for state $l$ at time $t$ is
+
+$$
+S_{it}(l) =
+  \Pr(Y_{it} = l \mid \mathbf{X}_{i1}, \ldots, \mathbf{X}_{it},
+  Y_{i,-1}, Y_{i0}),
+\qquad t \geq 1,
+$$
+
+where $Y_{i,-1}$ and $Y_{i0}$ are the two observed initial states. The
+conditional transition probability at time $t$ is
+
+$$
+T_{it}(l \mid h, k) =
+  \Pr(Y_{it} = l \mid Y_{i,t-2} = h, Y_{i,t-1} = k, \mathbf{X}_{it}).
+$$
+
+These probabilities are predicted directly from the fitted ordinal transition
+model by setting `ypprev` to $h$, `yprev` to $k$, and `time` to $t$.
+Because the next state depends on two previous states, the recursion tracks the
+joint probability matrix of the last two outcomes:
+
+$$
+J_{it}(k,l) =
+  \Pr(Y_{i,t-1} = k, Y_{it} = l \mid \mathbf{X}_i, Y_{i,-1}, Y_{i0}).
+$$
+
+Equivalently, one can initialize
+$J_{i0}(h,k) = \mathbb{1}\{h = Y_{i,-1}, k = Y_{i0}\}$ and update from there.
+The code
+uses the same recursion, with a small computational shortcut: it first predicts
+the distribution of $Y_{i1}$ and stores
+
+$$
+J_{i1}(k,l) =
+  \mathbb{1}\{k = Y_{i0}\} T_{i1}(l \mid Y_{i,-1}, Y_{i0}).
+$$
+
+For later times, the joint distribution is updated by marginalizing over the
+older state $h$:
+
+$$
+J_{it}(k,l) =
+  \sum_{h=1}^{K}
+    J_{i,t-1}(h,k) T_{it}(l \mid h,k),
+\qquad t = 2,\ldots,d.
+$$
+
+The SOP is then the column margin of the joint matrix:
+
+$$
+S_{it}(l) =
+  \sum_{k=1}^{K} J_{it}(k,l).
+$$
+
+In matrix/tensor notation, define the transition tensor
+$\mathcal{T}_{it}$ with entries
+$\mathcal{T}_{it,hkl} = T_{it}(l \mid h,k)$. The update is a tensor
+contraction over the oldest-state index:
+
+$$
+J_{it,kl} =
+  \sum_{h=1}^{K}
+    J_{i,t-1,hk} \mathcal{T}_{it,hkl},
+\qquad
+s_{it,l} =
+  \sum_{k=1}^{K} J_{it,kl}.
+$$
+
+Batched over patients, this is the elementwise tensor calculation used by
+`soprob_markov()`:
+
+$$
+\mathbf{J}_{t,kl} =
+  \sum_{h=1}^{K}
+    \mathbf{J}_{t-1,hk} \odot \mathbf{T}_{t,hkl},
+\qquad
+\mathbf{S}_{t,l} =
+  \sum_{k=1}^{K} \mathbf{J}_{t,kl}.
+$$
+
+If $k$ is absorbing, the implementation skips model prediction from $k$ and
+carries the joint mass forward to $J_{it}(k,k)$. Thus for absorbing
+$k \in \mathcal{A}$,
+
+$$
+J_{it}(k,k) \leftarrow
+  J_{it}(k,k) + \sum_{h=1}^{K} J_{i,t-1}(h,k).
+$$
+
+`avg_sops(..., p2varname = "ypprev")` uses this array recursion instead of
+simulating individual trajectories.
+
+## Fit And Predict
+
+```{r fit-model}
+dd <- rms::datadist(model_data)
+options(datadist = "dd")
+
+fit_second <- rms::orm(
+  y ~ tx + rms::rcs(time, 4) + yprev + ypprev,
+  data = model_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE,
+  maxit = 100
+)
+
+fit_second
+```
+
+```{r avg-sops}
+sop_second <- avg_sops(
+  fit_second,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_second$yunique,
+  absorb = ABSORB,
+  id_var = "id",
+  p2varname = "ypprev"
+)
+
+head(sop_second)
+```
+
+```{r plot-sops}
+plot_sops(
+  sop_second,
+  geom = "line",
+  facet_var = "tx"
+) +
+  labs(
+    x = "Day",
+    y = "State occupancy probability"
+  )
+```
