@@ -91,51 +91,43 @@
 #'      y_i(d) = floor(x_i(d))
 #'    - Constrain y to 1, n_states
 #'
-#' 5. Once a patient reaches an absorbing state (1 or 7), they remain there.
+#' 5. Once a patient reaches an absorbing state (typically 1 or `n_states`),
+#'    they remain there.
 #'
 #' The log-time transformation log(d) creates realistic non-linear progression:
 #' rapid initial change that slows over time. The floor() operation discretizes
 #' the continuous trajectory into ordinal states.
 #'
 #' @examples
-#' \dontrun{
-#' # Default: 10% mortality in control, 5% in treatment
+#' # Default mortality settings
 #' traj <- sim_trajectories_deterministic(
-#'   n_patients = 1000,
-#'   follow_up_time = 28,
+#'   n_patients = 20,
+#'   follow_up_time = 7,
 #'   seed = 123
 #' )
 #'
-#' # Higher mortality scenario (20% control, 10% treatment)
+#' # Higher mortality scenario
 #' traj_high_mort <- sim_trajectories_deterministic(
-#'   n_patients = 1000,
+#'   n_patients = 20,
+#'   follow_up_time = 7,
 #'   mortality_prob_control = 0.20,
 #'   mortality_prob_treatment = 0.10,
 #'   seed = 456
 #' )
 #'
-#' # Treatment effect on recovery slope (faster recovery)
+#' # Treatment effect on recovery slope
 #' traj_tx_effect <- sim_trajectories_deterministic(
-#'   n_patients = 1000,
-#'   theta1_treatment_effect = -0.05,  # More negative = faster improvement
+#'   n_patients = 20,
+#'   follow_up_time = 7,
+#'   B2 = -0.05,
 #'   seed = 789
 #' )
-#'
-#' # Visualize trajectories
-#' library(ggplot2)
-#' traj |>
-#'   dplyr::filter(id <= 20) |>
-#'   ggplot(aes(x = time, y = y, group = id, color = factor(tx))) +
-#'   geom_line() +
-#'   labs(title = "Lines of Destiny", color = "Treatment")
-#' }
 #'
 #' @references
 #' Dodd, Lori E., Dean Follmann, Jing Wang, Franz Koenig, Lisa L. Korn,
 #' Christian Schoergenhofer, Michael Proschan, et al. 2020. "Endpoints for
 #' Randomized Controlled Clinical Trials for COVID-19 Treatments." Clinical
 #' Trials (London, England) 17 (5): 472-82.
-
 #'
 #' @return A tibble with id, time, tx, y, yprev, x, theta0, theta1.
 #'
@@ -157,7 +149,7 @@ sim_trajectories_deterministic <- function(
   b1_recovery_mean = -0.35,
   b1_recovery_sd = 0.12,
   treatment_prob = 0.5,
-  absorbing_states = c(1, 7),
+  absorbing_states = c(1, 6),
   seed = NULL
 ) {
   # --- Input Validation ---

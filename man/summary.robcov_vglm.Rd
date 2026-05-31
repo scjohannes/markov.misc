@@ -19,3 +19,16 @@ summary statistics.
 Prints a comprehensive summary of the robust covariance estimation results,
 including coefficients, robust standard errors, z-statistics, and p-values.
 }
+\examples{
+\dontshow{if (rlang::is_installed("VGAM")) withAutoprint(\{ # examplesIf}
+trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
+markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+fit <- vglm.markov(
+  ordered(y) ~ time + tx + yprev,
+  family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+  data = markov_data
+)
+robust_fit <- robcov_vglm(fit, cluster = markov_data$id)
+summary(robust_fit)
+\dontshow{\}) # examplesIf}
+}

@@ -37,3 +37,20 @@ equally to every threshold-specific linear predictor.
 Then, prediction for a new observation with design vector \eqn{x} is simply:
 \eqn{\eta = \Gamma \times x^T}
 }
+\examples{
+\dontshow{if (rlang::is_installed("rms")) withAutoprint(\{ # examplesIf}
+trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
+markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+fit <- rms::orm(
+  y ~ time + tx + yprev,
+  data = markov_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE
+)
+
+effective <- get_effective_coefs(fit)
+dim(effective)
+\dontshow{\}) # examplesIf}
+}

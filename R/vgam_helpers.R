@@ -27,6 +27,21 @@
 #' Then, prediction for a new observation with design vector \eqn{x} is simply:
 #' \eqn{\eta = \Gamma \times x^T}
 #'
+#' @examplesIf rlang::is_installed("rms")
+#' trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
+#' markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+#' fit <- rms::orm(
+#'   y ~ time + tx + yprev,
+#'   data = markov_data,
+#'   x = TRUE,
+#'   y = TRUE,
+#'   opt_method = "LM",
+#'   scale = TRUE
+#' )
+#'
+#' effective <- get_effective_coefs(fit)
+#' dim(effective)
+#'
 #' @export
 get_effective_coefs <- function(model, beta = NULL) {
   if (inherits(model, "vglm")) {

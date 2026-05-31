@@ -10,3 +10,7 @@
 ^ARCHITECTURE\.md$
 ^archive$
 ^design$
+^cran-comments\.md$
+^CRAN-READINESS-PLAN\.md$
+^markov\.misc_.*\.tar\.gz$
+^vignettes/\.gitignore$

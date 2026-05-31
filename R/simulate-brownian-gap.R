@@ -85,7 +85,7 @@
 #' )
 #' }
 #'
-#' @importFrom stats rnorm plogis pnorm rexp runif
+#' @importFrom stats rnorm plogis pnorm rexp runif rpois
 #'
 #' @export
 sim_trajectories_brownian_gap <- function(

@@ -13,7 +13,6 @@
 #'
 #' @details
 #' This function creates a shallow copy of the model and replaces its
-
 #' coefficients. The modified model can then be passed to `predict()` or
 #' `soprob_markov()` to compute predictions under the simulated coefficients.
 #'
@@ -28,23 +27,22 @@
 #' linear predictors from the design matrix and coefficients, so we only need
 #' to replace the coefficients - not any stored linear predictors.
 #'
-#' @examples
-#' \dontrun{
-#' library(VGAM)
+#' @examplesIf rlang::is_installed("rms")
+#' trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
+#' markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+#' fit <- rms::orm(
+#'   y ~ time + tx + yprev,
+#'   data = markov_data,
+#'   x = TRUE,
+#'   y = TRUE,
+#'   opt_method = "LM",
+#'   scale = TRUE
+#' )
 #'
-#' # Fit a model
-#' fit <- vglm(y ~ x1 + x2,
-#'             family = cumulative(parallel = TRUE, reverse = TRUE),
-#'             data = mydata)
-#'
-#' # Draw from MVN
-#' library(mvtnorm)
-#' new_coefs <- rmvnorm(1, mean = coef(fit), sigma = vcov(fit))
-#'
-#' # Set new coefficients and predict
-#' fit_sim <- set_coef(fit, new_coefs[1, ])
-#' pred_sim <- predict(fit_sim, newdata = test_data, type = "response")
-#' }
+#' new_coefs <- coef(fit)
+#' new_coefs["tx"] <- new_coefs["tx"] - 0.1
+#' fit_shifted <- set_coef(fit, new_coefs)
+#' coef(fit_shifted)["tx"]
 #'
 #' @seealso [get_vcov_robust()] for obtaining robust covariance matrices
 #'

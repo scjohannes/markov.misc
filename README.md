@@ -1,55 +1,95 @@
 # markov.misc
 
-An R package for Markov transition modelling, trajectory
-simulation, visualization and operating-characteristic (power) calculations for
-discrete health states. The package was developed to support clinical trial
-simulation workflows and includes bootstrap helpers for inference on
-longitudinal ordinal outcomes.
-
-## Design & architecture
-
-- States are represented by ordered integers (e.g., 1 = home, 6 = death). One or
-  more states can be designated absorbing.
-- Data can be generated using a markov model with user-specified baseline data
-  and user specified linear predictor. Defaults are provided which are suitable
-  for an in-hospital viral respiratory disease setting.
+Compute and plot state occupancy probabilities (SOPs) and contrasts from first- and second-order Markov models of ordinal health-state trajectories.
 
 ## Installation
 
-Install from local source for development with `remotes` or `devtools`:
+Install the development version from GitHub with `pak`:
 
 ```r
-# install.packages("remotes")
-remotes::install_local(path = ".")
+install.packages("pak")
+pak::pak("scjohannes/markov.misc")
 ```
 
-## Quick start (example)
+## ACTT-2-Style SOP Workflow
 
-This snippet shows a minimal simulation and summary workflow. It uses the
-package helpers; adapt arguments (n, tmax, extra_params) for your use case.
+This example simulates ACTT-2-style ordinal outcomes, fits a proportional-odds
+Markov transition model with `rms::orm()`, estimates marginal treatment-arm
+SOPs, adds uncertainty, and plots the result.
 
 ```r
 library(markov.misc)
+library(rms)
+library(ggplot2)
 
-ids <- sample(1:250000, size = 200, replace = FALSE)
-# simulate 200 patients for 28 days with the  VIOLET linear predictor and violet baseline data
-set.seed(123)
-sim <- simulate_trajectories(
-  baseline_data = violet_baseline[violet_baseline$ID %in% ids, ],
-  follow_up_time = 30,
-  lp_function = lp_violet,      # See R/lp_violet.R for expected args
+set.seed(20260526)
+
+trial <- sim_actt2_brownian(
+  n_patients = 300,
+  follow_up_time = 28,
+  treatment_prob = 0.5,
+  mu_treatment_effect = -0.03,
+  seed = 20260526
 )
 
-# convert to a t-test style endpoint and to DRS (Days Returned to Baseline)
-ttest_df <- markov_to_ttest(sim, target_state = 1)
-drs_df <- markov_to_drs(sim, target_state = 1, follow_up_time = 28)
+markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+baseline_data <- markov_data[!duplicated(markov_data$id), , drop = FALSE]
 
-# Expand example
+dd <- datadist(markov_data)
+options(datadist = "dd")
+
+fit <- orm(
+  y ~ rms::rcs(time, 4) + tx + yprev,
+  data = markov_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE
+)
+
+fit_robust <- robcov(fit, cluster = markov_data$id)
+
+sop <- avg_sops(
+  fit_robust,
+  newdata = baseline_data,
+  variables = list(tx = c(0, 1)),
+  times = 1:28,
+  ylevels = fit$yunique,
+  absorb = "8",
+  id_var = "id"
+)
+
+sop_ci <- inferences(
+  sop,
+  method = "simulation",
+  engine = "mvn",
+  n_sim = 200,
+  conf_level = 0.95
+)
+
+plot_sops(sop_ci, facet_var = "tx") +
+  labs(
+    x = "Day",
+    y = "State occupancy probability"
+  )
 ```
 
-## Core functions and responsibilities
+## Learn More
 
+After installation, see:
 
-## Simulation-to-analysis pipeline (recommended)
+```r
+vignette("full-po-sops", package = "markov.misc")
+vignette("partial-po-vglm-sops", package = "markov.misc")
+vignette("second-order-orm-sops", package = "markov.misc")
+vignette("many-levels-previous-state-spline", package = "markov.misc")
+vignette("factor-time-orm-sops", package = "markov.misc")
+vignette("bayesian-rmsb-sops", package = "markov.misc")
+vignette("mvn-vs-bootstrap-orm-sops", package = "markov.misc")
+```
 
+## Data Provenance
 
+The included `violet_baseline` dataset is derived from `Hmisc::simlongord`,
+created by Frank Harrell and based on the VIOLET trial. Because that data
+provenance is GPL-compatible, `markov.misc` is licensed as `GPL (>= 2)`.

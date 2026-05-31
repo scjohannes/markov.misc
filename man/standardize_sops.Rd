@@ -56,3 +56,26 @@ A list with two components:
 Updates the standardize_sops wrapper to use the optimized
 soprob_markov_vectorized function.
 }
+\examples{
+\dontshow{if (rlang::is_installed("rms")) withAutoprint(\{ # examplesIf}
+trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
+markov_data <- prepare_markov_data(trial, absorbing_state = 8)
+fit <- rms::orm(
+  y ~ time + tx + yprev,
+  data = markov_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE
+)
+
+standardized <- standardize_sops(
+  fit,
+  data = markov_data,
+  times = 1:3,
+  ylevels = fit$yunique,
+  absorb = "8"
+)
+names(standardized)
+\dontshow{\}) # examplesIf}
+}

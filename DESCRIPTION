@@ -1,11 +1,14 @@
 Package: markov.misc
-Title: Markov Miscellaneous
-Version: 0.0.2.0000
+Title: Markov Modeling for Longitudinal Ordinal Outcomes
+Version: 0.1.0
 Authors@R: c(
-    person("Johannes", "Schwenke", , "johannes.schwenke@gmail.com", role = c("aut", "cre")),
-    person("Felix", "Herkner", , "felix.herkner@meduniwien.ac.at", role = "aut"))
-Description: Contains function for Markov transition modelling (ccurent focus is on first order models), data vizualations, and power calculations.
-License: MIT + file LICENSE
+    person("Johannes", "Schwenke", , "johannes.schwenke@gmail.com", role = c("aut", "cre", "cph")),
+    person("Felix", "Herkner", , "felix.herkner@meduniwien.ac.at", role = c("aut", "cph")))
+Description: Estimate state occupancy probabilities and treatment contrasts
+    for longitudinal ordinal outcomes using discrete-time Markov transition
+    models. Supports (partial) proportional-odds model backends from 'VGAM',
+    'rms', and 'rmsb'.
+License: GPL (>= 2)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
