@@ -513,6 +513,10 @@ The package keeps endpoint transformations separate from the SOP engine.
 | `time_in_state()` | SOP arrays, tidy SOPs, or bootstrap SOP frames | Expected total time in target states, optionally on a real-time grid. |
 | `interpolate_sops()` | `markov_sops` / `markov_avg_sops` | Visit-scale SOPs mapped and linearly interpolated onto elapsed time. |
 
+Endpoint summary helpers retain the first observed treatment value per patient
+without recoding it, so numeric and label-coded `tx` values remain consistent
+with downstream sampling configuration.
+
 `interpolate_sops()` and `time_in_state()` are closely related. Interpolation
 maps visit labels to real time, optionally adds an empirical baseline anchor
 from `newdata_orig`, interpolates draw-level outputs when available, and

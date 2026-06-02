@@ -107,7 +107,7 @@ jackknife_mcse <- function(estimates, statistic = mean) {
 #'  return(data.frame(
 #'    id = as.integer(names(y_count)),
 #'    y = as.integer(y_count),
-#'    tx = as.integer(tx_first),
+#'    tx = tx_first,
 #'    check.names = FALSE
 #'  ))}
 #'  )
@@ -131,7 +131,7 @@ states_to_ttest <- function(data, target_state = 1) {
   data.frame(
     id = as.integer(names(y_count)),
     y = as.integer(y_count),
-    tx = as.integer(tx_first),
+    tx = tx_first,
     check.names = FALSE
   )
 }
@@ -217,7 +217,7 @@ states_to_ttest <- function(data, target_state = 1) {
 #'
 #'  result <- data.frame(
 #'    id = as.integer(names(last_not_home)),
-#'    tx = as.integer(tx_first),
+#'    tx = tx_first,
 #'    drs = ifelse(
 #'      dead,
 #'      follow_up_time + 2,
@@ -263,7 +263,7 @@ states_to_drs <- function(
 
   result <- data.frame(
     id = as.integer(names(last_not_home)),
-    tx = as.integer(tx_first),
+    tx = tx_first,
     drs = ifelse(
       dead,
       follow_up_time + 2,

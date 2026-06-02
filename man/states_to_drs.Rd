@@ -84,7 +84,7 @@ microbenchmark::microbenchmark(
         ifelse(
            follow_up_time == last_not_home,
            follow_up_time + 1,
-           follow_up_time - last_not_home
+           last_not_home
      )
    ),
      check.names = FALSE
@@ -101,14 +101,14 @@ microbenchmark::microbenchmark(
 
  result <- data.frame(
    id = as.integer(names(last_not_home)),
-   tx = as.integer(tx_first),
+   tx = tx_first,
    drs = ifelse(
      dead,
      follow_up_time + 2,
      ifelse(
        follow_up_time == last_not_home,
        follow_up_time + 1,
-       follow_up_time - last_not_home
+       last_not_home
      )
    ),
    check.names = FALSE

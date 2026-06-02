@@ -62,7 +62,7 @@ return(result)
  return(data.frame(
    id = as.integer(names(y_count)),
    y = as.integer(y_count),
-   tx = as.integer(tx_first),
+   tx = tx_first,
    check.names = FALSE
  ))}
  )
