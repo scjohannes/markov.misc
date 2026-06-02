@@ -14,8 +14,11 @@ assess_operating_characteristics(
   allocation_ratio = 0.5,
   seed = 123,
   rerandomize = FALSE,
+  replace = FALSE,
   id_var = "id",
-  tx_var = "tx"
+  tx_var = "tx",
+  control_value = 0,
+  treatment_value = 1
 )
 
 run_power_iteration(
@@ -27,8 +30,11 @@ run_power_iteration(
   allocation_ratio = 0.5,
   seed = 123,
   rerandomize = FALSE,
+  replace = FALSE,
   id_var = "id",
-  tx_var = "tx"
+  tx_var = "tx",
+  control_value = 0,
+  treatment_value = 1
 )
 }
 \arguments{
@@ -69,11 +75,19 @@ bootstrap distributions, SOPs, detailed model output). Saved to
 the sampled data. This is useful for Type I error simulations where the null
 hypothesis of no treatment effect should hold. Default is FALSE.}
 
+\item{replace}{Logical. If TRUE, sample patients with replacement.}
+
 \item{id_var}{Character. Name of the patient identifier variable in the data.
-Used for rerandomization. Default is "id".}
+Used for Arrow sampling and rerandomization. Default is "id".}
 
 \item{tx_var}{Character. Name of the treatment indicator variable in the data.
-Used for rerandomization. Default is "tx".}
+Used for Arrow sampling and rerandomization. Default is "tx".}
+
+\item{control_value}{Value of \code{tx_var} identifying control patients and used
+when rerandomizing treatment (default: 0).}
+
+\item{treatment_value}{Value of \code{tx_var} identifying treatment patients and
+used when rerandomizing treatment (default: 1).}
 }
 \value{
 A tibble combining results from all analysis functions with columns:

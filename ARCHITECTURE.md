@@ -526,10 +526,14 @@ real-time grids.
 The design separates data sampling from analysis-specific inference:
 
 1. `sample_from_arrow()` samples patient IDs from large Arrow datasets by
-   treatment arm without collecting the entire data set.
+   treatment arm without collecting the entire data set. The sampler honors the
+   configured `id_var` and `tx_var` names, plus configurable `control_value`
+   and `treatment_value` labels for numeric or string-coded treatment arms. With
+   `replace = TRUE`, it uses `fast_group_bootstrap()` to resample IDs up to the
+   observed arm sizes and materializes duplicate clusters with synthetic IDs.
 2. `assess_operating_characteristics()` samples once per iteration and analysis
-   data source, optionally rerandomizes treatment, and calls user-supplied
-   fitting functions.
+   data source using those column names, optionally rerandomizes treatment, and
+   calls user-supplied fitting functions.
 3. Fitting functions own their model-specific inference strategy and must return
    a list whose first element is a one-row summary data frame.
 4. Additional analysis artifacts are saved under `output_path/details`.

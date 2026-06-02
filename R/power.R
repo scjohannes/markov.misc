@@ -8,6 +8,15 @@
 #' @param allocation_ratio Numeric. Proportion of patients assigned to treatment
 #'   (default: 0.5 for 1:1 allocation).
 #' @param seed Integer. Random seed for reproducibility (default: NULL).
+#' @param replace Logical. If TRUE, sample patients with replacement.
+#' @param id_var Character. Name of the patient identifier variable in the data
+#'   (default: "id").
+#' @param tx_var Character. Name of the treatment indicator variable in the data
+#'   (default: "tx").
+#' @param control_value Value of `tx_var` identifying control patients
+#'   (default: 0).
+#' @param treatment_value Value of `tx_var` identifying treatment patients
+#'   (default: 1).
 #'
 #' @return A tibble containing the sampled data with columns from the original
 #'   dataset.
@@ -19,8 +28,10 @@
 #' 2. Randomly samples the specified number from each group
 #' 3. Filters and collects only the selected patients
 #'
-#' The function assumes the dataset has an `id` column for patient identifiers
-#' and a `tx` column for treatment assignment (0 = control, 1 = treatment).
+#' The function uses `control_value` and `treatment_value` to identify the two
+#' treatment groups. When `replace = TRUE`, duplicate sampled patients are
+#' materialized with synthetic patient IDs so each resampled cluster remains
+#' distinct in downstream grouped analyses.
 #'
 #' @examples
 #' \dontrun{
@@ -47,7 +58,12 @@ sample_from_arrow <- function(
   data_path,
   sample_size,
   allocation_ratio = 0.5,
-  seed = NULL
+  seed = NULL,
+  replace = FALSE,
+  id_var = "id",
+  tx_var = "tx",
+  control_value = 0,
+  treatment_value = 1
 ) {
   if (!is.null(seed)) {
     set.seed(seed)
@@ -55,32 +71,138 @@ sample_from_arrow <- function(
 
   ds <- arrow::open_dataset(data_path)
 
-  # Get unique IDs by treatment group without loading all columns into memory.
-  tx_ids <- unique(arrow_collect_dataset(
-    ds,
-    filter = arrow_equal_expr("tx", 1),
-    cols = "id"
-  )$id)
+  collect_ids_for_value <- function(value, value_name) {
+    tryCatch(
+      unique(
+        arrow_collect_dataset(
+          ds,
+          filter = arrow_equal_expr(tx_var, value),
+          cols = id_var
+        )[[id_var]]
+      ),
+      error = function(e) {
+        stop(
+          "Could not collect IDs for tx_var '",
+          tx_var,
+          "' with ",
+          value_name,
+          " '",
+          value,
+          "'. If `",
+          tx_var,
+          "` is not coded 0/1, pass `control_value` and ",
+          "`treatment_value` matching the data. Original Arrow error: ",
+          conditionMessage(e),
+          call. = FALSE
+        )
+      }
+    )
+  }
 
-  soc_ids <- unique(arrow_collect_dataset(
-    ds,
-    filter = arrow_equal_expr("tx", 0),
-    cols = "id"
-  )$id)
+  # Get unique IDs by treatment group without loading all columns into memory.
+  tx_ids <- collect_ids_for_value(treatment_value, "treatment_value")
+  soc_ids <- collect_ids_for_value(control_value, "control_value")
+
+  if (length(tx_ids) == 0) {
+    stop(
+      "No patients found with tx_var '",
+      tx_var,
+      "' equal to treatment_value '",
+      treatment_value,
+      "'."
+    )
+  }
+
+  if (length(soc_ids) == 0) {
+    stop(
+      "No patients found with tx_var '",
+      tx_var,
+      "' equal to control_value '",
+      control_value,
+      "'."
+    )
+  }
 
   # Sample IDs based on allocation ratio
   n_tx <- round(allocation_ratio * sample_size)
   n_soc <- sample_size - n_tx
+  if (n_tx > length(tx_ids)) {
+    stop(
+      "Requested ",
+      n_tx,
+      " treatment patients, but only ",
+      length(tx_ids),
+      " are available.",
+      call. = FALSE
+    )
+  }
+  if (n_soc > length(soc_ids)) {
+    stop(
+      "Requested ",
+      n_soc,
+      " control patients, but only ",
+      length(soc_ids),
+      " are available.",
+      call. = FALSE
+    )
+  }
 
-  tx_sample <- sample(tx_ids, n_tx, replace = FALSE)
-  soc_sample <- sample(soc_ids, n_soc, replace = FALSE)
-  selected_ids <- c(tx_sample, soc_sample)
+  if (replace) {
+    tx_id_data <- as.data.frame(tx_ids)
+    names(tx_id_data)[1] <- id_var
 
-  # Load only selected patients
-  result <- arrow_collect_dataset(
-    ds,
-    filter = arrow_in_expr("id", selected_ids)
-  )
+    tx_boot_ids <- fast_group_bootstrap(
+      tx_id_data,
+      id_var = id_var,
+      n_boot = 1
+    )[[1]][seq_len(n_tx), ]
+
+    tx_data <- arrow_collect_dataset(
+      ds,
+      filter = arrow_in_expr(id_var, tx_boot_ids$original_id)
+    )
+
+    tx_data <- materialize_bootstrap_sample(
+      tx_boot_ids,
+      tx_data,
+      id_var = id_var
+    )
+
+    soc_id_data <- as.data.frame(soc_ids)
+    names(soc_id_data)[1] <- id_var
+
+    soc_boot_ids <- fast_group_bootstrap(
+      soc_id_data,
+      id_var = id_var,
+      n_boot = 1
+    )[[1]][seq_len(n_soc), ]
+
+    soc_data <- arrow_collect_dataset(
+      ds,
+      filter = arrow_in_expr(id_var, soc_boot_ids$original_id)
+    )
+
+    soc_data <- materialize_bootstrap_sample(
+      soc_boot_ids,
+      soc_data,
+      id_var = id_var
+    )
+
+    result <- rbind(tx_data, soc_data)
+    result[[id_var]] <- result$new_id
+    result$new_id <- NULL
+    result$boot_id <- NULL
+  } else {
+    tx_sample <- sample(tx_ids, n_tx, replace = FALSE)
+    soc_sample <- sample(soc_ids, n_soc, replace = FALSE)
+    selected_ids <- c(tx_sample, soc_sample)
+
+    # Load only selected patients
+    result <- arrow_collect_dataset(
+      ds,
+      filter = arrow_in_expr(id_var, selected_ids)
+    )
+  }
 
   return(result)
 }
@@ -319,10 +441,15 @@ tidy_po <- function(
 #' @param rerandomize Logical. If TRUE, rerandomizes treatment assignment within
 #'   the sampled data. This is useful for Type I error simulations where the null
 #'   hypothesis of no treatment effect should hold. Default is FALSE.
+#' @param replace Logical. If TRUE, sample patients with replacement.
 #' @param id_var Character. Name of the patient identifier variable in the data.
-#'   Used for rerandomization. Default is "id".
+#'   Used for Arrow sampling and rerandomization. Default is "id".
 #' @param tx_var Character. Name of the treatment indicator variable in the data.
-#'   Used for rerandomization. Default is "tx".
+#'   Used for Arrow sampling and rerandomization. Default is "tx".
+#' @param control_value Value of `tx_var` identifying control patients and used
+#'   when rerandomizing treatment (default: 0).
+#' @param treatment_value Value of `tx_var` identifying treatment patients and
+#'   used when rerandomizing treatment (default: 1).
 #' @param output_path Character. Path to directory where results will be saved
 #'   (required). Two subdirectories will be created:
 #'   - `summary/analysis_name/`: (Deprecated) Summary statistics (first element of fit function return)
@@ -508,8 +635,11 @@ assess_operating_characteristics <- function(
   allocation_ratio = 0.5,
   seed = 123,
   rerandomize = FALSE,
+  replace = FALSE,
   id_var = "id",
-  tx_var = "tx"
+  tx_var = "tx",
+  control_value = 0,
+  treatment_value = 1
 ) {
   if (!is.null(seed)) {
     set.seed(seed + iter_num)
@@ -540,7 +670,12 @@ assess_operating_characteristics <- function(
     sampled_data <- sample_from_arrow(
       data_path = data_paths[[analysis_name]],
       sample_size = sample_size,
-      allocation_ratio = allocation_ratio
+      allocation_ratio = allocation_ratio,
+      replace = replace,
+      id_var = id_var,
+      tx_var = tx_var,
+      control_value = control_value,
+      treatment_value = treatment_value
       # Note: No seed argument - uses set.seed() from above
     )
 
@@ -553,8 +688,8 @@ assess_operating_characteristics <- function(
       )
       sampled_data[[tx_var]] <- ifelse(
         sampled_data[[id_var]] %in% tx_ids,
-        1,
-        0
+        treatment_value,
+        control_value
       )
     }
 
@@ -675,7 +810,12 @@ summarize_oc_results <- function(results, true_value = NULL, alpha = 0.05) {
       results$conf_high >= true_value
   }
 
-  group_key <- interaction(results$analysis, results$term, drop = TRUE, sep = "\r")
+  group_key <- interaction(
+    results$analysis,
+    results$term,
+    drop = TRUE,
+    sep = "\r"
+  )
   rows <- split(seq_len(nrow(results)), group_key)
 
   summary <- bind_rows_fill(lapply(rows, function(idx) {
@@ -700,13 +840,16 @@ summarize_oc_results <- function(results, true_value = NULL, alpha = 0.05) {
 
   if (!is.null(true_value)) {
     summary$bias <- summary$mean_estimate - true_value
-    summary <- summary[, c(
-      "analysis",
-      "term",
-      "mean_estimate",
-      "bias",
-      setdiff(names(summary), c("analysis", "term", "mean_estimate", "bias"))
-    ), drop = FALSE]
+    summary <- summary[,
+      c(
+        "analysis",
+        "term",
+        "mean_estimate",
+        "bias",
+        setdiff(names(summary), c("analysis", "term", "mean_estimate", "bias"))
+      ),
+      drop = FALSE
+    ]
   }
 
   summary

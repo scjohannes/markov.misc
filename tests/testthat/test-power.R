@@ -41,6 +41,101 @@ test_that("sample_from_arrow samples balanced treatment groups", {
   expect_equal(as.integer(table(unique(sampled[c("id", "tx")])$tx)), c(2L, 2L))
 })
 
+test_that("sample_from_arrow samples with replacement using synthetic IDs", {
+  skip_if_not_installed("arrow")
+
+  path <- withr::local_tempdir()
+  data <- data.frame(
+    id = rep(1:4, each = 2),
+    tx = rep(rep(c(0, 1), each = 2), each = 2),
+    y = seq_len(8)
+  )
+  arrow::write_dataset(data, path)
+
+  sampled <- sample_from_arrow(
+    data_path = path,
+    sample_size = 4,
+    allocation_ratio = 0.5,
+    seed = 2,
+    replace = TRUE
+  )
+
+  expect_equal(nrow(sampled), 8)
+  expect_equal(unique(sampled$id), c("3_1", "3_2", "2_1", "2_2"))
+  expect_equal(as.integer(table(sampled$id)), rep(2L, 4))
+  arm_by_id <- tapply(sampled$tx, sampled$id, unique)
+  expect_equal(
+    as.vector(arm_by_id[c("3_1", "3_2", "2_1", "2_2")]),
+    c(1L, 1L, 0L, 0L)
+  )
+  expect_false("new_id" %in% names(sampled))
+  expect_false("boot_id" %in% names(sampled))
+})
+
+test_that("sample_from_arrow errors when requested arm size exceeds observed IDs", {
+  skip_if_not_installed("arrow")
+
+  path <- withr::local_tempdir()
+  data <- data.frame(
+    id = rep(1:4, each = 2),
+    tx = rep(rep(c(0, 1), each = 2), each = 2),
+    y = seq_len(8)
+  )
+  arrow::write_dataset(data, path)
+
+  expect_error(
+    sample_from_arrow(
+      data_path = path,
+      sample_size = 6,
+      allocation_ratio = 0.5,
+      replace = TRUE
+    ),
+    "Requested 3 treatment patients, but only 2 are available.",
+    fixed = TRUE
+  )
+})
+
+test_that("sample_from_arrow supports custom ID and treatment variables", {
+  skip_if_not_installed("arrow")
+
+  path <- withr::local_tempdir()
+  data <- data.frame(
+    patient_id = rep(1:8, each = 2),
+    arm = factor(rep(rep(c("usual_care", "active"), each = 4), each = 2)),
+    y = seq_len(16)
+  )
+  arrow::write_dataset(data, path)
+
+  expect_error(
+    sample_from_arrow(
+      data_path = path,
+      sample_size = 4,
+      allocation_ratio = 0.5,
+      id_var = "patient_id",
+      tx_var = "arm"
+    ),
+    "pass `control_value` and `treatment_value`",
+    fixed = TRUE
+  )
+
+  sampled <- sample_from_arrow(
+    data_path = path,
+    sample_size = 4,
+    allocation_ratio = 0.5,
+    seed = 1,
+    id_var = "patient_id",
+    tx_var = "arm",
+    control_value = "usual_care",
+    treatment_value = "active"
+  )
+
+  expect_equal(length(unique(sampled$patient_id)), 4)
+  expect_equal(
+    as.integer(table(unique(sampled[c("patient_id", "arm")])$arm)),
+    c(2L, 2L)
+  )
+})
+
 test_that("tidy_po handles vglm, orm, clm, and coxph models", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
@@ -127,10 +222,25 @@ test_that("assess_operating_characteristics combines summaries and saves details
   )
 
   with_mocked_bindings(
-    sample_from_arrow = function(data_path, sample_size, allocation_ratio, seed = NULL) {
+    sample_from_arrow = function(
+      data_path,
+      sample_size,
+      allocation_ratio,
+      seed = NULL,
+      replace = FALSE,
+      id_var = "id",
+      tx_var = "tx",
+      control_value = 0,
+      treatment_value = 1
+    ) {
       expect_equal(data_path, "mock-path")
       expect_equal(sample_size, 4)
       expect_equal(allocation_ratio, 0.5)
+      expect_equal(replace, FALSE)
+      expect_equal(id_var, "id")
+      expect_equal(tx_var, "tx")
+      expect_equal(control_value, 0)
+      expect_equal(treatment_value, 1)
       sampled
     },
     {
@@ -170,11 +280,126 @@ test_that("assess_operating_characteristics combines summaries and saves details
   expect_equal(readRDS(detail_file)[[1]]$saved, 1:2)
 })
 
+test_that("assess_operating_characteristics passes custom variable names to sampler", {
+  output_path <- withr::local_tempdir()
+  sampled <- data.frame(
+    patient_id = rep(1:4, each = 2),
+    arm = rep(c("usual_care", "active"), each = 4),
+    y = seq_len(8)
+  )
+
+  with_mocked_bindings(
+    sample_from_arrow = function(
+      data_path,
+      sample_size,
+      allocation_ratio,
+      seed = NULL,
+      replace = FALSE,
+      id_var = "id",
+      tx_var = "tx",
+      control_value = 0,
+      treatment_value = 1
+    ) {
+      expect_equal(replace, FALSE)
+      expect_equal(id_var, "patient_id")
+      expect_equal(tx_var, "arm")
+      expect_equal(control_value, "usual_care")
+      expect_equal(treatment_value, "active")
+      sampled
+    },
+    {
+      result <- assess_operating_characteristics(
+        iter_num = 2,
+        data_paths = list(mock = "mock-path"),
+        output_path = output_path,
+        fit_functions = list(
+          mock = function(data, iter) {
+            list(data.frame(
+              iter = iter,
+              analysis = "mock",
+              se_type = "naive",
+              term = "arm",
+              estimate = mean(data$arm == "active"),
+              std_error = 0.1,
+              statistic = 5,
+              p_value = 0.01,
+              conf_low = 0.2,
+              conf_high = 0.8
+            ))
+          }
+        ),
+        sample_size = 4,
+        id_var = "patient_id",
+        tx_var = "arm",
+        control_value = "usual_care",
+        treatment_value = "active"
+      )
+    }
+  )
+
+  expect_equal(nrow(result), 1)
+  expect_equal(result$term, "arm")
+})
+
+test_that("assess_operating_characteristics passes replacement sampling to sampler", {
+  output_path <- withr::local_tempdir()
+  sampled <- data.frame(
+    id = rep(c("1_1", "1_2", "2_1", "2_2"), each = 2),
+    tx = rep(c(0, 1), each = 4),
+    y = seq_len(8)
+  )
+
+  with_mocked_bindings(
+    sample_from_arrow = function(
+      data_path,
+      sample_size,
+      allocation_ratio,
+      seed = NULL,
+      replace = FALSE,
+      id_var = "id",
+      tx_var = "tx",
+      control_value = 0,
+      treatment_value = 1
+    ) {
+      expect_equal(replace, TRUE)
+      sampled
+    },
+    {
+      result <- assess_operating_characteristics(
+        iter_num = 1,
+        data_paths = list(mock = "mock-path"),
+        output_path = output_path,
+        fit_functions = list(
+          mock = function(data, iter) {
+            list(data.frame(
+              iter = iter,
+              analysis = "mock",
+              se_type = "naive",
+              term = "tx",
+              estimate = mean(data$tx),
+              std_error = 0.1,
+              statistic = 5,
+              p_value = 0.01,
+              conf_low = 0.2,
+              conf_high = 0.8
+            ))
+          }
+        ),
+        sample_size = 4,
+        replace = TRUE
+      )
+    }
+  )
+
+  expect_equal(nrow(result), 1)
+  expect_equal(result$analysis, "mock")
+})
+
 test_that("assess_operating_characteristics can rerandomize sampled treatment", {
   output_path <- withr::local_tempdir()
   sampled <- data.frame(
     id = rep(1:6, each = 2),
-    tx = 0,
+    tx = "usual_care",
     y = seq_len(12)
   )
 
@@ -194,7 +419,7 @@ test_that("assess_operating_characteristics can rerandomize sampled treatment", 
               analysis = "mock",
               se_type = "naive",
               term = "tx",
-              estimate = mean(data$tx),
+              estimate = mean(data$tx == "active"),
               std_error = 1,
               statistic = 0,
               p_value = 1,
@@ -205,14 +430,16 @@ test_that("assess_operating_characteristics can rerandomize sampled treatment", 
         ),
         sample_size = 6,
         allocation_ratio = 0.5,
-        rerandomize = TRUE
+        rerandomize = TRUE,
+        control_value = "usual_care",
+        treatment_value = "active"
       )
     }
   )
 
   expect_equal(nrow(result), 1)
-  expect_equal(sum(observed_tx), 3)
-  expect_setequal(unique(observed_tx), c(0, 1))
+  expect_equal(sum(observed_tx == "active"), 3)
+  expect_setequal(unique(observed_tx), c("usual_care", "active"))
 })
 
 test_that("assess_operating_characteristics validates output and inputs", {
@@ -250,7 +477,9 @@ test_that("assess_operating_characteristics warns and skips missing data paths",
       iter_num = 1,
       data_paths = list(),
       output_path = withr::local_tempdir(),
-      fit_functions = list(missing = function(data, iter) list(data.frame(x = 1)))
+      fit_functions = list(missing = function(data, iter) {
+        list(data.frame(x = 1))
+      })
     ),
     "No data path provided for analysis: missing"
   )
@@ -272,7 +501,10 @@ test_that("summarize_oc_results computes operating characteristics with truth", 
   summary <- summarize_oc_results(results, true_value = 1, alpha = 0.05)
 
   expect_equal(summary$analysis, c("a", "b"))
-  expect_equal(summary$mean_estimate, c(mean(c(0.9, 1.1, 1.2)), mean(c(1.8, 2.1, 2.2))))
+  expect_equal(
+    summary$mean_estimate,
+    c(mean(c(0.9, 1.1, 1.2)), mean(c(1.8, 2.1, 2.2)))
+  )
   expect_equal(summary$bias, summary$mean_estimate - 1)
   expect_equal(summary$power, c(2 / 3, 2 / 3))
   expect_equal(summary$coverage, c(1, 0))

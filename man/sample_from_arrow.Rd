@@ -4,7 +4,17 @@
 \alias{sample_from_arrow}
 \title{Sample Patients from Arrow Dataset}
 \usage{
-sample_from_arrow(data_path, sample_size, allocation_ratio = 0.5, seed = NULL)
+sample_from_arrow(
+  data_path,
+  sample_size,
+  allocation_ratio = 0.5,
+  seed = NULL,
+  replace = FALSE,
+  id_var = "id",
+  tx_var = "tx",
+  control_value = 0,
+  treatment_value = 1
+)
 }
 \arguments{
 \item{data_path}{Character. Path to the parquet file or Arrow dataset.}
@@ -15,6 +25,20 @@ sample_from_arrow(data_path, sample_size, allocation_ratio = 0.5, seed = NULL)
 (default: 0.5 for 1:1 allocation).}
 
 \item{seed}{Integer. Random seed for reproducibility (default: NULL).}
+
+\item{replace}{Logical. If TRUE, sample patients with replacement.}
+
+\item{id_var}{Character. Name of the patient identifier variable in the data
+(default: "id").}
+
+\item{tx_var}{Character. Name of the treatment indicator variable in the data
+(default: "tx").}
+
+\item{control_value}{Value of \code{tx_var} identifying control patients
+(default: 0).}
+
+\item{treatment_value}{Value of \code{tx_var} identifying treatment patients
+(default: 1).}
 }
 \value{
 A tibble containing the sampled data with columns from the original
@@ -33,8 +57,10 @@ the entire dataset into memory. It:
 \item Filters and collects only the selected patients
 }
 
-The function assumes the dataset has an \code{id} column for patient identifiers
-and a \code{tx} column for treatment assignment (0 = control, 1 = treatment).
+The function uses \code{control_value} and \code{treatment_value} to identify the two
+treatment groups. When \code{replace = TRUE}, duplicate sampled patients are
+materialized with synthetic patient IDs so each resampled cluster remains
+distinct in downstream grouped analyses.
 }
 \examples{
 \dontrun{
