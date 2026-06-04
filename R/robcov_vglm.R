@@ -93,12 +93,6 @@
 #' **Weights and aggregated responses**: Scores are computed at the fitted-row
 #' level. With prior or frequency weights, or with aggregated ordinal count
 #' responses, this treats each fitted row as the independent score contribution.
-#' That can differ from a sandwich estimator computed after expanding data to
-#' one row per independent individual.
-#'
-#' **Comparison with rms::robcov()**: For equivalent models, results should be
-#' compared after accounting for parameterization, cutpoint direction, response
-#' coding, weights, and missing-data handling.
 #'
 #' @examples
 #' \dontrun{
