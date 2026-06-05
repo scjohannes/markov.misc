@@ -78,8 +78,18 @@ functionality similar to \code{rms::robcov()} for vglm models.
 \details{
 The sandwich estimator has the form:
 \deqn{V = B \cdot M \cdot B}
-where B is the model-based covariance matrix returned by \code{vcov(fit)}, based
-on VGAM's final fitted information matrix, and M is the score crossproduct.
+where B is the model-based covariance matrix returned by \code{vcov(fit)}, and M
+is the score crossproduct. The bread is not a separately computed observed
+Hessian; it is VGAM's covariance-scale matrix based on the final fitted
+working/Fisher information.
+
+For ordinary GLM-like models, this usually agrees closely with sandwich
+estimators built from \code{stats::glm()} fits. For \code{VGAM::cumulative()}
+proportional-odds models, VGAM's working-information bread is asymptotically
+equivalent to observed-Hessian bread, but can differ slightly in finite
+samples from \code{sandwich::vcovCL()} applied to equivalent \code{ordinal::clm()} or
+\code{MASS::polr()} fits. In those comparisons, differences can arise from the
+bread even when fitted coefficients and score meat agree.
 
 For unclustered data, the meat matrix is:
 \deqn{M = \sum_{i=1}^{n} \psi_i \psi_i'}

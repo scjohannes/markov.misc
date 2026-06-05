@@ -67,8 +67,18 @@
 #' @details
 #' The sandwich estimator has the form:
 #' \deqn{V = B \cdot M \cdot B}
-#' where B is the model-based covariance matrix returned by `vcov(fit)`, based
-#' on VGAM's final fitted information matrix, and M is the score crossproduct.
+#' where B is the model-based covariance matrix returned by `vcov(fit)`, and M
+#' is the score crossproduct. The bread is not a separately computed observed
+#' Hessian; it is VGAM's covariance-scale matrix based on the final fitted
+#' working/Fisher information.
+#'
+#' For ordinary GLM-like models, this usually agrees closely with sandwich
+#' estimators built from `stats::glm()` fits. For `VGAM::cumulative()`
+#' proportional-odds models, VGAM's working-information bread is asymptotically
+#' equivalent to observed-Hessian bread, but can differ slightly in finite
+#' samples from `sandwich::vcovCL()` applied to equivalent `ordinal::clm()` or
+#' `MASS::polr()` fits. In those comparisons, differences can arise from the
+#' bread even when fitted coefficients and score meat agree.
 #'
 #' For unclustered data, the meat matrix is:
 #' \deqn{M = \sum_{i=1}^{n} \psi_i \psi_i'}
@@ -93,6 +103,12 @@
 #' **Weights and aggregated responses**: Scores are computed at the fitted-row
 #' level. With prior or frequency weights, or with aggregated ordinal count
 #' responses, this treats each fitted row as the independent score contribution.
+#' That can differ from a sandwich estimator computed after expanding data to
+#' one row per independent individual.
+#'
+#' **Comparison with rms::robcov()**: For equivalent models, results should be
+#' compared after accounting for parameterization, cutpoint direction, response
+#' coding, weights, and missing-data handling.
 #'
 #' @examples
 #' \dontrun{
@@ -131,7 +147,10 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = FALSE) {
   p <- length(coef(fit))
   coefficients <- coef(fit)
 
-  # Get the bread matrix: VGAM's model-based covariance matrix.
+  # Use VGAM's covariance-scale bread. For cumulative proportional-odds
+  # models, VGAM's vcov() is based on final IRLS working/Fisher information,
+  # which can differ slightly from observed-Hessian bread used by sandwich
+  # methods for ordinal::clm() and MASS::polr().
   model_vcov <- vcov(fit)
   original_se <- sqrt(diag(model_vcov))
   names(original_se) <- names(coefficients)
