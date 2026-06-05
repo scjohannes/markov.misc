@@ -452,7 +452,7 @@ sim_actt2_brownian <- function(
       drift_start = function(n) rpois(n, 3.2),
       latent_dist = "logistic",
       refresh_rate = 0.32,
-      threshold_time_effect_factors = c(0.45, 0.5, 0.5, 0.5, 0.5, 0.49, 0.5), #c(0.45, rep(0.5, 5), 1),
+      threshold_time_effect_factors = c(0.45, 0.5, 0.5, 0.5, 0.5, 0.49, 0.5),
       seed = seed
     ),
     list(...)
