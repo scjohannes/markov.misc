@@ -236,7 +236,9 @@ test_that("states_to_ttest preserves character treatment labels", {
   data <- data.frame(
     id = c(1, 1, 1, 2, 2, 2),
     y = c(1, 2, 1, 2, 2, 1),
-    tx = rep(c("Placebo + Remdesivir", "Baricitinib + Remdesivir"), each = 3)
+    tx = factor(
+      rep(c("Placebo + Remdesivir", "Baricitinib + Remdesivir"), each = 3)
+    )
   )
 
   result <- states_to_ttest(data, target_state = 1)
@@ -275,7 +277,9 @@ test_that("states_to_drs preserves character treatment labels", {
     id = rep(1:2, each = 4),
     time = rep(1:4, 2),
     y = c(2, 1, 1, 1, 2, 2, 1, 1),
-    tx = rep(c("Placebo + Remdesivir", "Baricitinib + Remdesivir"), each = 4)
+    tx = factor(
+      rep(c("Placebo + Remdesivir", "Baricitinib + Remdesivir"), each = 4)
+    )
   )
 
   result <- states_to_drs(data, follow_up_time = 4, covariates = NULL)

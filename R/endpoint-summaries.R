@@ -55,6 +55,14 @@ jackknife_mcse <- function(estimates, statistic = mean) {
 }
 
 
+first_by_id <- function(x, id) {
+  if (is.factor(x)) {
+    x <- as.character(x)
+  }
+  tapply(x, id, function(values) values[1])
+}
+
+
 #' Convert State Trajectory Data to T-Test Format
 #'
 #' This function summarizes patient trajectories by counting the number of time
@@ -126,7 +134,7 @@ states_to_ttest <- function(data, target_state = 1) {
   y_count <- tapply(data$y %in% target_state, data$id, sum)
 
   # get tx per id (first observed)
-  tx_first <- tapply(data$tx, data$id, function(x) x[1])
+  tx_first <- first_by_id(data$tx, data$id)
 
   data.frame(
     id = as.integer(names(y_count)),
@@ -259,7 +267,7 @@ states_to_drs <- function(
   )
 
   dead <- tapply(data$y == death_state, data$id, any)
-  tx_first <- tapply(data$tx, data$id, function(x) x[1])
+  tx_first <- first_by_id(data$tx, data$id)
 
   result <- data.frame(
     id = as.integer(names(last_not_home)),
@@ -280,7 +288,7 @@ states_to_drs <- function(
   if (!is.null(covariates)) {
     available_covs <- intersect(covariates, names(data))
     for (cov in available_covs) {
-      result[[cov]] <- tapply(data[[cov]], data$id, function(x) x[1])
+      result[[cov]] <- first_by_id(data[[cov]], data$id)
     }
   }
 
