@@ -176,7 +176,7 @@ set_coef.vgam <- function(model, new_coefs) {
 #'   from this data frame. **Note:** For cluster-robust SEs, the cluster vector
 #'   must have the same length as the model's fitting data, not prediction data.
 #' @param adjust Logical. Apply small-sample correction for clustering?
-#'   Default is FALSE to match `rms::robcov()` behavior.
+#'   Default is TRUE.
 #'
 #' @return A variance-covariance matrix.
 #'
@@ -231,7 +231,7 @@ get_vcov_robust <- function(
   model,
   cluster = NULL,
   data = NULL,
-  adjust = FALSE
+  adjust = TRUE
 ) {
   # --- Case 1: Already a robcov_vglm object ---
   if (inherits(model, "robcov_vglm")) {

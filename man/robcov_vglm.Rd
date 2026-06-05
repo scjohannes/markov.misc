@@ -4,7 +4,7 @@
 \alias{robcov_vglm}
 \title{Robust (Sandwich) Covariance Matrix Estimation for vglm Objects}
 \usage{
-robcov_vglm(fit, cluster = NULL, adjust = FALSE)
+robcov_vglm(fit, cluster = NULL, adjust = TRUE)
 }
 \arguments{
 \item{fit}{A fitted vglm object from the VGAM package.}
@@ -16,7 +16,7 @@ model records omitted rows in \code{fit@na.action}.}
 
 \item{adjust}{Logical. If TRUE, applies small-sample correction factor
 G/(G-1) for clustered data, where G is the number of clusters. Default is
-FALSE to match \code{rms::robcov()} behavior.}
+TRUE.}
 }
 \value{
 A list with class "robcov_vglm" containing all original model
@@ -101,9 +101,9 @@ meat matrix:
       \left(\sum_{i \in g} \psi_i\right)'}
 
 When \code{adjust = TRUE}, the meat matrix is multiplied by G/(G-1) for clustered
-data, providing a small-sample bias correction. This is sometimes recommended
-but is not applied by \code{rms::robcov()}, so the default is FALSE for
-consistency.
+data, providing a small-sample bias correction. This is the default for
+clustered data. Set \code{adjust = FALSE} to omit this correction, for example when
+matching \code{rms::robcov()} behavior or \code{sandwich::vcovCL(..., cadjust = FALSE)}.
 
 \strong{Z-statistics and p-values}: The returned object includes z-statistics
 computed as coefficients divided by robust standard errors, and two-sided
@@ -134,12 +134,16 @@ fit <- vglm(y ~ x1 + x2,
 robust_vcov <- robcov_vglm(fit)
 robust_vcov$se
 
-# Compute cluster-robust standard errors
+# Compute cluster-robust standard errors, with G/(G-1) correction by default
 robust_vcov_cl <- robcov_vglm(fit, cluster = mydata$cluster_id)
 robust_vcov_cl$se
 
-# With small-sample correction
-robust_vcov_adj <- robcov_vglm(fit, cluster = mydata$cluster_id, adjust = TRUE)
+# Without small-sample correction
+robust_vcov_noadj <- robcov_vglm(
+  fit,
+  cluster = mydata$cluster_id,
+  adjust = FALSE
+)
 }
 
 }

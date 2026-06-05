@@ -43,6 +43,9 @@
   crossproducts as `meat`, aligns pre-NA cluster vectors when possible, rejects
   missing or single-valued clusters, and warns that clustered z-test p-values
   may be anti-conservative with few clusters.
+- `robcov_vglm()` and `get_vcov_robust()` now apply the G/(G-1) small-sample
+  correction by default for clustered robust covariance estimates; set
+  `adjust = FALSE` to recover the previous unadjusted behavior.
 - `standardize_sops()` now reuses the same sampled `blrm` posterior draws for
   treatment and control counterfactuals, preserving draw-wise pairing for
   downstream contrasts.

@@ -411,7 +411,10 @@ in three places:
 
 The score calculation uses VGAM's VLM model matrix and derivative information to
 obtain observation-level score contributions, then optionally aggregates them
-by cluster.
+by cluster. Clustered covariance estimates apply the G/(G-1) small-sample
+correction by default; callers can set `adjust = FALSE` when they need the
+previous unadjusted estimator or direct comparison with unadjusted external
+sandwich estimators.
 
 ### `blrm`
 

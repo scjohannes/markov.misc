@@ -89,7 +89,7 @@ describe("robcov_vglm()", {
     # Check n matches
     expect_equal(result$n, n)
 
-    result_row_cluster <- robcov_vglm(m, cluster = seq_len(n))
+    result_row_cluster <- robcov_vglm(m, cluster = seq_len(n), adjust = FALSE)
     expect_equal(result_row_cluster$var, result$var, tolerance = 1e-15)
   })
 
@@ -595,6 +595,10 @@ describe("Small-sample adjustment", {
       rep(expected_ratio, length(se_ratio)),
       tolerance = 1e-10
     )
+    expect_equal(
+      result_adj$var,
+      suppressWarnings(robcov_vglm(m, cluster = cluster))$var
+    )
   })
 })
 
@@ -612,7 +616,7 @@ describe("Score bootstrap compatibility", {
     test_data <- data.frame(y = y, x = x, id = cluster)
 
     m <- VGAM::vglm(y ~ x, family = VGAM::binomialff, data = test_data)
-    robust <- robcov_vglm(m, cluster = test_data$id)
+    robust <- robcov_vglm(m, cluster = test_data$id, adjust = FALSE)
     baseline_data <- data.frame(id = unique(test_data$id))
 
     cluster_ids <- unique(as.character(robust$cluster))
@@ -660,15 +664,15 @@ describe("Utility methods", {
     # Test summary method
     expect_snapshot(summary(result))
 
-    # Test with clustering
+    # Test with clustering and no adjustment
     cluster <- rep(1:10, each = 10)
     expect_warning(
-      result_cl <- robcov_vglm(m, cluster = cluster),
+      result_cl <- robcov_vglm(m, cluster = cluster, adjust = FALSE),
       "fewer than 30 clusters"
     )
     expect_snapshot(summary(result_cl))
 
-    # Test with clustering and adjustment
+    # Test with clustering and explicit adjustment
     expect_warning(
       result_adj <- robcov_vglm(m, cluster = cluster, adjust = TRUE),
       "fewer than 30 clusters"

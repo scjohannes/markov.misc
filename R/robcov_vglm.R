@@ -11,7 +11,7 @@
 #'   model records omitted rows in `fit@na.action`.
 #' @param adjust Logical. If TRUE, applies small-sample correction factor
 #'   G/(G-1) for clustered data, where G is the number of clusters. Default is
-#'   FALSE to match `rms::robcov()` behavior.
+#'   TRUE.
 #'
 #' @return A list with class "robcov_vglm" containing all original model
 #'   information plus robust covariance estimates:
@@ -90,9 +90,9 @@
 #'       \left(\sum_{i \in g} \psi_i\right)'}
 #'
 #' When `adjust = TRUE`, the meat matrix is multiplied by G/(G-1) for clustered
-#' data, providing a small-sample bias correction. This is sometimes recommended
-#' but is not applied by `rms::robcov()`, so the default is FALSE for
-#' consistency.
+#' data, providing a small-sample bias correction. This is the default for
+#' clustered data. Set `adjust = FALSE` to omit this correction, for example when
+#' matching `rms::robcov()` behavior or `sandwich::vcovCL(..., cadjust = FALSE)`.
 #'
 #' **Z-statistics and p-values**: The returned object includes z-statistics
 #' computed as coefficients divided by robust standard errors, and two-sided
@@ -123,12 +123,16 @@
 #' robust_vcov <- robcov_vglm(fit)
 #' robust_vcov$se
 #'
-#' # Compute cluster-robust standard errors
+#' # Compute cluster-robust standard errors, with G/(G-1) correction by default
 #' robust_vcov_cl <- robcov_vglm(fit, cluster = mydata$cluster_id)
 #' robust_vcov_cl$se
 #'
-#' # With small-sample correction
-#' robust_vcov_adj <- robcov_vglm(fit, cluster = mydata$cluster_id, adjust = TRUE)
+#' # Without small-sample correction
+#' robust_vcov_noadj <- robcov_vglm(
+#'   fit,
+#'   cluster = mydata$cluster_id,
+#'   adjust = FALSE
+#' )
 #' }
 #'
 #' @seealso \code{\link{compare_se_orm_vglm}} for comparing standard errors
@@ -137,7 +141,7 @@
 #' @importFrom stats vcov nobs coef pnorm fitted residuals symnum
 #'
 #' @export
-robcov_vglm <- function(fit, cluster = NULL, adjust = FALSE) {
+robcov_vglm <- function(fit, cluster = NULL, adjust = TRUE) {
   if (!inherits(fit, "vglm")) {
     stop("'fit' must be a vglm object")
   }
@@ -703,7 +707,7 @@ compare_se_orm_vglm <- function(orm_fit, vglm_fit, cluster = NULL) {
     orm_robust <- rms::robcov(orm_fit, cluster = cluster)
     se_orm_robust <- sqrt(diag(orm_robust$var))
 
-    vglm_robust <- robcov_vglm(vglm_fit, cluster = cluster)
+    vglm_robust <- robcov_vglm(vglm_fit, cluster = cluster, adjust = FALSE)
     se_vglm_robust <- vglm_robust$se
   } else {
     orm_robust <- rms::robcov(orm_fit)
