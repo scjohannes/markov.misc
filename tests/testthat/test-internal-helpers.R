@@ -570,7 +570,7 @@ test_that("standardize_sops and inferences validate dispatch-only branches", {
   class(object) <- c("markov_avg_sops", class(object))
   expect_error(
     inferences(object, method = "bootstrap", engine = "score_bootstrap"),
-    "`engine` is only used",
+    "only used when `method = \"simulation\"`",
     fixed = TRUE
   )
 })

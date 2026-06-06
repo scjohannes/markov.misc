@@ -172,6 +172,19 @@ test_that("sim_actt2_brownian uses a null treatment effect by default", {
   expect_identical(traj_default, traj_null)
 })
 
+test_that("sim_actt2_brownian allows overriding threshold-specific time effects", {
+  direct_drift <- sim_actt2_brownian(
+    n_patients = 40,
+    mu_drift = rep(-2.2, 7),
+    seed = 99
+  )
+  default_drift <- sim_actt2_brownian(n_patients = 40, seed = 99)
+
+  expect_identical(names(direct_drift), names(default_drift))
+  expect_identical(dim(direct_drift), dim(default_drift))
+  expect_gt(sum(direct_drift$y != default_drift$y), 0)
+})
+
 test_that("sim_trajectories_markov validates inputs and absent covariates", {
   baseline <- data.frame(id = 1:2, yprev = c(1, 1))
 
@@ -305,7 +318,11 @@ test_that("sim_trajectories_brownian validates inputs and supports normal link o
     fixed = TRUE
   )
   expect_error(
-    sim_trajectories_brownian(n_states = 3, allowed_start_state = 4L, thresholds = c(0, 1)),
+    sim_trajectories_brownian(
+      n_states = 3,
+      allowed_start_state = 4L,
+      thresholds = c(0, 1)
+    ),
     "All allowed_start_state must be between 1 and n_states",
     fixed = TRUE
   )
@@ -354,8 +371,14 @@ test_that("sim_trajectories_brownian applies late piecewise drift", {
 })
 
 test_that("sim_trajectories_brownian_gap validates additional inputs", {
-  expect_error(sim_trajectories_brownian_gap(n_patients = 0), "n_patients must be")
-  expect_error(sim_trajectories_brownian_gap(follow_up_time = 0), "follow_up_time must be")
+  expect_error(
+    sim_trajectories_brownian_gap(n_patients = 0),
+    "n_patients must be"
+  )
+  expect_error(
+    sim_trajectories_brownian_gap(follow_up_time = 0),
+    "follow_up_time must be"
+  )
   expect_error(sim_trajectories_brownian_gap(n_states = 1), "n_states must be")
   expect_error(
     sim_trajectories_brownian_gap(n_states = 3, thresholds = 0),
@@ -366,8 +389,20 @@ test_that("sim_trajectories_brownian_gap validates additional inputs", {
     "thresholds must be a strictly increasing"
   )
   expect_error(
-    sim_trajectories_brownian_gap(threshold_time_effect_factors = c(0, 1)),
-    "threshold_time_effect_factors must be NULL"
+    sim_trajectories_brownian_gap(mu_drift = c(0, 1)),
+    "mu_drift must be a finite numeric scalar"
+  )
+  expect_error(
+    sim_trajectories_brownian_gap(mu_quad = c(0, 1)),
+    "mu_quad must be a finite numeric scalar"
+  )
+  expect_error(
+    sim_trajectories_brownian_gap(mu_quad2 = Inf),
+    "mu_quad2 must be a finite numeric scalar"
+  )
+  expect_error(
+    sim_trajectories_brownian_gap(mu_treatment_effect = c(0, 1)),
+    "mu_treatment_effect must be a finite numeric scalar"
   )
   expect_error(
     sim_trajectories_brownian_gap(drift_start = -1),
@@ -378,19 +413,23 @@ test_that("sim_trajectories_brownian_gap validates additional inputs", {
     "drift_start must be a non-negative numeric scalar"
   )
   expect_error(
-    sim_trajectories_brownian_gap(
-      thresholds = c(-1, 0, 1, 2, 3),
-      threshold_time_effect_factors = c(0, 10, 0, 0, 0)
-    ),
-    "threshold_time_effect_factors induce crossing thresholds"
+    sim_trajectories_brownian_gap(mu_drift = c(0, 100, 0, 0, 0)),
+    "threshold-specific drift terms induce crossing thresholds"
   )
-  expect_error(sim_trajectories_brownian_gap(treatment_prob = -1), "treatment_prob must")
+  expect_error(
+    sim_trajectories_brownian_gap(treatment_prob = -1),
+    "treatment_prob must"
+  )
   expect_error(
     sim_trajectories_brownian_gap(allowed_start_state = c(1, 2)),
     "allowed_start_state must"
   )
   expect_error(
-    sim_trajectories_brownian_gap(n_states = 3, allowed_start_state = 4L, thresholds = c(0, 1)),
+    sim_trajectories_brownian_gap(
+      n_states = 3,
+      allowed_start_state = 4L,
+      thresholds = c(0, 1)
+    ),
     "All allowed_start_state"
   )
   expect_error(
@@ -422,6 +461,31 @@ test_that("sim_trajectories_brownian_gap validates additional inputs", {
 
   expect_equal(nrow(result), 12)
   expect_true(all(result$y %in% 1:3))
+})
+
+test_that("sim_trajectories_brownian_gap supports threshold-specific treatment effects", {
+  traj_null <- sim_trajectories_brownian_gap(
+    n_patients = 80,
+    follow_up_time = 8,
+    treatment_prob = 1,
+    absorbing_state = NULL,
+    refresh_rate = 100,
+    mu_treatment_effect = 0,
+    seed = 12
+  )
+  traj_targeted <- sim_trajectories_brownian_gap(
+    n_patients = 80,
+    follow_up_time = 8,
+    treatment_prob = 1,
+    absorbing_state = NULL,
+    refresh_rate = 100,
+    mu_treatment_effect = c(0, 0, 0, 0, -0.8),
+    seed = 12
+  )
+
+  expect_identical(names(traj_null), names(traj_targeted))
+  expect_identical(dim(traj_null), dim(traj_targeted))
+  expect_gt(sum(traj_null$y != traj_targeted$y), 0)
 })
 
 test_that("sim_trajectories_brownian_gap handles piecewise drift and zero transition mass", {
@@ -456,8 +520,14 @@ test_that("sim_trajectories_brownian_gap reaches both piecewise drift tails", {
 })
 
 test_that("sim_trajectories_deterministic validates inputs and returns trajectories", {
-  expect_error(sim_trajectories_deterministic(n_patients = 0), "n_patients must")
-  expect_error(sim_trajectories_deterministic(follow_up_time = 0), "follow_up_time must")
+  expect_error(
+    sim_trajectories_deterministic(n_patients = 0),
+    "n_patients must"
+  )
+  expect_error(
+    sim_trajectories_deterministic(follow_up_time = 0),
+    "follow_up_time must"
+  )
   expect_error(sim_trajectories_deterministic(n_states = 1), "n_states must")
   expect_error(
     sim_trajectories_deterministic(mortality_prob_control = -0.1),
@@ -467,7 +537,10 @@ test_that("sim_trajectories_deterministic validates inputs and returns trajector
     sim_trajectories_deterministic(mortality_prob_treatment = 1.1),
     "mortality_prob_treatment must"
   )
-  expect_error(sim_trajectories_deterministic(treatment_prob = 2), "treatment_prob must")
+  expect_error(
+    sim_trajectories_deterministic(treatment_prob = 2),
+    "treatment_prob must"
+  )
   expect_error(
     sim_trajectories_deterministic(n_states = 5, absorbing_states = 7),
     "All absorbing_states must"
@@ -483,7 +556,10 @@ test_that("sim_trajectories_deterministic validates inputs and returns trajector
     seed = 12
   )
 
-  expect_named(result, c("id", "tx", "theta0", "theta1", "b0", "b1", "time", "y", "x", "yprev"))
+  expect_named(
+    result,
+    c("id", "tx", "theta0", "theta1", "b0", "b1", "time", "y", "x", "yprev")
+  )
   expect_equal(nrow(result), 20)
   expect_equal(min(result$time), 1)
   expect_true(any(result$y %in% c(1, 6)))
@@ -556,14 +632,25 @@ test_that("sim_trajectories_deterministic handles baseline and later absorbing s
 
 test_that("recurr_event simulates events and validates vector parameter lengths", {
   withr::local_seed(1)
-  result <- recurr_event(id = 1:2, param = 0.5, b = 0, follow_up = 10, max_events = 3)
+  result <- recurr_event(
+    id = 1:2,
+    param = 0.5,
+    b = 0,
+    follow_up = 10,
+    max_events = 3
+  )
 
   expect_equal(ncol(result), 2)
   expect_true(all(result[, "id"] %in% 1:2))
   expect_true(all(result[, "event_time"] < 10))
 
   expect_error(
-    recurr_event(id = 1:2, param = c(0.1, 0.2), follow_up = 10, max_events = NULL),
+    recurr_event(
+      id = 1:2,
+      param = c(0.1, 0.2),
+      follow_up = 10,
+      max_events = NULL
+    ),
     "Length of param must be one or equal to max_events",
     fixed = TRUE
   )
@@ -571,7 +658,12 @@ test_that("recurr_event simulates events and validates vector parameter lengths"
 
 test_that("recurr_event auto-selects event counts for scalar and vector rates", {
   withr::local_seed(2)
-  scalar <- recurr_event(param = 0.01, b = 0.001, follow_up = 1, max_events = NULL)
+  scalar <- recurr_event(
+    param = 0.01,
+    b = 0.001,
+    follow_up = 1,
+    max_events = NULL
+  )
   vector <- recurr_event(
     id = 1,
     param = c(0.01, 0.02, 0.03),
@@ -584,7 +676,13 @@ test_that("recurr_event auto-selects event counts for scalar and vector rates", 
   expect_equal(ncol(vector), 2)
 
   expect_warning(
-    recurr_event(id = 1, param = 100, b = 0, follow_up = 100, max_events = NULL),
+    recurr_event(
+      id = 1,
+      param = 100,
+      b = 0,
+      follow_up = 100,
+      max_events = NULL
+    ),
     "max_events = 20",
     fixed = TRUE
   )
@@ -612,7 +710,12 @@ test_that("sim_trajectories_tte validates inputs", {
     fixed = TRUE
   )
   expect_error(
-    sim_trajectories_tte(baseline, states = 1:3, param = rep(0.1, 3), hazard_ratios = list(c(1, 1))),
+    sim_trajectories_tte(
+      baseline,
+      states = 1:3,
+      param = rep(0.1, 3),
+      hazard_ratios = list(c(1, 1))
+    ),
     "Each element of hazard_ratios must have length",
     fixed = TRUE
   )

@@ -12,7 +12,8 @@ bootstrap_analysis_wrapper(
   ylevels = NULL,
   absorb = NULL,
   update_datadist = TRUE,
-  use_coefstart = FALSE
+  use_coefstart = FALSE,
+  fit_weights = NULL
 )
 }
 \arguments{
@@ -34,6 +35,8 @@ c("y", "yprev"))}
 
 \item{use_coefstart}{Logical indicating whether to use starting coefficients
 from the original model when refitting (only for vglm models).}
+
+\item{fit_weights}{Optional non-negative row weights for the bootstrap fit.}
 }
 \value{
 A list with components:

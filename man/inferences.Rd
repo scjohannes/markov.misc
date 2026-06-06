@@ -33,13 +33,17 @@ refit models. Works for both individual and averaged SOPs.
 Only works for \code{markov_avg_sops} objects.
 }}
 
-\item{engine}{Character. Simulation engine used when \code{method = "simulation"}:
+\item{engine}{Character. Inference engine. For \code{method = "simulation"}:
 \itemize{
 \item \code{"mvn"} (default): Draws coefficients from MVN(beta_hat, Sigma).
 \item \code{"score_bootstrap"}: Uses one-step score perturbation with
 cluster-level exponential multipliers. Requires a \code{robcov_vglm} model
 or an \code{orm} model with \code{cluster}, and \code{avg_sops()} objects.
-}}
+}
+For \code{method = "bootstrap"}, use \code{"standard"} for ordinary patient
+resampling with replacement or \code{"fwb"} for fractional weighted bootstrap
+refits using exponential patient-level weights. The legacy default
+\code{"mvn"} maps to \code{"standard"} when \code{method = "bootstrap"}.}
 
 \item{score_weight_dist}{Character. Cluster weight distribution for
 \code{engine = "score_bootstrap"}. Currently only \code{"exponential"} is supported.}
@@ -124,9 +128,10 @@ models and with \code{orm} models when \code{cluster} is supplied.
 
 \subsection{Bootstrap Method}{
 
-The bootstrap method resamples patients and refits the model:
+The bootstrap method refits the model on bootstrap-weighted data:
 \enumerate{
-\item Sample patient IDs with replacement
+\item Sample patient IDs with replacement (\code{engine = "standard"}) or draw
+exponential patient weights normalized to mean 1 (\code{engine = "fwb"})
 \item Refit model on bootstrap sample (handles missing states through releveling)
 \item Compute SOPs using G-computation
 \item Compute percentile-based confidence intervals

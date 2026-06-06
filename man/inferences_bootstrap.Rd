@@ -6,6 +6,7 @@
 \usage{
 inferences_bootstrap(
   object,
+  engine,
   n_boot,
   workers,
   conf_level,
@@ -16,6 +17,8 @@ inferences_bootstrap(
 }
 \arguments{
 \item{object}{A \code{markov_avg_sops} object.}
+
+\item{engine}{Bootstrap engine, \code{"standard"} or \code{"fwb"}.}
 
 \item{n_boot}{Number of bootstrap iterations.}
 

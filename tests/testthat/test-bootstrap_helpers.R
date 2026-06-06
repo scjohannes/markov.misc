@@ -45,6 +45,65 @@ test_that("materialize_bootstrap_sample preserves sampled copies and row data", 
   expect_equal(result$y, c(1, 0, 0, 1, 1, 0))
 })
 
+test_that("fractional bootstrap weights are mean-one cluster weights", {
+  data <- data.frame(
+    id = c("a", "a", "b", "c", "c"),
+    value = 1:5
+  )
+
+  withr::local_seed(123)
+  boot_a <- markov.misc:::generate_fwb_bootstrap_weights(
+    data,
+    id_var = "id",
+    n_boot = 2
+  )
+  withr::local_seed(123)
+  boot_b <- markov.misc:::generate_fwb_bootstrap_weights(
+    data,
+    id_var = "id",
+    n_boot = 2
+  )
+
+  expect_equal(boot_a, boot_b)
+  expect_length(boot_a, 2)
+  expect_named(boot_a[[1]], c("original_id", "fwb_weight", "boot_id"))
+  expect_equal(boot_a[[1]]$original_id, c("a", "b", "c"))
+  expect_true(all(boot_a[[1]]$fwb_weight > 0))
+  expect_equal(mean(boot_a[[1]]$fwb_weight), 1, tolerance = 1e-12)
+  expect_equal(boot_a[[2]]$boot_id, rep(2, 3))
+})
+
+test_that("fractional bootstrap materialization expands cluster weights to rows", {
+  data <- data.frame(
+    id = c(1, 1, 2, 2),
+    time = c(1, 2, 1, 2),
+    y = c(0, 1, 1, 0)
+  )
+  fwb_weights <- data.frame(
+    original_id = c(1, 2),
+    fwb_weight = c(0.25, 1.75),
+    boot_id = 1
+  )
+
+  result <- markov.misc:::materialize_fwb_bootstrap_sample(
+    fwb_weights,
+    data,
+    "id"
+  )
+
+  expect_equal(nrow(result), nrow(data))
+  expect_equal(result$fwb_weight, c(0.25, 0.25, 1.75, 1.75))
+  expect_equal(result$boot_id, rep(1, 4))
+  expect_equal(
+    markov.misc:::fwb_baseline_weights(
+      fwb_weights,
+      data[!duplicated(data$id), ],
+      "id"
+    ),
+    c(0.25, 1.75)
+  )
+})
+
 test_that("apply_to_bootstrap materializes samples before sequential analysis", {
   data <- data.frame(
     id = c(1, 1, 2, 2),
@@ -67,6 +126,66 @@ test_that("apply_to_bootstrap materializes samples before sequential analysis", 
 
   expect_equal(result[[1]], c(rows = 4, total = 33))
   expect_equal(result[[2]], c(rows = 4, total = 60))
+})
+
+test_that("apply_to_fwb_bootstrap materializes weights before analysis", {
+  data <- data.frame(
+    id = c(1, 1, 2, 2),
+    y = c(1, 2, 10, 20)
+  )
+  fwb_samples <- list(
+    data.frame(original_id = c(1, 2), fwb_weight = c(0.5, 1.5), boot_id = 1),
+    data.frame(original_id = c(1, 2), fwb_weight = c(1.2, 0.8), boot_id = 2)
+  )
+
+  result <- markov.misc:::apply_to_fwb_bootstrap(
+    fwb_samples = fwb_samples,
+    analysis_fn = function(boot_data, fwb_weights) {
+      c(
+        rows = nrow(boot_data),
+        total = sum(boot_data$y * boot_data$fwb_weight),
+        n_weights = nrow(fwb_weights)
+      )
+    },
+    data = data,
+    id_var = "id",
+    workers = 1
+  )
+
+  expect_equal(result[[1]], c(rows = 4, total = 46.5, n_weights = 2))
+  expect_equal(result[[2]], c(rows = 4, total = 27.6, n_weights = 2))
+})
+
+test_that("apply_to_fwb_bootstrap works with parallel workers", {
+  future::plan(future::sequential)
+  withr::defer(future::plan(future::sequential))
+
+  data <- data.frame(
+    id = c(1, 1, 2, 2),
+    y = c(1, 2, 10, 20)
+  )
+  fwb_samples <- list(
+    data.frame(original_id = c(1, 2), fwb_weight = c(0.5, 1.5), boot_id = 1)
+  )
+
+  result <- suppressWarnings(
+    markov.misc:::apply_to_fwb_bootstrap(
+      fwb_samples = fwb_samples,
+      analysis_fn = function(boot_data, fwb_weights) {
+        c(
+          total = sum(boot_data$y * boot_data$fwb_weight),
+          n_weights = nrow(fwb_weights)
+        )
+      },
+      data = data,
+      id_var = "id",
+      workers = 2,
+      packages = character(0)
+    )
+  )
+
+  expect_equal(result[[1]], c(total = 46.5, n_weights = 2))
+  expect_equal(future::nbrOfWorkers(), 1L)
 })
 
 test_that("apply_to_bootstrap maps deprecated parallel argument to workers", {
@@ -225,18 +344,64 @@ test_that("bootstrap_analysis_wrapper scopes orm datadist updates", {
   withr::defer(options(datadist = NULL))
   withr::defer(rm("dd", envir = globalenv()))
 
-  boot_data <- data.frame(y = factor(c(1, 2, 3)), x = c(0, 1, 2))
-  result <- bootstrap_analysis_wrapper(
-    boot_data = boot_data,
-    model = structure(list(), class = "orm"),
-    factor_cols = "y",
-    original_data = boot_data,
-    update_datadist = TRUE
+  boot_data <- data.frame(
+    y = factor(c(1, 2, 3)),
+    x = c(0, 1, 2),
+    boot_id = 1,
+    fwb_weight = c(0.5, 1, 1.5),
+    .markov_misc_fit_weight = c(0.5, 1, 1.5)
+  )
+  result <- expect_no_warning(
+    bootstrap_analysis_wrapper(
+      boot_data = boot_data,
+      model = structure(list(), class = "orm"),
+      factor_cols = "y",
+      original_data = boot_data,
+      update_datadist = TRUE
+    )
   )
 
   expect_s3_class(result$model, "orm")
   expect_equal(getOption("datadist"), "existing_dd")
   expect_identical(get("dd", envir = globalenv()), old_dd)
+})
+
+test_that("update_bootstrap_model suppresses only known orm weight warning", {
+  update.orm <- function(object, data, weights = NULL, ...) {
+    warning(
+      "currently weights are ignored in model validation and bootstrapping orm fits",
+      call. = FALSE
+    )
+    structure(list(data = data), class = "orm")
+  }
+  assign("update.orm", update.orm, envir = globalenv())
+  withr::defer(rm("update.orm", envir = globalenv()))
+
+  boot_data <- data.frame(y = 1:3, .markov_misc_fit_weight = c(0.5, 1, 1.5))
+
+  result <- expect_no_warning(
+    markov.misc:::update_bootstrap_model(
+      structure(list(), class = "orm"),
+      boot_data,
+      fit_weights = boot_data$.markov_misc_fit_weight
+    )
+  )
+  expect_s3_class(result, "orm")
+
+  update.orm <- function(object, data, weights = NULL, ...) {
+    warning("important warning", call. = FALSE)
+    structure(list(data = data), class = "orm")
+  }
+  assign("update.orm", update.orm, envir = globalenv())
+
+  expect_warning(
+    markov.misc:::update_bootstrap_model(
+      structure(list(), class = "orm"),
+      boot_data,
+      fit_weights = boot_data$.markov_misc_fit_weight
+    ),
+    "important warning"
+  )
 })
 
 test_that("bootstrap_analysis_wrapper falls back when coefstart update fails", {
@@ -269,4 +434,82 @@ test_that("bootstrap_analysis_wrapper falls back when coefstart update fails", {
 
   expect_s3_class(result$model, "vglm")
   expect_equal(result$model$data, boot_data)
+})
+
+test_that("bootstrap_analysis_wrapper multiplies original and fractional weights", {
+  update.mock_weighted <- function(object, data, weights = NULL, ...) {
+    weight_expr <- substitute(weights)
+    structure(
+      list(
+        data = data,
+        weights = eval(weight_expr, data, parent.frame())
+      ),
+      class = "mock_weighted"
+    )
+  }
+  assign("update.mock_weighted", update.mock_weighted, envir = globalenv())
+  withr::defer(rm("update.mock_weighted", envir = globalenv()))
+
+  original_data <- data.frame(
+    y = factor(c(1, 2, 3)),
+    x = c(0, 1, 2),
+    w = c(2, 3, 4)
+  )
+  boot_data <- original_data
+  model <- structure(
+    list(call = quote(mock_fit(y ~ x, data = original_data, weights = w))),
+    class = "mock_weighted"
+  )
+
+  result <- bootstrap_analysis_wrapper(
+    boot_data = boot_data,
+    model = model,
+    factor_cols = "y",
+    original_data = original_data,
+    update_datadist = FALSE,
+    fit_weights = c(0.5, 1, 1.5)
+  )
+
+  expect_s3_class(result$model, "mock_weighted")
+  expect_equal(result$model$weights, c(1, 3, 6))
+  expect_equal(result$model$data$.markov_misc_fit_weight, c(1, 3, 6))
+})
+
+test_that("bootstrap_analysis_wrapper recovers stored fit weights", {
+  make_weighted_lm <- function() {
+    original_data <- data.frame(
+      y = c(1, 2, 3, 4),
+      x = c(0, 1, 2, 3)
+    )
+    original_weights <- c(2, 3, 4, 5)
+
+    list(
+      model = stats::lm(
+        y ~ x,
+        data = original_data,
+        weights = original_weights
+      ),
+      data = original_data
+    )
+  }
+
+  weighted_fit <- make_weighted_lm()
+
+  result <- expect_no_warning(
+    bootstrap_analysis_wrapper(
+      boot_data = weighted_fit$data,
+      model = weighted_fit$model,
+      factor_cols = character(0),
+      original_data = weighted_fit$data,
+      update_datadist = FALSE,
+      fit_weights = c(0.5, 1, 1.5, 2)
+    )
+  )
+
+  expect_s3_class(result$model, "lm")
+  expect_equal(result$model$weights, c(1, 3, 6, 10))
+  expect_equal(
+    result$model$model[["(weights)"]],
+    c(1, 3, 6, 10)
+  )
 })

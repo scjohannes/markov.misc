@@ -17,13 +17,17 @@
 #'     \item `"bootstrap"`: Resamples patients with replacement, refits model.
 #'  Only works for `markov_avg_sops` objects.
 #'   }
-#' @param engine Character. Simulation engine used when `method = "simulation"`:
+#' @param engine Character. Inference engine. For `method = "simulation"`:
 #'   \itemize{
 #'     \item `"mvn"` (default): Draws coefficients from MVN(beta_hat, Sigma).
 #'     \item `"score_bootstrap"`: Uses one-step score perturbation with
 #'       cluster-level exponential multipliers. Requires a `robcov_vglm` model
 #'       or an `orm` model with `cluster`, and `avg_sops()` objects.
 #'   }
+#'   For `method = "bootstrap"`, use `"standard"` for ordinary patient
+#'   resampling with replacement or `"fwb"` for fractional weighted bootstrap
+#'   refits using exponential patient-level weights. The legacy default
+#'   `"mvn"` maps to `"standard"` when `method = "bootstrap"`.
 #' @param score_weight_dist Character. Cluster weight distribution for
 #'   `engine = "score_bootstrap"`. Currently only `"exponential"` is supported.
 #' @param n_sim Number of simulation draws (for simulation) or bootstrap
@@ -85,8 +89,9 @@
 #'
 #' ## Bootstrap Method
 #'
-#' The bootstrap method resamples patients and refits the model:
-#' 1. Sample patient IDs with replacement
+#' The bootstrap method refits the model on bootstrap-weighted data:
+#' 1. Sample patient IDs with replacement (`engine = "standard"`) or draw
+#'    exponential patient weights normalized to mean 1 (`engine = "fwb"`)
 #' 2. Refit model on bootstrap sample (handles missing states through releveling)
 #' 3. Compute SOPs using G-computation
 #' 4. Compute percentile-based confidence intervals
@@ -228,10 +233,23 @@ inferences <- function(
   }
 
   method <- match.arg(method, choices = c("simulation", "bootstrap"))
-  engine <- match.arg(engine, choices = c("mvn", "score_bootstrap"))
+  engine <- match.arg(
+    engine,
+    choices = c("mvn", "score_bootstrap", "standard", "fwb")
+  )
 
-  if (method == "bootstrap" && engine != "mvn") {
-    stop("`engine` is only used when `method = \"simulation\"`.")
+  if (method == "simulation" && engine %in% c("standard", "fwb")) {
+    stop(
+      "`engine = \"",
+      engine,
+      "\"` is only used when `method = \"bootstrap\"`."
+    )
+  }
+  if (method == "bootstrap" && engine == "score_bootstrap") {
+    stop(
+      "`engine = \"score_bootstrap\"` is only used when ",
+      "`method = \"simulation\"`."
+    )
   }
 
   # --- Dispatch to Method-Specific Implementation ---
@@ -249,8 +267,10 @@ inferences <- function(
       return_draws = return_draws
     )
   } else if (method == "bootstrap") {
+    bootstrap_engine <- if (engine == "mvn") "standard" else engine
     inferences_bootstrap(
       object = object,
+      engine = bootstrap_engine,
       n_boot = n_sim,
       workers = workers,
       conf_level = conf_level,

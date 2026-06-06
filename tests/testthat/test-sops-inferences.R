@@ -105,9 +105,11 @@ describe("avg_sops() and inferences() pipeline", {
   }
 
   pipeline_signature <- function(result) {
-    keep <- result$time %in% c(1, 3, 5, 8) &
-      result$state %in% c(1, 3, 6)
-    out <- result[keep, c("tx", "time", "state", "estimate", "conf.low", "conf.high", "std.error")]
+    keep <- result$time %in% c(1, 3, 5, 8) & result$state %in% c(1, 3, 6)
+    out <- result[
+      keep,
+      c("tx", "time", "state", "estimate", "conf.low", "conf.high", "std.error")
+    ]
     out <- out[order(out$tx, out$time, out$state), , drop = FALSE]
     out$state <- as.integer(as.character(out$state))
     numeric_cols <- c("estimate", "conf.low", "conf.high", "std.error")
@@ -117,7 +119,8 @@ describe("avg_sops() and inferences() pipeline", {
   }
 
   draw_signature <- function(draws) {
-    keep <- draws$draw_id %in% c(1L, 2L) &
+    keep <- draws$draw_id %in%
+      c(1L, 2L) &
       draws$time %in% c(1, 4, 8) &
       draws$state %in% c(1, 6)
     out <- draws[keep, c("draw_id", "tx", "time", "state", "draw")]
@@ -149,7 +152,10 @@ describe("avg_sops() and inferences() pipeline", {
     for (i in seq_len(nrow(grid))) {
       rows <- ((i - 1) * nrow(baseline) + 1):(i * nrow(baseline))
       expect_equal(out$tx[rows], rep(grid$tx[i], nrow(baseline)))
-      expect_equal(as.character(out$sex[rows]), rep(as.character(grid$sex[i]), nrow(baseline)))
+      expect_equal(
+        as.character(out$sex[rows]),
+        rep(as.character(grid$sex[i]), nrow(baseline))
+      )
     }
   })
 
@@ -182,10 +188,18 @@ describe("avg_sops() and inferences() pipeline", {
   test_that("marginalize_sops_array() supports patient weights", {
     sops_array <- array(
       c(
-        0.1, 0.7, 0.2,
-        0.2, 0.6, 0.2,
-        0.3, 0.4, 0.3,
-        0.4, 0.3, 0.3
+        0.1,
+        0.7,
+        0.2,
+        0.2,
+        0.6,
+        0.2,
+        0.3,
+        0.4,
+        0.3,
+        0.4,
+        0.3,
+        0.3
       ),
       dim = c(2, 2, 3)
     )
@@ -253,7 +267,9 @@ describe("avg_sops() and inferences() pipeline", {
       data = out,
       FUN = mean
     )
-    stratified <- stratified[order(stratified$time, stratified$state, stratified$tx), ]
+    stratified <- stratified[
+      order(stratified$time, stratified$state, stratified$tx),
+    ]
     manual <- manual[order(manual$time, manual$state, manual$tx), ]
     rownames(stratified) <- NULL
     rownames(manual) <- NULL
@@ -284,7 +300,10 @@ describe("avg_sops() and inferences() pipeline", {
 
     expect_equal(perc$conf.low, c(0.175, 0.575))
     expect_equal(perc$conf.high, c(0.425, 0.825))
-    expect_equal(perc$std.error, c(stats::sd(draws$estimate[1:4]), stats::sd(draws$estimate[5:8])))
+    expect_equal(
+      perc$std.error,
+      c(stats::sd(draws$estimate[1:4]), stats::sd(draws$estimate[5:8]))
+    )
 
     critical <- abs(stats::qnorm(0.25))
     expected_wald_low <- c(
@@ -299,7 +318,11 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(wald$conf.low, expected_wald_low)
     expect_equal(wald$conf.high, expected_wald_high)
     expect_error(
-      markov.misc:::compute_ci_from_draws(draws, c("time", "state"), conf_type = "other"),
+      markov.misc:::compute_ci_from_draws(
+        draws,
+        c("time", "state"),
+        conf_type = "other"
+      ),
       "conf_type"
     )
   })
@@ -307,8 +330,12 @@ describe("avg_sops() and inferences() pipeline", {
   test_that("lp_to_probs() converts cumulative logits into valid category probabilities", {
     eta <- matrix(
       c(
-        -1, 0, 1,
-        0.5, -0.5, -1
+        -1,
+        0,
+        1,
+        0.5,
+        -0.5,
+        -1
       ),
       nrow = 2,
       byrow = TRUE
@@ -368,7 +395,11 @@ describe("avg_sops() and inferences() pipeline", {
 
     expect_equal(dim(fast), dim(slow))
     expect_equal(unname(fast), unname(slow), tolerance = 1e-10)
-    expect_equal(rowSums(fast[, 8, , drop = FALSE][, 1, ]), rep(1, nrow(baseline)), tolerance = 1e-10)
+    expect_equal(
+      rowSums(fast[, 8, , drop = FALSE][, 1, ]),
+      rep(1, nrow(baseline)),
+      tolerance = 1e-10
+    )
   })
 
   test_that("fast Markov components support inline rcs() time terms", {
@@ -531,7 +562,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(sort(unique(draws$draw_id)), 1:2)
   })
 
-  test_that("Brownian avg_sops() supports bootstrap inference", {
+  test_that("avg_sops() supports standard bootstrap inference", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
 
@@ -578,6 +609,47 @@ describe("avg_sops() and inferences() pipeline", {
     )
   })
 
+  test_that("avg_sops() supports fractional weighted bootstrap inference", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+
+    case <- build_brownian_pipeline_case()
+    model <- fit_pipeline_model(case$data)
+
+    avg <- markov.misc::avg_sops(
+      model = model,
+      newdata = case$data,
+      variables = "tx",
+      times = 1:8,
+      ylevels = case$ylevels,
+      absorb = case$absorb,
+      tvarname = "time_lin",
+      pvarname = "yprev",
+      t_covs = case$t_covs,
+      id_var = "id"
+    )
+
+    withr::local_seed(4404)
+    inferred <- markov.misc::inferences(
+      avg,
+      method = "bootstrap",
+      engine = "fwb",
+      n_sim = 2,
+      return_draws = TRUE
+    )
+
+    draws <- markov.misc::get_draws(inferred)
+
+    expect_equal(attr(inferred, "method"), "bootstrap")
+    expect_equal(attr(inferred, "engine"), "fwb")
+    expect_equal(attr(inferred, "fwb_weight_type"), "exponential")
+    expect_equal(attr(inferred, "fwb_weight_scale"), "cluster_mean_1")
+    expect_equal(attr(inferred, "n_boot"), 2)
+    expect_equal(attr(inferred, "n_successful"), 2L)
+    expect_inference_intervals(inferred)
+    expect_equal(sort(unique(draws$draw_id)), 1:2)
+  })
+
   test_that("numeric previous-state spline supports bootstrap inference", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
@@ -609,7 +681,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_inference_intervals(inferred)
   })
 
-  test_that("Brownian avg_sops() supports score-bootstrap simulation on the fast path", {
+  test_that("avg_sops() supports score-bootstrap simulation on the fast path", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
 
@@ -745,9 +817,21 @@ describe("avg_sops() and inferences() pipeline", {
     explicit_draws <- markov.misc::get_draws(explicit_inferred)
     inline_draws <- markov.misc::get_draws(inline_inferred)
 
-    expect_equal(inline_inferred$estimate, explicit_inferred$estimate, tolerance = 1e-10)
-    expect_equal(inline_inferred$conf.low, explicit_inferred$conf.low, tolerance = 1e-10)
-    expect_equal(inline_inferred$conf.high, explicit_inferred$conf.high, tolerance = 1e-10)
+    expect_equal(
+      inline_inferred$estimate,
+      explicit_inferred$estimate,
+      tolerance = 1e-10
+    )
+    expect_equal(
+      inline_inferred$conf.low,
+      explicit_inferred$conf.low,
+      tolerance = 1e-10
+    )
+    expect_equal(
+      inline_inferred$conf.high,
+      explicit_inferred$conf.high,
+      tolerance = 1e-10
+    )
     expect_equal(inline_draws$draw, explicit_draws$draw, tolerance = 1e-10)
   })
 
@@ -758,8 +842,14 @@ describe("avg_sops() and inferences() pipeline", {
     case <- build_brownian_pipeline_case()
     explicit_model <- fit_pipeline_model(case$data)
     inline_model <- fit_inline_pipeline_model(case$data)
-    explicit_robust <- markov.misc::robcov_vglm(explicit_model, cluster = case$data$id)
-    inline_robust <- markov.misc::robcov_vglm(inline_model, cluster = case$data$id)
+    explicit_robust <- markov.misc::robcov_vglm(
+      explicit_model,
+      cluster = case$data$id
+    )
+    inline_robust <- markov.misc::robcov_vglm(
+      inline_model,
+      cluster = case$data$id
+    )
 
     explicit_avg <- markov.misc::avg_sops(
       model = explicit_robust,
@@ -806,9 +896,21 @@ describe("avg_sops() and inferences() pipeline", {
     explicit_draws <- markov.misc::get_draws(explicit_inferred)
     inline_draws <- markov.misc::get_draws(inline_inferred)
 
-    expect_equal(inline_inferred$estimate, explicit_inferred$estimate, tolerance = 1e-10)
-    expect_equal(inline_inferred$conf.low, explicit_inferred$conf.low, tolerance = 1e-10)
-    expect_equal(inline_inferred$conf.high, explicit_inferred$conf.high, tolerance = 1e-10)
+    expect_equal(
+      inline_inferred$estimate,
+      explicit_inferred$estimate,
+      tolerance = 1e-10
+    )
+    expect_equal(
+      inline_inferred$conf.low,
+      explicit_inferred$conf.low,
+      tolerance = 1e-10
+    )
+    expect_equal(
+      inline_inferred$conf.high,
+      explicit_inferred$conf.high,
+      tolerance = 1e-10
+    )
     expect_equal(inline_draws$draw, explicit_draws$draw, tolerance = 1e-10)
   })
 
@@ -844,11 +946,18 @@ describe("avg_sops() and inferences() pipeline", {
     )
 
     ordinary_fitted <- stats::predict(ordinary_fit, type = "response")
-    markov_fitted <- markov.misc:::predict_vglm_response_markov(markov_fit, data)
+    markov_fitted <- markov.misc:::predict_vglm_response_markov(
+      markov_fit,
+      data
+    )
 
     expect_s4_class(markov_fit, "vglm")
     expect_true(isTRUE(attr(markov_fit, "markov_vglm")))
-    expect_equal(unname(markov_fitted), unname(ordinary_fitted), tolerance = 1e-10)
+    expect_equal(
+      unname(markov_fitted),
+      unname(ordinary_fitted),
+      tolerance = 1e-10
+    )
   })
 
   test_that("inline rcs vglm.markov() model can use column-level PPO constraints", {
@@ -877,7 +986,11 @@ describe("avg_sops() and inferences() pipeline", {
     )
 
     cons <- fit_po@constraints
-    linear_time_term <- grep("^rms::rcs\\(time, 4\\).*time$", names(cons), value = TRUE)[[1]]
+    linear_time_term <- grep(
+      "^rms::rcs\\(time, 4\\).*time$",
+      names(cons),
+      value = TRUE
+    )[[1]]
     n_thresholds <- nrow(cons[[linear_time_term]])
     yprev_terms <- grep("^yprev", names(cons), value = TRUE)
     cons[yprev_terms] <- NULL
@@ -934,7 +1047,11 @@ describe("avg_sops() and inferences() pipeline", {
     data <- add_patient_age(data)
     data <- add_time_basis(data)
 
-    explicit_basis <- unname(as.matrix(data[, c("time_lin", "time_nlin_1", "time_nlin_2")]))
+    explicit_basis <- unname(as.matrix(data[, c(
+      "time_lin",
+      "time_nlin_1",
+      "time_nlin_2"
+    )]))
     inline_basis_raw <- rms::rcs(data$time, 4)
     inline_basis <- matrix(
       as.numeric(inline_basis_raw),
@@ -981,7 +1098,11 @@ describe("avg_sops() and inferences() pipeline", {
     )
 
     inline_constraints <- inline_po@constraints
-    inline_time_terms <- grep("^rms::rcs\\(time, 4\\)", names(inline_constraints), value = TRUE)
+    inline_time_terms <- grep(
+      "^rms::rcs\\(time, 4\\)",
+      names(inline_constraints),
+      value = TRUE
+    )
     expect_length(inline_time_terms, 3)
     inline_linear_time_term <- inline_time_terms[[1]]
     expect_match(inline_linear_time_term, "time$")
@@ -1004,9 +1125,16 @@ describe("avg_sops() and inferences() pipeline", {
     inline_fit@call$constraints <- inline_constraints
 
     explicit_fitted <- stats::predict(explicit_fit, type = "response")
-    inline_fitted <- markov.misc:::predict_vglm_response_markov(inline_fit, data)
+    inline_fitted <- markov.misc:::predict_vglm_response_markov(
+      inline_fit,
+      data
+    )
     expect_equal(dim(inline_fitted), dim(explicit_fitted))
-    expect_equal(unname(inline_fitted), unname(explicit_fitted), tolerance = 1e-10)
+    expect_equal(
+      unname(inline_fitted),
+      unname(explicit_fitted),
+      tolerance = 1e-10
+    )
 
     explicit_sops <- markov.misc::avg_sops(
       explicit_fit,
@@ -1040,6 +1168,10 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(inline_sops$tx, explicit_sops$tx)
     expect_equal(inline_sops$time, explicit_sops$time)
     expect_equal(inline_sops$state, explicit_sops$state)
-    expect_equal(inline_sops$estimate, explicit_sops$estimate, tolerance = 1e-10)
+    expect_equal(
+      inline_sops$estimate,
+      explicit_sops$estimate,
+      tolerance = 1e-10
+    )
   })
 })
