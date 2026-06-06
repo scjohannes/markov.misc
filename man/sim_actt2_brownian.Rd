@@ -18,8 +18,10 @@ sim_actt2_brownian(
 \item{treatment_prob}{Numeric. Probability of assignment to treatment group
 (default: 0.5).}
 
-\item{mu_treatment_effect}{Numeric. Additional constant drift for treatment
-group (default: 0, meaning no arm difference).}
+\item{mu_treatment_effect}{Numeric scalar or vector of length 7. Additional
+threshold-specific drift for the treatment group (default: 0, meaning no
+arm difference). Vector element \code{j} affects the boundary between states \code{j}
+and \code{j + 1}.}
 
 \item{seed}{Integer. Random seed for reproducibility (default: NULL).}
 
@@ -37,6 +39,8 @@ simulator with defaults tuned to roughly preserve control-arm state
 occupancy while reducing rehospitalization-like movement from recovered
 states 1/2 into states 3:7. The defaults are null-aligned, so there is no
 built-in treatment difference unless \code{mu_treatment_effect} is changed.
+\code{mu_treatment_effect} may be a scalar, which affects every threshold equally,
+or a vector with one value per threshold.
 }
 \details{
 This is intended as a convenient starting point for simulation studies, not
@@ -49,6 +53,12 @@ actt2_null <- sim_actt2_brownian(n_patients = 1000, seed = 123)
 actt2_alt <- sim_actt2_brownian(
   n_patients = 1000,
   mu_treatment_effect = -0.03,
+  seed = 123
+)
+
+actt2_state5_to_6 <- sim_actt2_brownian(
+  n_patients = 1000,
+  mu_treatment_effect = c(0, 0, 0, 0, 0.03, 0, 0),
   seed = 123
 )
 }

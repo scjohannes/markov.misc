@@ -23,7 +23,6 @@ sim_trajectories_brownian_gap(
   drift_start = 0,
   latent_dist = c("logistic", "normal"),
   refresh_rate = 0.048,
-  threshold_time_effect_factors = NULL,
   seed = NULL
 )
 }
@@ -34,20 +33,27 @@ sim_trajectories_brownian_gap(
 
 \item{n_states}{Integer. Number of ordered states/categories (default: 6).}
 
-\item{mu_drift}{Numeric. Baseline (constant) drift per day for control group
-(default: -0.26). Negative values indicate improvement.}
+\item{mu_drift}{Numeric scalar or vector of length \code{n_states - 1}. Baseline
+threshold-specific drift per day for the control group (default: -0.26).
+Negative values indicate improvement. Vector element \code{j} affects threshold
+\code{j}, the boundary between states \code{j} and \code{j + 1}.}
 
 \item{mu_drift_sd}{Numeric. Standard deviation of a patient-specific random
 drift component added to \code{mu_drift} (default: 0). This induces persistent
 heterogeneity in individual improvement or worsening rates over follow-up.}
 
-\item{mu_quad}{Numeric. Quadratic coefficient for time-varying drift
-(default: 0.006).}
+\item{mu_quad}{Numeric scalar or vector of length \code{n_states - 1}. Quadratic
+coefficient for threshold-specific time-varying drift (default: 0.006).}
 
-\item{mu_quad2}{Numeric. Second-order quadratic coefficient for drift (default: 0).}
+\item{mu_quad2}{Numeric scalar or vector of length \code{n_states - 1}.
+Second-order quadratic coefficient for threshold-specific drift (default:
+0).}
 
-\item{mu_treatment_effect}{Numeric. Additional constant drift for treatment group
-(default: -0.04). Negative values indicate faster improvement with treatment.}
+\item{mu_treatment_effect}{Numeric scalar or vector of length \code{n_states - 1}.
+Additional threshold-specific drift for the treatment group (default:
+-0.04). Negative values indicate faster improvement with treatment. To
+target a single adjacent-state boundary, set only that vector element to a
+nonzero value.}
 
 \item{sigma_rw}{Numeric. Random walk innovation standard deviation per day
 (default: 0.12).}
@@ -85,12 +91,6 @@ to observed states. Options are "logistic" (default) or "normal".}
 non-absorbing state refresh (default: 0.048). Lower values create longer
 dwell times between observed state updates.}
 
-\item{threshold_time_effect_factors}{Numeric vector of length K-1 or \code{NULL}.
-Multipliers for how strongly the common deterministic latent drift affects
-each threshold over time (default: \code{NULL}, equivalent to all 1s). Values
-below 1 attenuate the time effect for a threshold; values above 1 amplify
-it. The induced day-specific thresholds must remain strictly increasing.}
-
 \item{seed}{Integer. Random seed for reproducibility (default: NULL).}
 }
 \value{
@@ -100,7 +100,7 @@ A data frame (tibble) with columns:
 \item time: time/day (1 to follow_up_time)
 \item tx: treatment assignment (0 = control, 1 = treatment)
 \item y: observed ordinal state at time
-\item x: latent continuous severity
+\item x: reference latent continuous severity
 }
 }
 \description{
@@ -115,6 +115,9 @@ evolution from observed-state refresh:
 \enumerate{
 \item Each patient has an unobserved continuous "severity" X(t) that evolves
 daily as a Gaussian random walk with drift.
+\item When drift parameters are threshold-specific vectors, \code{x} follows a
+reference latent drift while observed-state probabilities are generated
+from threshold-specific cutpoint trajectories.
 \item A patient-specific waiting time to the next refresh is drawn from an
 exponential distribution with rate \code{refresh_rate}.
 \item Between refresh dates, non-absorbing observed states are carried forward.
@@ -134,6 +137,13 @@ traj_gap <- sim_trajectories_brownian_gap(
 traj_gap_low_switch <- sim_trajectories_brownian_gap(
   n_patients = 1000,
   refresh_rate = 0.02,
+  seed = 12345
+)
+
+# Treatment effect only at the state 5/6 boundary
+traj_gap_targeted <- sim_trajectories_brownian_gap(
+  n_patients = 1000,
+  mu_treatment_effect = c(0, 0, 0, 0, -0.04),
   seed = 12345
 )
 }
