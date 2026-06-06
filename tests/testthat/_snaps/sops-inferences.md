@@ -97,7 +97,7 @@
       ]
     }
 
-# avg_sops() and inferences() pipeline / Brownian avg_sops() supports bootstrap inference
+# avg_sops() and inferences() pipeline / avg_sops() supports standard bootstrap inference
 
     {
       "type": "list",
@@ -196,7 +196,7 @@
       ]
     }
 
-# avg_sops() and inferences() pipeline / Brownian avg_sops() supports score-bootstrap simulation on the fast path
+# avg_sops() and inferences() pipeline / avg_sops() supports score-bootstrap simulation on the fast path
 
     {
       "type": "list",

@@ -17,7 +17,7 @@ The package is built around a small set of stable contracts:
   inference later.
 - Inference engines work by replaying the original SOP request with new
   coefficient draws, posterior draws, score-bootstrap weights, or refit
-  bootstrap samples.
+  bootstrap samples and weights.
 
 This document describes the current design, the main code paths, and how to
 extend the package without breaking those contracts.
@@ -99,8 +99,8 @@ The package is organized by workflow stage rather than by model class.
 | Model fitting helpers | `R/vglm_helpers.R`, `R/vgam_helpers.R`, `R/robcov_vglm.R`, `R/mvn_helpers.R` | Fit package-aware VGAM Markov models, compute effective coefficients, compute robust covariance, mutate coefficients for simulation draws. |
 | SOP API | `R/sops.R`, `R/sops-api.R`, `R/sops-standardize.R` | Public user entrypoints for individual SOPs, standardized/marginal SOPs, and legacy standardization. |
 | SOP engine | `R/sops-engine.R`, `R/sops-backends.R`, `R/sops-fast-path.R`, `R/sops-result-helpers.R` | Validate models, predict transition probabilities, run first- and second-order Markov recursions, reshape arrays to tidy objects. |
-| SOP inference | `R/sops-inference.R`, `R/sops-draws.R`, `R/sops-score-bootstrap.R`, `R/sops-bootstrap-inference.R` | Compute uncertainty intervals from MVN coefficient draws, posterior draws, score bootstrap draws, or refit bootstrap samples. |
-| Bootstrap infrastructure | `R/bootstrap_helpers.R`, `R/bootstrap.R`, `R/bootstrap-tidy.R` | Memory-efficient group bootstrap sampling, just-in-time materialization, model refitting, bootstrap coefficient and SOP summaries. |
+| SOP inference | `R/sops-inference.R`, `R/sops-draws.R`, `R/sops-score-bootstrap.R`, `R/sops-bootstrap-inference.R` | Compute uncertainty intervals from MVN coefficient draws, posterior draws, score bootstrap draws, ordinary refit bootstrap samples, or fractional weighted refits. |
+| Bootstrap infrastructure | `R/bootstrap_helpers.R`, `R/bootstrap.R`, `R/bootstrap-tidy.R` | Memory-efficient group bootstrap sampling, fractional weighted bootstrap weights, just-in-time materialization, model refitting, bootstrap coefficient and SOP summaries. |
 | Endpoint summaries | `R/endpoint-summaries.R`, `R/endpoint-tte.R`, `R/competing-risks.R`, `R/sops-time-in-state.R`, `R/sops-interpolate.R` | Convert trajectories or SOPs to days-at-home, time-to-event, competing-risk, real-time interpolation, and time-in-state summaries. |
 | Operating characteristics | `R/power.R` | Sample from Arrow superpopulations, run iteration-level analyses, summarize power, type I error, bias, coverage, and Monte Carlo error. |
 | Visualization | `R/viz.R` | Plot empirical or model-derived SOPs, bootstrap SOP bands, and operating-characteristic summaries. |
@@ -280,10 +280,12 @@ flowchart TD
   VCOV --> DRAWS["Draw beta from multivariate normal"]
   KIND -- "simulation + score_bootstrap" --> SCORE["Generate one-step score-bootstrap beta draws and optional weights"]
   SCORE --> DRAWS
-  KIND -- "bootstrap" --> RESAMPLE["Group-bootstrap IDs, materialize samples, refit models"]
+  KIND -- "bootstrap + standard" --> RESAMPLE["Group-bootstrap IDs, materialize samples, refit models"]
+  KIND -- "bootstrap + fwb" --> FWB["Draw mean-one exponential patient weights, refit weighted models"]
   KIND -- "posterior blrm" --> POST["Use stored posterior predictions"]
   DRAWS --> REPLAY["Replay SOP prediction for each draw"]
   RESAMPLE --> REPLAY
+  FWB --> REPLAY
   POST --> CI["Summarize draw distribution"]
   REPLAY --> CI
   CI --> OUT["Original SOP object + intervals + optional stored draws"]
@@ -297,8 +299,12 @@ The inference methods are intentionally separate:
   from `stats::vcov()`, `rms::robcov()`, or `robcov_vglm()`.
 - Score bootstrap uses row-level model scores and cluster multipliers to make
   one-step coefficient draws without full refits.
-- Refit bootstrap resamples patients by ID, materializes each bootstrap sample,
-  refits the model, and recomputes `avg_sops()`.
+- Standard refit bootstrap resamples patients by ID, materializes each bootstrap
+  sample, refits the model, and recomputes `avg_sops()`.
+- Fractional weighted bootstrap draws one exponential weight per patient ID,
+  normalizes those weights to mean 1 for model fitting, refits the model with
+  row-expanded weights, and uses the same patient weights for marginal SOP
+  averaging.
 
 For first-order frequentist `orm` and `vglm` models, simulation inference can use
 the optimized fast path. Second-order Markov models fall back to replaying the
@@ -456,11 +462,15 @@ orchestration.
 ```mermaid
 flowchart TD
   DATA["Original longitudinal data"] --> IDS["fast_group_bootstrap()"]
+  DATA --> FWB_IDS["generate_fwb_bootstrap_weights()"]
   IDS --> LOOKUP["Small ID lookup tables"]
   LOOKUP --> APPLY["apply_to_bootstrap()"]
   APPLY --> MATERIALIZE["materialize_bootstrap_sample()"]
+  FWB_IDS --> FWB_APPLY["apply_to_fwb_bootstrap()"]
+  FWB_APPLY --> FWB_MATERIALIZE["materialize_fwb_bootstrap_sample()"]
   MATERIALIZE --> RELEVEL["relevel_factors_consecutive()"]
-  RELEVEL --> REFIT["stats::update(model, data = boot_data)"]
+  FWB_MATERIALIZE --> RELEVEL
+  RELEVEL --> REFIT["stats::update(model, data = boot_data, weights = optional)"]
   REFIT --> ANALYSIS{"Analysis target"}
   ANALYSIS -- "coefficients" --> COEF["bootstrap_model_coefs()"]
   ANALYSIS -- "standardized SOPs" --> SOP["bootstrap_standardized_sops()"]
@@ -471,18 +481,28 @@ The key design choice is just-in-time materialization. `fast_group_bootstrap()`
 stores only sampled IDs and unique bootstrap IDs. Workers receive a lookup
 table, join it to the original data, refit, and return only the requested
 result. This avoids storing all bootstrap data sets at once and keeps repeated
-patient samples identifiable through `new_id`.
+patient samples identifiable through `new_id`. The fractional weighted
+bootstrap path follows the same just-in-time style but stores patient-level
+exponential weights instead of duplicated ID lookups.
 
 `bootstrap_analysis_wrapper()` centralizes the fragile parts of refitting:
 
 - Relevel missing factor states to consecutive integers.
 - Update `rms::datadist()` for `orm` fits when needed.
 - Optionally use original VGAM coefficients as starting values.
+- Optionally multiply recoverable original model weights by fractional
+  bootstrap weights and pass them into `stats::update()`.
 - Return the fitted model, releveled data, updated state support, and missing
   states.
 
 SOP bootstrap inference currently targets `markov_avg_sops`, because marginal
 SOPs have a clear population-level resampling interpretation.
+
+For `method = "bootstrap", engine = "fwb"`, weights are drawn at the patient ID
+level, normalized to mean 1 over patients for model fitting, expanded to rows,
+and then separately normalized to sum 1 by `marginalize_sops_array()` when
+averaging counterfactual SOPs. This mirrors the default exponential weighting
+behavior of the external `fwb` package without adding it as a dependency.
 
 ## Score Bootstrap Design
 
@@ -728,10 +748,10 @@ interfaces or examples change.
 | `R/sops-fast-path.R` | `markov_msm_build()`, `markov_msm_run()`, `lp_to_probs()`, `compute_Gamma()` | Optimized repeated prediction for eligible first-order models. |
 | `R/sops-result-helpers.R` | `set_sops_attrs()`, `restore_sops_attrs()`, `create_counterfactual_data()`, `marginalize_sops_array()`, `array_to_df_individual()` | Tidy SOP object construction and attribute preservation. |
 | `R/sops-inference.R` | `inferences()`, `inferences_simulation()` | Main inference dispatcher and coefficient-draw replay. |
-| `R/sops-bootstrap-inference.R` | `inferences_bootstrap()` | Refit-bootstrap inference for marginal SOPs. |
+| `R/sops-bootstrap-inference.R` | `inferences_bootstrap()` | Standard and fractional weighted refit-bootstrap inference for marginal SOPs. |
 | `R/sops-score-bootstrap.R` | `generate_score_bootstrap_draws()`, `score_bootstrap_components()`, `compute_scores_orm()` | One-step score-bootstrap engine. |
 | `R/sops-draws.R` | `compute_ci_from_draws()`, `get_draws()` | Interval summaries and draw extraction. |
-| `R/bootstrap_helpers.R` | `fast_group_bootstrap()`, `materialize_bootstrap_sample()`, `apply_to_bootstrap()`, `bootstrap_analysis_wrapper()` | Memory-efficient group bootstrap utilities. |
+| `R/bootstrap_helpers.R` | `fast_group_bootstrap()`, `generate_fwb_bootstrap_weights()`, `materialize_bootstrap_sample()`, `materialize_fwb_bootstrap_sample()`, `apply_to_bootstrap()`, `apply_to_fwb_bootstrap()`, `bootstrap_analysis_wrapper()` | Memory-efficient standard and fractional weighted bootstrap utilities. |
 | `R/bootstrap.R` | `bootstrap_model_coefs()`, `bootstrap_standardized_sops()` | Exported bootstrap summaries. |
 | `R/bootstrap-tidy.R` | `tidy_bootstrap_coefs()` | Quantile summaries for bootstrap coefficients. |
 | `R/sops-interpolate.R` | `interpolate_sops()` and helpers | Visit-to-real-time SOP interpolation and draw-aware interval recomputation. |
@@ -759,4 +779,5 @@ interfaces or examples change.
 | Fast path | Matrix-based SOP replay path for repeated coefficient draws in eligible first-order models. |
 | Score bootstrap | Approximate bootstrap using score contributions and multiplier weights instead of full refits. |
 | Refit bootstrap | Bootstrap that resamples IDs, refits the model, and recomputes SOPs. |
+| Fractional weighted bootstrap | Bootstrap that gives each patient a positive exponential weight, refits the model with row-expanded weights, and marginalizes SOPs with the same patient weights. |
 | Real-time interpolation | Mapping visit-index SOPs to elapsed time and interpolating probabilities for AUC/time-in-state summaries. |

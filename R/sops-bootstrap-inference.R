@@ -11,6 +11,7 @@
 #' bootstrap sample.
 #'
 #' @param object A `markov_avg_sops` object.
+#' @param engine Bootstrap engine, `"standard"` or `"fwb"`.
 #' @param n_boot Number of bootstrap iterations.
 #' @param workers Number of parallel workers. If NULL or 1, uses sequential
 #'   processing. If > 1, uses parallel processing.
@@ -24,6 +25,7 @@
 #' @keywords internal
 inferences_bootstrap <- function(
   object,
+  engine,
   n_boot,
   workers,
   conf_level,
@@ -31,6 +33,8 @@ inferences_bootstrap <- function(
   update_datadist,
   use_coefstart
 ) {
+  engine <- match.arg(engine, choices = c("standard", "fwb"))
+
   # Bootstrap only supports avg_sops for now
   if (!inherits(object, "markov_avg_sops")) {
     stop(
@@ -69,7 +73,10 @@ inferences_bootstrap <- function(
   # --- 2. Validate Data is Longitudinal (Not Just Baseline) ---
   # Check if tvarname exists and has multiple time points per patient
   if (tvarname %in% names(newdata_orig)) {
-    rows_per_patient <- tabulate(match(newdata_orig[[id_var]], unique(newdata_orig[[id_var]])))
+    rows_per_patient <- tabulate(match(
+      newdata_orig[[id_var]],
+      unique(newdata_orig[[id_var]])
+    ))
 
     if (all(rows_per_patient == 1)) {
       stop(
@@ -90,15 +97,13 @@ inferences_bootstrap <- function(
   factor_cols <- c("y", pvarname, p2varname)
   factor_cols <- intersect(factor_cols, names(newdata_orig))
 
-  # --- 3. Generate Bootstrap ID Samples ---
-  boot_ids <- fast_group_bootstrap(
-    data = newdata_orig,
-    id_var = id_var,
-    n_boot = n_boot
-  )
-
   # --- 4. Define Analysis Function ---
-  analysis_fn <- function(boot_data) {
+  analysis_fn <- function(boot_data, fwb_weights = NULL) {
+    fit_weights <- NULL
+    if (engine == "fwb") {
+      fit_weights <- boot_data$fwb_weight
+    }
+
     # A. Relevel factors and refit model
     boot_result <- bootstrap_analysis_wrapper(
       boot_data = boot_data,
@@ -108,7 +113,8 @@ inferences_bootstrap <- function(
       ylevels = ylevels,
       absorb = absorb,
       update_datadist = update_datadist,
-      use_coefstart = use_coefstart
+      use_coefstart = use_coefstart,
+      fit_weights = fit_weights
     )
 
     m_boot <- boot_result$model
@@ -129,7 +135,17 @@ inferences_bootstrap <- function(
 
     # B. Compute standardized SOPs using G-computation on bootstrap data
     # Extract baseline data (one row per patient)
-    baseline_boot <- boot_data[!duplicated(boot_data[["new_id"]]), ]
+    if (engine == "standard") {
+      baseline_boot <- boot_data[!duplicated(boot_data[["new_id"]]), ]
+      baseline_weights <- NULL
+    } else {
+      baseline_boot <- boot_data[!duplicated(boot_data[[id_var]]), ]
+      baseline_weights <- fwb_baseline_weights(
+        fwb_weights = fwb_weights,
+        baseline_data = baseline_boot,
+        id_var = id_var
+      )
+    }
 
     # Create counterfactual datasets for each variable value
     grid <- do.call(expand.grid, variables)
@@ -161,23 +177,26 @@ inferences_bootstrap <- function(
 
     # C. Marginalize (average) across patients for each counterfactual
     # sops_array is [n_pat, n_times, n_boot_states]
-    n_pat <- dim(sops_array)[1]
-    n_boot_states <- dim(sops_array)[3]
     n_cf <- nrow(grid)
-    n_each <- n_pat %/% n_cf
+    n_each <- nrow(baseline_boot)
+    boot_avg <- marginalize_sops_array(
+      sops_array = sops_array,
+      grid = grid,
+      times = times,
+      ylevels = factor(boot_ylevels),
+      variables = variables,
+      n_cf = n_cf,
+      n_each = n_each,
+      weights = baseline_weights
+    )
 
-    # Average within each counterfactual group
-    avg_sops_list <- vector("list", n_cf)
-    for (cf_i in seq_len(n_cf)) {
-      start_idx <- (cf_i - 1) * n_each + 1
-      end_idx <- cf_i * n_each
-
-      # Subset and average [n_each x n_times x n_boot_states]
-      sops_cf <- sops_array[start_idx:end_idx, , , drop = FALSE]
-      avg_sops_mat <- apply(sops_cf, c(2, 3), mean) # [n_times x n_boot_states]
-
-      avg_sops_list[[cf_i]] <- avg_sops_mat
-    }
+    avg_sops_list <- bootstrap_avg_df_to_matrices(
+      boot_avg = boot_avg,
+      grid = grid,
+      times = times,
+      states = factor(boot_ylevels),
+      variables = variables
+    )
 
     # D. Expand back to original state space with zero-padding
     if (length(missing_states) > 0) {
@@ -216,31 +235,75 @@ inferences_bootstrap <- function(
   }
 
   # --- 5. Apply to Bootstrap Samples ---
-  boot_results <- apply_to_bootstrap(
-    boot_samples = boot_ids,
-    analysis_fn = analysis_fn,
-    data = newdata_orig,
-    id_var = id_var,
-    workers = workers,
-    packages = c("rms", "VGAM", "Hmisc", "stats"),
-    globals = c(
-      "model",
-      "variables",
-      "times",
-      "ylevels",
-      "absorb",
-      "pvarname",
-      "p2varname",
-      "tvarname",
-      "gap",
-      "t_covs",
-      "n_times",
-      "n_states",
-      "update_datadist",
-      "factor_cols",
-      "use_coefstart"
+  if (engine == "standard") {
+    boot_ids <- fast_group_bootstrap(
+      data = newdata_orig,
+      id_var = id_var,
+      n_boot = n_boot
     )
-  )
+
+    boot_results <- apply_to_bootstrap(
+      boot_samples = boot_ids,
+      analysis_fn = analysis_fn,
+      data = newdata_orig,
+      id_var = id_var,
+      workers = workers,
+      packages = c("rms", "VGAM", "Hmisc", "stats"),
+      globals = c(
+        "model",
+        "variables",
+        "times",
+        "ylevels",
+        "absorb",
+        "pvarname",
+        "p2varname",
+        "tvarname",
+        "gap",
+        "t_covs",
+        "n_times",
+        "n_states",
+        "update_datadist",
+        "factor_cols",
+        "use_coefstart",
+        "engine",
+        "id_var"
+      )
+    )
+  } else {
+    fwb_samples <- generate_fwb_bootstrap_weights(
+      data = newdata_orig,
+      id_var = id_var,
+      n_boot = n_boot
+    )
+
+    boot_results <- apply_to_fwb_bootstrap(
+      fwb_samples = fwb_samples,
+      analysis_fn = analysis_fn,
+      data = newdata_orig,
+      id_var = id_var,
+      workers = workers,
+      packages = c("rms", "VGAM", "Hmisc", "stats"),
+      globals = c(
+        "model",
+        "variables",
+        "times",
+        "ylevels",
+        "absorb",
+        "pvarname",
+        "p2varname",
+        "tvarname",
+        "gap",
+        "t_covs",
+        "n_times",
+        "n_states",
+        "update_datadist",
+        "factor_cols",
+        "use_coefstart",
+        "engine",
+        "id_var"
+      )
+    )
+  }
 
   # --- 6. Combine and Compute Summary Statistics ---
   boot_results <- Filter(Negate(is.null), boot_results)
@@ -278,6 +341,11 @@ inferences_bootstrap <- function(
   attr(final_result, "n_successful") <- length(boot_results)
   attr(final_result, "conf_level") <- conf_level
   attr(final_result, "method") <- "bootstrap"
+  attr(final_result, "engine") <- engine
+  if (engine == "fwb") {
+    attr(final_result, "fwb_weight_type") <- "exponential"
+    attr(final_result, "fwb_weight_scale") <- "cluster_mean_1"
+  }
 
   # Store full bootstrap draws if requested
   if (return_draws) {
@@ -291,3 +359,31 @@ inferences_bootstrap <- function(
 # =============================================================================
 # HELPER FUNCTIONS FOR INFERENCE
 # =============================================================================
+
+bootstrap_avg_df_to_matrices <- function(
+  boot_avg,
+  grid,
+  times,
+  states,
+  variables
+) {
+  out <- vector("list", nrow(grid))
+
+  for (cf_i in seq_len(nrow(grid))) {
+    keep <- rep(TRUE, nrow(boot_avg))
+    for (v in names(variables)) {
+      keep <- keep & boot_avg[[v]] == grid[[v]][cf_i]
+    }
+
+    df <- boot_avg[keep, , drop = FALSE]
+    mat <- matrix(
+      df$estimate,
+      nrow = length(times),
+      ncol = length(states),
+      byrow = FALSE
+    )
+    out[[cf_i]] <- mat
+  }
+
+  out
+}

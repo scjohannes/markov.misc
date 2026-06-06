@@ -78,6 +78,7 @@ utils::globalVariables(c(
   "raw_stop",
   # Added for inferences_bootstrap
   "n_rows",
+  ".markov_misc_fit_weight",
   # Added for tidy_bootstrap_coefs
   "n_iter"
 ))

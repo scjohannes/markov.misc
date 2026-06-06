@@ -155,6 +155,87 @@ materialize_bootstrap_sample <- function(boot_ids, data, id_var) {
   return(boot_sample)
 }
 
+generate_fwb_bootstrap_weights <- function(
+  data,
+  id_var = "id",
+  n_boot,
+  weight_dist = "exponential"
+) {
+  if (!id_var %in% names(data)) {
+    stop("id_var '", id_var, "' not found in data")
+  }
+
+  weight_dist <- match.arg(weight_dist, choices = "exponential")
+  cluster_ids <- unique(data[[id_var]])
+  n_clusters <- length(cluster_ids)
+  fwb_samples <- vector("list", n_boot)
+
+  for (i in seq_len(n_boot)) {
+    raw_weights <- stats::rexp(n_clusters, rate = 1)
+    weight_mean <- mean(raw_weights)
+    if (!is.finite(weight_mean) || weight_mean <= 0) {
+      stop("Invalid fractional bootstrap weights generated.")
+    }
+
+    fwb_samples[[i]] <- data.frame(
+      original_id = cluster_ids,
+      fwb_weight = raw_weights / weight_mean,
+      boot_id = i
+    )
+  }
+
+  fwb_samples
+}
+
+materialize_fwb_bootstrap_sample <- function(fwb_weights, data, id_var) {
+  if (!all(c("original_id", "fwb_weight", "boot_id") %in% names(fwb_weights))) {
+    stop(
+      "`fwb_weights` must contain original_id, fwb_weight, and boot_id columns."
+    )
+  }
+
+  idx <- match(
+    as.character(data[[id_var]]),
+    as.character(fwb_weights$original_id)
+  )
+  if (anyNA(idx)) {
+    missing_ids <- unique(as.character(data[[id_var]])[is.na(idx)])
+    stop(
+      "Some data IDs were not found in the fractional bootstrap weights: ",
+      paste(utils::head(missing_ids, 5), collapse = ", "),
+      if (length(missing_ids) > 5) " ..." else "",
+      "."
+    )
+  }
+
+  boot_data <- data
+  boot_data$fwb_weight <- fwb_weights$fwb_weight[idx]
+  boot_data$boot_id <- fwb_weights$boot_id[idx]
+  boot_data
+}
+
+fwb_baseline_weights <- function(fwb_weights, baseline_data, id_var) {
+  if (!id_var %in% names(baseline_data)) {
+    stop("ID variable '", id_var, "' not found in baseline data.")
+  }
+
+  idx <- match(
+    as.character(baseline_data[[id_var]]),
+    as.character(fwb_weights$original_id)
+  )
+  if (anyNA(idx)) {
+    missing_ids <- unique(as.character(baseline_data[[id_var]])[is.na(idx)])
+    stop(
+      "Some baseline IDs were not found in the fractional bootstrap weights: ",
+      paste(utils::head(missing_ids, 5), collapse = ", "),
+      if (length(missing_ids) > 5) " ..." else "",
+      "."
+    )
+  }
+
+  fwb_weights$fwb_weight[idx]
+}
+
 
 #' Apply Function to Bootstrap Samples with Parallelization
 #'
@@ -289,6 +370,43 @@ apply_to_bootstrap <- function(
   return(results)
 }
 
+apply_to_fwb_bootstrap <- function(
+  fwb_samples,
+  analysis_fn,
+  data,
+  id_var,
+  workers = NULL,
+  packages = c("rms", "VGAM", "Hmisc", "stats"),
+  globals = character(0)
+) {
+  use_parallel <- !is.null(workers) && workers > 1
+  materialize_fwb <- materialize_fwb_bootstrap_sample
+
+  wrapper_fn <- function(fwb_weights) {
+    boot_data <- materialize_fwb(fwb_weights, data, id_var)
+    analysis_fn(boot_data, fwb_weights)
+  }
+
+  if (use_parallel) {
+    old_plan <- plan()
+    on.exit(plan(old_plan), add = TRUE)
+    plan(callr, workers = workers)
+
+    results <- furrr::future_map(
+      fwb_samples,
+      wrapper_fn,
+      .options = furrr::furrr_options(
+        packages = c(packages),
+        globals = c(globals, "data", "id_var", "analysis_fn", "materialize_fwb")
+      )
+    )
+  } else {
+    results <- lapply(fwb_samples, wrapper_fn)
+  }
+
+  results
+}
+
 
 #' Bootstrap Analysis Wrapper
 #'
@@ -306,6 +424,7 @@ apply_to_bootstrap <- function(
 #'   (only needed for rms::orm models)
 #' @param use_coefstart Logical indicating whether to use starting coefficients
 #'   from the original model when refitting (only for vglm models).
+#' @param fit_weights Optional non-negative row weights for the bootstrap fit.
 #'
 #' @return A list with components:
 #'   \itemize{
@@ -348,8 +467,25 @@ bootstrap_analysis_wrapper <- function(
   ylevels = NULL,
   absorb = NULL,
   update_datadist = TRUE,
-  use_coefstart = FALSE
+  use_coefstart = FALSE,
+  fit_weights = NULL
 ) {
+  fit_model <- bootstrap_refit_model(model)
+
+  if (!is.null(fit_weights)) {
+    if (
+      !is.numeric(fit_weights) ||
+        length(fit_weights) != nrow(boot_data) ||
+        any(!is.finite(fit_weights)) ||
+        any(fit_weights < 0)
+    ) {
+      stop("`fit_weights` must be non-negative finite row weights.")
+    }
+
+    original_weights <- bootstrap_original_fit_weights(fit_model, boot_data)
+    boot_data$.markov_misc_fit_weight <- original_weights * fit_weights
+  }
+
   # Relevel factors to handle missing states
   releveled <- relevel_factors_consecutive(
     data = boot_data,
@@ -365,7 +501,7 @@ bootstrap_analysis_wrapper <- function(
   missing_states <- releveled$missing_levels
 
   # Update datadist if needed (only for orm models)
-  if (update_datadist && inherits(model, "orm")) {
+  if (update_datadist && inherits(fit_model, "orm")) {
     dd_env <- globalenv()
     old_datadist <- getOption("datadist")
     old_dd_exists <- exists("dd", envir = dd_env, inherits = FALSE)
@@ -382,7 +518,7 @@ bootstrap_analysis_wrapper <- function(
       add = TRUE
     )
 
-    dd <- rms::datadist(boot_data)
+    dd <- rms::datadist(bootstrap_datadist_data(boot_data))
     assign("dd", dd, envir = dd_env)
     options(datadist = "dd")
   }
@@ -392,25 +528,36 @@ bootstrap_analysis_wrapper <- function(
     {
       # Attempt with coefstart if conditions met
       if (
-        use_coefstart && inherits(model, "vglm") && length(missing_states) == 0
+        use_coefstart &&
+          inherits(fit_model, "vglm") &&
+          length(missing_states) == 0
       ) {
         tryCatch(
           {
-            stats::update(
-              model,
-              data = boot_data,
-              coefstart = stats::coef(model)
+            update_bootstrap_model(
+              fit_model,
+              boot_data,
+              fit_weights = fit_weights,
+              coefstart = stats::coef(fit_model)
             )
           },
           error = function(e) {
             # If coefstart fails (e.g. non-conformable due to dropped predictor levels),
             # fall back to standard update
-            stats::update(model, data = boot_data)
+            update_bootstrap_model(
+              fit_model,
+              boot_data,
+              fit_weights = fit_weights
+            )
           }
         )
       } else {
         # Standard update without coefstart
-        stats::update(model, data = boot_data)
+        update_bootstrap_model(
+          fit_model,
+          boot_data,
+          fit_weights = fit_weights
+        )
       }
     },
     error = function(e) {
@@ -426,4 +573,196 @@ bootstrap_analysis_wrapper <- function(
     absorb = boot_absorb,
     missing_states = missing_states
   ))
+}
+
+bootstrap_datadist_data <- function(data) {
+  metadata_cols <- c(
+    "boot_id",
+    "new_id",
+    "fwb_weight",
+    ".markov_misc_fit_weight"
+  )
+  data[, setdiff(names(data), metadata_cols), drop = FALSE]
+}
+
+bootstrap_refit_model <- function(model) {
+  if (inherits(model, "robcov_vglm")) {
+    if (is.null(model$vglm_fit)) {
+      stop(
+        "The supplied robcov_vglm object does not contain the original vglm fit."
+      )
+    }
+    return(model$vglm_fit)
+  }
+
+  model
+}
+
+bootstrap_original_fit_weights <- function(model, data) {
+  stored_weights <- bootstrap_stored_fit_weights(model, data)
+  if (!is.null(stored_weights)) {
+    return(stored_weights)
+  }
+
+  model_call <- if (inherits(model, "vglm")) {
+    tryCatch(methods::slot(model, "call"), error = function(e) NULL)
+  } else {
+    model$call
+  }
+
+  if (is.null(model_call) || is.null(model_call$weights)) {
+    return(rep(1, nrow(data)))
+  }
+
+  weights <- tryCatch(
+    eval(model_call$weights, data, parent.frame()),
+    error = function(e) NULL
+  )
+
+  if (is.null(weights)) {
+    warning(
+      "Could not recover original model weights; using fractional ",
+      "bootstrap weights only.",
+      call. = FALSE
+    )
+    return(rep(1, nrow(data)))
+  }
+
+  if (
+    length(weights) != nrow(data) ||
+      any(!is.finite(weights)) ||
+      any(weights < 0)
+  ) {
+    stop("Original model weights must be non-negative finite row weights.")
+  }
+
+  as.numeric(weights)
+}
+
+bootstrap_stored_fit_weights <- function(model, data) {
+  candidates <- list(
+    tryCatch(
+      stats::model.weights(stats::model.frame(model)),
+      error = function(e) NULL
+    ),
+    bootstrap_model_component(model, "prior.weights"),
+    bootstrap_model_component(model, "weights"),
+    if (inherits(model, "vglm")) {
+      tryCatch(methods::slot(model, "prior.weights"), error = function(e) NULL)
+    } else {
+      NULL
+    }
+  )
+
+  for (weights in candidates) {
+    weights <- bootstrap_as_row_weights(weights, nrow(data))
+    if (!is.null(weights)) {
+      return(weights)
+    }
+  }
+
+  NULL
+}
+
+bootstrap_model_component <- function(model, name) {
+  if (methods::is(model, "S4")) {
+    return(NULL)
+  }
+
+  tryCatch(model[[name]], error = function(e) NULL)
+}
+
+bootstrap_as_row_weights <- function(weights, n_rows) {
+  if (is.null(weights)) {
+    return(NULL)
+  }
+
+  if (is.matrix(weights) || is.data.frame(weights)) {
+    if (nrow(weights) != n_rows) {
+      return(NULL)
+    }
+    if (ncol(weights) == 1) {
+      weights <- weights[, 1]
+    } else if (all(weights == weights[, 1])) {
+      weights <- weights[, 1]
+    } else {
+      return(NULL)
+    }
+  }
+
+  if (!is.numeric(weights) || length(weights) != n_rows) {
+    return(NULL)
+  }
+  if (any(!is.finite(weights)) || any(weights < 0)) {
+    stop("Original model weights must be non-negative finite row weights.")
+  }
+
+  as.numeric(weights)
+}
+
+update_bootstrap_model <- function(
+  model,
+  boot_data,
+  fit_weights = NULL,
+  coefstart = NULL
+) {
+  has_fit_weights <- !is.null(fit_weights)
+
+  if (has_fit_weights && !is.null(coefstart)) {
+    return(suppress_orm_bootstrap_weight_warning(
+      model,
+      stats::update(
+        model,
+        data = boot_data,
+        weights = .markov_misc_fit_weight,
+        coefstart = coefstart
+      )
+    ))
+  }
+  if (has_fit_weights) {
+    return(suppress_orm_bootstrap_weight_warning(
+      model,
+      stats::update(
+        model,
+        data = boot_data,
+        weights = .markov_misc_fit_weight
+      )
+    ))
+  }
+  if (!is.null(coefstart)) {
+    return(suppress_orm_bootstrap_weight_warning(
+      model,
+      stats::update(
+        model,
+        data = boot_data,
+        coefstart = coefstart
+      )
+    ))
+  }
+
+  suppress_orm_bootstrap_weight_warning(
+    model,
+    stats::update(model, data = boot_data)
+  )
+}
+
+suppress_orm_bootstrap_weight_warning <- function(model, expr) {
+  if (!inherits(model, "orm")) {
+    return(expr)
+  }
+
+  withCallingHandlers(
+    expr,
+    warning = function(w) {
+      if (
+        grepl(
+          "currently weights are ignored in model validation and bootstrapping orm fits",
+          conditionMessage(w),
+          fixed = TRUE
+        )
+      ) {
+        invokeRestart("muffleWarning")
+      }
+    }
+  )
 }

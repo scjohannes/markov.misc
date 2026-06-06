@@ -27,6 +27,9 @@
   SOP prediction, MVN inference with full `rms::robcov()` covariance matrices,
   refit bootstrap inference, and score-bootstrap inference via
   `inferences(..., engine = "score_bootstrap", cluster = <id>)`.
+- `inferences()` now supports fractional weighted bootstrap refits via
+  `method = "bootstrap", engine = "fwb"`, using mean-one exponential
+  patient-level weights for fitting and weighted SOP marginalization.
 - `interpolate_sops()` maps visit-scale SOP output to real elapsed time with
   optional empirical baseline anchoring, and `time_in_state()` can now compute
   trapezoidal real-time AUC while `soprob_markov()`, `sops()`, and `avg_sops()`

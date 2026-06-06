@@ -94,6 +94,53 @@ test_that("inferences_simulation() validates stored models and simulation engine
 
 })
 
+test_that("inferences() validates method and engine combinations", {
+  model <- structure(list(coefficients = c(a = 0)), class = "mock_model")
+  newdata <- data.frame(
+    id = rep(1:2, each = 2),
+    time = rep(1:2, times = 2),
+    yprev = 1,
+    tx = 0
+  )
+  object <- make_avg_sops_object(model, newdata)
+
+  expect_error(
+    inferences(object, method = "simulation", engine = "fwb", n_sim = 1),
+    "only used when `method = \"bootstrap\"`",
+    fixed = TRUE
+  )
+  expect_error(
+    inferences(
+      object,
+      method = "bootstrap",
+      engine = "score_bootstrap",
+      n_sim = 1
+    ),
+    "only used when `method = \"simulation\"`",
+    fixed = TRUE
+  )
+
+  seen_engine <- NULL
+  with_mocked_bindings(
+    inferences_bootstrap = function(object, engine, ...) {
+      seen_engine <<- engine
+      attr(object, "engine") <- engine
+      object
+    },
+    {
+      out <- inferences(
+        object,
+        method = "bootstrap",
+        engine = "fwb",
+        n_sim = 1
+      )
+    }
+  )
+
+  expect_equal(seen_engine, "fwb")
+  expect_equal(attr(out, "engine"), "fwb")
+})
+
 test_that("inferences_simulation() falls back when fast-path setup fails", {
   model <- structure(list(coefficients = c(a = 0, b = 0)), class = "vglm")
   newdata <- data.frame(id = 1:2, tx = c(0, 1), yprev = c(1, 2), time = 1)
@@ -425,6 +472,7 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
   expect_error(
     markov.misc:::inferences_bootstrap(
       structure(data.frame(), class = "markov_sops"),
+      engine = "standard",
       n_boot = 1,
       workers = NULL,
       conf_level = 0.95,
@@ -441,6 +489,7 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
   expect_error(
     markov.misc:::inferences_bootstrap(
       no_data,
+      engine = "standard",
       n_boot = 1,
       workers = NULL,
       conf_level = 0.95,
@@ -457,6 +506,7 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
   expect_error(
     markov.misc:::inferences_bootstrap(
       missing_id,
+      engine = "standard",
       n_boot = 1,
       workers = NULL,
       conf_level = 0.95,
@@ -473,6 +523,7 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
   expect_error(
     markov.misc:::inferences_bootstrap(
       baseline_only,
+      engine = "standard",
       n_boot = 1,
       workers = NULL,
       conf_level = 0.95,
@@ -529,6 +580,7 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
       expect_warning(
         out <- markov.misc:::inferences_bootstrap(
           object,
+          engine = "standard",
           n_boot = 3,
           workers = NULL,
           conf_level = 0.8,
@@ -555,6 +607,7 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
       expect_error(
         markov.misc:::inferences_bootstrap(
           object,
+          engine = "standard",
           n_boot = 1,
           workers = NULL,
           conf_level = 0.95,
@@ -567,4 +620,77 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
       )
     }
   )
+})
+
+test_that("inferences_bootstrap() supports fractional weighted refits", {
+  model <- structure(list(coefficients = c(a = 0)), class = "mock_model")
+  newdata <- data.frame(
+    id = rep(1:2, each = 2),
+    time = rep(1:2, times = 2),
+    y = factor(c(1, 2, 1, 2), levels = 1:2),
+    yprev = factor(c(1, 1, 1, 1), levels = 1:2),
+    tx = c(0, 0, 1, 1)
+  )
+  object <- make_avg_sops_object(model, newdata)
+
+  fit_weights_seen <- NULL
+  with_mocked_bindings(
+    generate_fwb_bootstrap_weights = function(data, id_var, n_boot) {
+      list(data.frame(
+        original_id = c(1, 2),
+        fwb_weight = c(0.5, 1.5),
+        boot_id = 1
+      ))
+    },
+    bootstrap_analysis_wrapper = function(
+      boot_data,
+      model,
+      factor_cols,
+      original_data,
+      ylevels,
+      absorb,
+      update_datadist,
+      use_coefstart,
+      fit_weights
+    ) {
+      fit_weights_seen <<- fit_weights
+      list(
+        model = model,
+        data = boot_data,
+        ylevels = 1:2,
+        absorb = NULL,
+        missing_states = character(0)
+      )
+    },
+    soprob_markov = function(...) {
+      array(
+        c(
+          0.8, 0.7, 0.2, 0.3,
+          0.6, 0.5, 0.4, 0.5,
+          0.7, 0.6, 0.3, 0.4,
+          0.5, 0.4, 0.5, 0.6
+        ),
+        dim = c(4, 2, 2)
+      )
+    },
+    {
+      out <- markov.misc:::inferences_bootstrap(
+        object,
+        engine = "fwb",
+        n_boot = 1,
+        workers = NULL,
+        conf_level = 0.95,
+        return_draws = TRUE,
+        update_datadist = FALSE,
+        use_coefstart = FALSE
+      )
+    }
+  )
+
+  expect_equal(fit_weights_seen, c(0.5, 0.5, 1.5, 1.5))
+  expect_equal(attr(out, "method"), "bootstrap")
+  expect_equal(attr(out, "engine"), "fwb")
+  expect_equal(attr(out, "fwb_weight_type"), "exponential")
+  expect_equal(attr(out, "fwb_weight_scale"), "cluster_mean_1")
+  expect_s3_class(attr(out, "bootstrap_draws"), "data.frame")
 })

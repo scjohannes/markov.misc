@@ -1,0 +1,162 @@
+---
+title: "Fractional Weighted Bootstrap for SOPs"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Fractional Weighted Bootstrap for SOPs}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.8,
+  out.width = "100%",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+This vignette shows the fractional weighted bootstrap (FWB) engine for marginal
+state occupancy probabilities.
+
+The ordinary refit bootstrap samples patients with replacement, refits the
+transition model, and recomputes SOPs. The FWB keeps every patient in every
+bootstrap replicate, draws one positive exponential weight per patient, refits
+the model with those row-expanded weights, and uses the same patient weights
+when marginalizing SOPs. This can be useful when ordinary bootstrap resamples
+occasionally create sparse or degenerate refit samples.
+
+The number of bootstrap replicates is deliberately tiny for vignette runtime.
+
+## Fit The Model
+
+```{r setup}
+library(markov.misc)
+library(ggplot2)
+library(rms)
+
+N_PATIENTS <- 160
+FOLLOW_UP <- 10
+N_BOOT <- 30
+SEED <- 20260606
+STATE_LEVELS <- as.character(1:8)
+ABSORB <- "8"
+
+raw_data <- sim_actt2_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  mu_treatment_effect = -0.03,
+  seed = SEED
+)
+
+model_data <- prepare_markov_data(
+  raw_data,
+  absorbing_state = as.integer(ABSORB),
+  factor_previous = TRUE
+)
+
+fit <- orm(
+  y ~ tx + rcs(time, 4) + yprev,
+  data = model_data,
+  x = TRUE,
+  y = TRUE,
+  opt_method = "LM",
+  scale = TRUE,
+  maxit = 100
+)
+
+c(
+  patients = length(unique(model_data$id)),
+  transitions = nrow(model_data),
+  states = length(STATE_LEVELS)
+)
+```
+
+## Define Marginal SOPs
+
+Refit bootstrap inference needs the full longitudinal transition data in
+`newdata`, not just one baseline row per patient, because each bootstrap draw
+refits the transition model.
+
+```{r avg-sops}
+avg <- avg_sops(
+  fit,
+  newdata = model_data,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit$yunique,
+  absorb = ABSORB,
+  id_var = "id"
+)
+
+head(avg)
+```
+
+## Run Standard And Fractional Bootstrap
+
+Use `engine = "standard"` for ordinary patient resampling and `engine = "fwb"`
+for fractional weighted refits. The default bootstrap engine is standard, so
+the first call could omit `engine`.
+
+```{r run-bootstrap}
+set.seed(SEED)
+sop_standard <- inferences(
+  avg,
+  method = "bootstrap",
+  engine = "standard",
+  n_sim = N_BOOT,
+  workers = 1,
+  return_draws = TRUE
+)
+
+set.seed(SEED)
+sop_fwb <- inferences(
+  avg,
+  method = "bootstrap",
+  engine = "fwb",
+  n_sim = N_BOOT,
+  workers = 1,
+  return_draws = TRUE
+)
+
+data.frame(
+  engine = c(attr(sop_standard, "engine"), attr(sop_fwb, "engine")),
+  successful_draws = c(
+    attr(sop_standard, "n_successful"),
+    attr(sop_fwb, "n_successful")
+  ),
+  weight_type = c(NA, attr(sop_fwb, "fwb_weight_type")),
+  weight_scale = c(NA, attr(sop_fwb, "fwb_weight_scale"))
+)
+```
+
+## Compare
+
+The point estimates are the same because both inference calls start from the
+same fitted model and marginal SOP target. The interval estimates differ
+because the bootstrap draws are generated differently.
+
+```{r compare}
+comparison <- rbind(
+  data.frame(engine = "Standard bootstrap", as.data.frame(sop_standard)),
+  data.frame(engine = "Fractional weighted bootstrap", as.data.frame(sop_fwb))
+)
+
+plot_sops(
+  comparison,
+  geom = "line",
+  facet_var = c("engine", "tx")
+) +
+  labs(
+    x = "Day",
+    y = "State occupancy probability"
+  )
+```
+
+The FWB metadata records the implemented weighting scheme: exponential
+patient-level weights normalized to mean 1 for model fitting. The marginal SOP
+averaging step normalizes the same patient weights to sum 1 within each
+bootstrap replicate.
