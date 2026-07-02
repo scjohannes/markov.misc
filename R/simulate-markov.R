@@ -1,8 +1,8 @@
 #' Simulate Individual Patient Trajectories Using Markov Model
 #'
 #' This function generates individual patient trajectories over time based on
-#' a proportional odds model with customizable intercepts, linear predictor
-#' function, and baseline patient characteristics.
+#' a proportional odds or partial proportional odds model with customizable
+#' intercepts, linear predictor function, and baseline patient characteristics.
 #'
 #' @param baseline_data A data frame containing baseline patient characteristics.
 #'   Must include columns: `id`, `yprev` (initial state), and any covariates
@@ -22,9 +22,11 @@
 #'   - Additional named arguments matching columns in `baseline_data`
 #'   - parameter: treatment effect (log odds ratio)
 #'   - extra_params: named vector of coefficients
-#'   Must return a numeric value representing the linear predictor.
-#'   Default is `lp_violet`, which implements the VIOLET study model
-#'   (see `?lp_violet` for details).
+#'   Must return either one numeric value, used for every threshold in a
+#'   proportional odds model, or a numeric vector with length equal to
+#'   `length(intercepts)`, used as threshold-specific linear predictors in a
+#'   partial proportional odds model. Default is `lp_violet`, which implements
+#'   the VIOLET study model (see `?lp_violet` for details).
 #' @param extra_params Named numeric vector of model coefficients used by
 #'   `lp_function`. Default values from VIOLET study include time, spline,
 #'   age, sofa, and previous state effects with interactions.
@@ -46,7 +48,8 @@
 #'
 #' @details
 #' The function implements a discrete-time Markov model where transition
-#' probabilities are determined by a proportional odds model. At each time step:
+#' probabilities are determined by a proportional odds or partial proportional
+#' odds model. At each time step:
 #' 1. Calculate linear predictor for each active patient
 #' 2. Apply intercepts to get cumulative probabilities
 #' 3. Convert to state probabilities
@@ -54,9 +57,12 @@
 #' 5. Patients in absorbing states remain there
 #'
 #' States are assumed to be ordered integers (e.g., 1=Home, 2=Hospital mild,
-#' 3=Hospital oxygen, 4=Hospital NIV, 5=Ventilator, 6=Death). The model
-#' uses a proportional odds structure where higher intercepts represent
-#' more severe health states.
+#' 3=Hospital oxygen, 4=Hospital NIV, 5=Ventilator, 6=Death). By default the
+#' model uses a proportional odds structure where higher intercepts represent
+#' more severe health states. If `lp_function` returns threshold-specific
+#' linear predictors, the induced cumulative probabilities must remain
+#' nondecreasing across thresholds; otherwise the function stops because the
+#' implied state probabilities would be negative.
 #'
 #' @examples
 #' \dontrun{
@@ -92,6 +98,26 @@
 #'
 #' trajectories_custom_lp <- sim_trajectories_markov(
 #'   lp_function = my_custom_lp,
+#'   parameter = log(0.75),
+#'   seed = 12345
+#' )
+#'
+#' # Partial proportional odds: treatment affects each threshold differently
+#' my_ppo_lp <- function(yprev, t, age, sofa, tx, parameter = 0, extra_params) {
+#'   base_lp <- lp_violet(
+#'     yprev = yprev,
+#'     t = t,
+#'     age = age,
+#'     sofa = sofa,
+#'     tx = 0,
+#'     parameter = parameter,
+#'     extra_params = extra_params
+#'   )
+#'   base_lp + tx * parameter * c(0.25, 0.5, 1, 1, 1)
+#' }
+#'
+#' trajectories_ppo <- sim_trajectories_markov(
+#'   lp_function = my_ppo_lp,
 #'   parameter = log(0.75),
 #'   seed = 12345
 #' )
@@ -221,20 +247,52 @@ sim_trajectories_markov <- function(
       lp_args[["tx"]] <- X_active[["tx"]]
     }
 
-    # Calculate linear predictor for each active patient
-    lp <- do.call(
+    # Calculate linear predictor for each active patient. Each call may return
+    # one shared PO value or one value per threshold for PPO simulation.
+    lp_list <- do.call(
       mapply,
       c(
-        list(FUN = lp_function, SIMPLIFY = TRUE, USE.NAMES = FALSE),
+        list(FUN = lp_function, SIMPLIFY = FALSE, USE.NAMES = FALSE),
         lp_args,
         list(MoreArgs = more_args)
       )
     )
 
-    # Calculate transition probabilities using proportional odds model
-    # For each intercept threshold, calculate cumulative probability
-    thresholds_matrix <- outer(intercepts, lp, "+")
-    cum_probs <- t(plogis(thresholds_matrix)) # (n_active x n_states-1)
+    n_thresholds <- length(intercepts)
+    lp_values <- vapply(
+      seq_along(lp_list),
+      function(i) {
+        normalize_markov_lp(lp_list[[i]], n_thresholds, active_idx[i], t)
+      },
+      numeric(n_thresholds)
+    )
+    lp_matrix <- matrix(
+      as.numeric(lp_values),
+      nrow = length(active_idx),
+      ncol = n_thresholds,
+      byrow = TRUE
+    )
+
+    # Calculate transition probabilities using scalar PO or threshold-specific
+    # PPO linear predictors.
+    cum_probs <- plogis(
+      matrix(
+        intercepts,
+        nrow = length(active_idx),
+        ncol = n_thresholds,
+        byrow = TRUE
+      ) +
+        lp_matrix
+    )
+
+    if (n_thresholds > 1 && any(t(apply(cum_probs, 1, diff)) < -1e-12)) {
+      stop(
+        "lp_function produced threshold-specific linear predictors that ",
+        "create decreasing cumulative probabilities. This implies negative ",
+        "state probabilities; use threshold-specific effects that preserve ",
+        "nondecreasing cumulative probabilities across intercepts."
+      )
+    }
 
     # Convert cumulative probabilities to individual state probabilities
     prob_matrix <- cbind(cum_probs, 1) - cbind(0, cum_probs)
@@ -263,9 +321,41 @@ sim_trajectories_markov <- function(
   result <- left_join_preserve_order(result, baseline_data, by = "id")
   id_order <- match(as.character(result$id), id_key)
   result <- result[order(id_order, result$time), , drop = FALSE]
-  result$yprev <- ave(result$y, result$id, FUN = function(x) c(NA, utils::head(x, -1)))
+  result$yprev <- ave(result$y, result$id, FUN = function(x) {
+    c(NA, utils::head(x, -1))
+  })
   result <- result[result$time > 0, , drop = FALSE] # Remove time 0.
   rownames(result) <- NULL
 
   return(result)
+}
+
+normalize_markov_lp <- function(lp, n_thresholds, active_index, time) {
+  if (!is.numeric(lp) || is.matrix(lp) || is.array(lp)) {
+    stop("lp_function must return a numeric scalar or numeric vector")
+  }
+
+  lp <- as.numeric(lp)
+  if (!(length(lp) %in% c(1, n_thresholds))) {
+    stop(
+      "lp_function must return either length 1 or length(intercepts) (",
+      n_thresholds,
+      ") for each patient; got length ",
+      length(lp),
+      " for active patient index ",
+      active_index,
+      " at time ",
+      time
+    )
+  }
+
+  if (any(!is.finite(lp))) {
+    stop("lp_function must return finite numeric values")
+  }
+
+  if (length(lp) == 1) {
+    rep(lp, n_thresholds)
+  } else {
+    lp
+  }
 }

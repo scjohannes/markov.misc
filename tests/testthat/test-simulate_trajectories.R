@@ -281,6 +281,101 @@ test_that("sim_trajectories_markov preserves character patient IDs", {
   expect_equal(result$tx, rep(c(0, 1), each = 2))
 })
 
+test_that("sim_trajectories_markov supports threshold-specific linear predictors", {
+  baseline <- data.frame(id = 1:4, yprev = c(1, 1, 1, 1), tx = c(0, 1, 0, 1))
+
+  scalar <- sim_trajectories_markov(
+    baseline_data = baseline,
+    follow_up_time = 3,
+    intercepts = c(-1, 1),
+    lp_function = function(yprev, t, tx, parameter, extra_params) {
+      tx * parameter
+    },
+    parameter = 0.5,
+    absorbing_states = integer(),
+    covariate_names = "tx",
+    seed = 10
+  )
+
+  scalar_as_vector <- sim_trajectories_markov(
+    baseline_data = baseline,
+    follow_up_time = 3,
+    intercepts = c(-1, 1),
+    lp_function = function(yprev, t, tx, parameter, extra_params) {
+      rep(tx * parameter, 2)
+    },
+    parameter = 0.5,
+    absorbing_states = integer(),
+    covariate_names = "tx",
+    seed = 10
+  )
+
+  expect_identical(scalar, scalar_as_vector)
+
+  ppo <- sim_trajectories_markov(
+    baseline_data = baseline,
+    follow_up_time = 3,
+    intercepts = c(-1, 1),
+    lp_function = function(yprev, t, tx, parameter, extra_params) {
+      tx * parameter * c(0, 1)
+    },
+    parameter = 0.5,
+    absorbing_states = integer(),
+    covariate_names = "tx",
+    seed = 10
+  )
+
+  expect_named(ppo, c("id", "time", "y", "yprev", "tx"))
+  expect_equal(nrow(ppo), 12)
+  expect_true(all(ppo$y %in% 1:3))
+})
+
+test_that("sim_trajectories_markov validates threshold-specific linear predictors", {
+  baseline <- data.frame(id = 1, yprev = 1, tx = 1)
+
+  expect_error(
+    sim_trajectories_markov(
+      baseline_data = baseline,
+      follow_up_time = 1,
+      intercepts = c(-1, 0, 1),
+      lp_function = function(yprev, t, tx, parameter, extra_params) c(0, 0),
+      absorbing_states = integer(),
+      covariate_names = "tx",
+      seed = 1
+    ),
+    "lp_function must return either length 1 or length\\(intercepts\\)",
+    fixed = FALSE
+  )
+
+  expect_error(
+    sim_trajectories_markov(
+      baseline_data = baseline,
+      follow_up_time = 1,
+      intercepts = c(-1, 0, 1),
+      lp_function = function(yprev, t, tx, parameter, extra_params) NA_real_,
+      absorbing_states = integer(),
+      covariate_names = "tx",
+      seed = 1
+    ),
+    "lp_function must return finite numeric values",
+    fixed = TRUE
+  )
+
+  expect_error(
+    sim_trajectories_markov(
+      baseline_data = baseline,
+      follow_up_time = 1,
+      intercepts = c(0, 1),
+      lp_function = function(yprev, t, tx, parameter, extra_params) c(5, -5),
+      absorbing_states = integer(),
+      covariate_names = "tx",
+      seed = 1
+    ),
+    "create decreasing cumulative probabilities",
+    fixed = TRUE
+  )
+})
+
 test_that("sim_trajectories_brownian validates inputs and supports normal link options", {
   expect_error(
     sim_trajectories_brownian(n_patients = 0),
