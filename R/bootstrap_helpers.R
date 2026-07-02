@@ -747,19 +747,26 @@ update_bootstrap_model <- function(
 }
 
 suppress_orm_bootstrap_weight_warning <- function(model, expr) {
-  if (!inherits(model, "orm")) {
-    return(expr)
-  }
-
   withCallingHandlers(
     expr,
     warning = function(w) {
       if (
-        grepl(
-          "currently weights are ignored in model validation and bootstrapping orm fits",
-          conditionMessage(w),
-          fixed = TRUE
-        )
+        inherits(model, "vglm") &&
+          grepl(
+            "`id_var` was not supplied to vglm_markov()",
+            conditionMessage(w),
+            fixed = TRUE
+          )
+      ) {
+        invokeRestart("muffleWarning")
+      }
+      if (
+        inherits(model, "orm") &&
+          grepl(
+            "currently weights are ignored in model validation and bootstrapping orm fits",
+            conditionMessage(w),
+            fixed = TRUE
+          )
       ) {
         invokeRestart("muffleWarning")
       }
