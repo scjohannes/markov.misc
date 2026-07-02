@@ -104,6 +104,7 @@ The package is organized by workflow stage rather than by model class.
 | Endpoint summaries | `R/endpoint-summaries.R`, `R/endpoint-tte.R`, `R/competing-risks.R`, `R/sops-time-in-state.R`, `R/sops-interpolate.R` | Convert trajectories or SOPs to days-at-home, time-to-event, competing-risk, real-time interpolation, and time-in-state summaries. |
 | Operating characteristics | `R/power.R` | Sample from Arrow superpopulations, run iteration-level analyses, summarize power, type I error, bias, coverage, and Monte Carlo error. |
 | Visualization | `R/viz.R` | Plot empirical or model-derived SOPs, bootstrap SOP bands, and operating-characteristic summaries. |
+| Method reports | `doc/*.qmd` | Reproducible Quarto reports that exercise package workflows and document simulation-study findings without adding exported package APIs. |
 
 ## Core Data Contracts
 
@@ -201,8 +202,11 @@ flowchart TD
 Simulation entrypoints share the same broad output contract but differ in the
 data-generating mechanism:
 
-- `sim_trajectories_markov()` uses a proportional-odds transition model with a
-  user-supplied linear predictor such as `lp_violet()`.
+- `sim_trajectories_markov()` uses a user-supplied linear predictor such as
+  `lp_violet()` to generate discrete-time Markov transitions. Scalar linear
+  predictors produce proportional-odds transitions, while threshold-length
+  linear predictors produce partial proportional odds transitions when the
+  implied cumulative probabilities remain ordered.
 - `sim_trajectories_brownian()` uses a latent continuous severity random walk
   thresholded into ordinal states.
 - `sim_trajectories_brownian_gap()` separates daily latent severity evolution
@@ -217,6 +221,24 @@ data-generating mechanism:
   trajectory with absorbing recovery and death states.
 - `sim_trajectories_tte()` uses recurrent event times and last-observation
   carry-forward expansion to daily ordinal trajectories.
+
+The Typst report `doc/po-threshold-heterogeneity-power.qmd` is a reproducible
+simulation study that compares full proportional-odds `rms::orm()` analyses
+under single-time and simple Markov partial proportional-odds DGMs. Its
+external companion script `doc/po-threshold-heterogeneity-power-sim.R` runs the
+simulation grid with `mirai` worker pools capped at six workers and stores the
+RDS payload outside the report, keeping exploratory operating-characteristic
+code outside the exported package surface.
+
+The separate Typst report `doc/single-time-ordinal-po-vs-dichotomy.qmd` isolates
+the single-time-point ordinal setting. Its companion script
+`doc/single-time-ordinal-po-vs-dichotomy-sim.R` combines closed-form Fisher
+information calculations with `rms::orm()` and threshold-specific `rms::lrm()`
+simulation checks, varies the number and marginal distribution of ordered
+categories, compares single-threshold and contiguous multi-threshold treatment
+effect patterns, uses `mirai` worker pools capped at six workers, and stores
+analytic grids plus replicate and summary results as Parquet files under
+`doc/single-time-ordinal-po-vs-dichotomy-results/`.
 
 Endpoint converters in `R/endpoint-summaries.R`, `R/endpoint-tte.R`, and
 `R/competing-risks.R` then reshape trajectories into t-test, days returned to

@@ -17,6 +17,9 @@
   state `1:2` to state `3:7` rehospitalization-like churn, while
   `sim_trajectories_brownian_gap()` supports sampled patient-specific drift
   starts and scalar or threshold-specific time and treatment effects.
+- `sim_trajectories_markov()` now supports partial proportional odds data
+  generation when `lp_function` returns one linear predictor per threshold, and
+  stops when threshold-specific predictors imply negative state probabilities.
 - `blrm` SOP prediction now caches fitted random-effect draws once per call and
   vectorizes posterior recursion within chunks; state-wise median summaries are
   documented as not necessarily summing to one across states, while draw-level
