@@ -571,7 +571,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     avg <- markov.misc::avg_sops(
       model = model,
-      newdata = case$data,
+      refit_data = case$data,
       variables = "tx",
       times = 1:8,
       ylevels = case$ylevels,
@@ -618,7 +618,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     avg <- markov.misc::avg_sops(
       model = model,
-      newdata = case$data,
+      refit_data = case$data,
       variables = "tx",
       times = 1:8,
       ylevels = case$ylevels,
@@ -659,7 +659,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     avg <- markov.misc::avg_sops(
       model = model,
-      newdata = case$data,
+      refit_data = case$data,
       variables = "tx",
       times = 1:7,
       ylevels = case$ylevels,
@@ -691,7 +691,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     avg <- markov.misc::avg_sops(
       model = robust_model,
-      newdata = case$baseline,
+      refit_data = case$data,
       variables = "tx",
       times = 1:8,
       ylevels = case$ylevels,
@@ -701,7 +701,7 @@ describe("avg_sops() and inferences() pipeline", {
       t_covs = case$t_covs,
       id_var = "id"
     )
-    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$baseline))
+    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$data))
 
     withr::local_seed(4403)
     inferred <- markov.misc::inferences(
@@ -741,7 +741,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     avg <- markov.misc::avg_sops(
       model = robust_model,
-      newdata = case$baseline,
+      refit_data = case$data,
       variables = "tx",
       times = 1:7,
       ylevels = case$ylevels,
@@ -853,7 +853,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     explicit_avg <- markov.misc::avg_sops(
       model = explicit_robust,
-      newdata = case$baseline,
+      refit_data = case$data,
       variables = "tx",
       times = 1:8,
       ylevels = case$ylevels,
@@ -865,7 +865,7 @@ describe("avg_sops() and inferences() pipeline", {
     )
     inline_avg <- markov.misc::avg_sops(
       model = inline_robust,
-      newdata = case$baseline,
+      refit_data = case$data,
       variables = "tx",
       times = 1:8,
       ylevels = case$ylevels,

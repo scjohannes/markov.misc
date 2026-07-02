@@ -146,7 +146,7 @@ test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
   robust_scaled <- rms::robcov(fit_scaled, cluster = data$id)
   avg_default <- markov.misc::avg_sops(
     robust_default,
-    newdata = baseline,
+    refit_data = data,
     variables = "tx",
     times = 1:4,
     ylevels = fit_default$yunique,
@@ -155,7 +155,7 @@ test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
   )
   avg_scaled <- markov.misc::avg_sops(
     robust_scaled,
-    newdata = baseline,
+    refit_data = data,
     variables = "tx",
     times = 1:4,
     ylevels = fit_scaled$yunique,
@@ -253,7 +253,7 @@ test_that("orm supports MVN and score-bootstrap inference", {
 
   avg <- markov.misc::avg_sops(
     robust_fit,
-    newdata = baseline,
+    refit_data = data,
     variables = "tx",
     times = 1:4,
     ylevels = fit$yunique,

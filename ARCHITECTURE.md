@@ -172,10 +172,10 @@ Important attributes are set in `set_sops_attrs()`:
 | `ylevels`, `absorb` | State support and absorbing states. |
 | `t_covs` | Time-dependent covariate lookup used when formulas contain spline bases or other derived time columns. |
 | `by` | Stratification variables for grouped individual SOPs. |
-| `newdata_orig` | Original source data supplied to the SOP call, or wrapper-stored model data when `newdata = NULL`. This may be full longitudinal data. |
-| `newdata_pred` | The fixed one-row-per-person prediction data used by recursive SOP prediction. For longitudinal source data, this is extracted as the earliest row per `id_var`. |
+| `newdata_orig` | Original source data supplied to the SOP call, or wrapper-stored model data when `newdata = NULL`. User-supplied rows are treated as fixed prediction profiles; wrapper-stored data may be full longitudinal data. |
+| `newdata_pred` | The fixed prediction data used by recursive SOP prediction, with `rowid` regenerated internally. For user-supplied `newdata`, every row is kept. For stored longitudinal source data, this is extracted as the earliest row per `id_var`. |
 | `refit_data` | Full longitudinal data used by refit-bootstrap inference. Wrapper-fitted models can provide this automatically. |
-| `id_var` | Patient or cluster ID variable propagated from wrappers or SOP arguments. |
+| `id_var` | Patient or cluster ID variable propagated from wrappers or SOP arguments. It is used for stored-data extraction, refit resampling, and `blrm` random effects, not as the ordinary prediction-row key. |
 | `avg_args` | Extra marginalization instructions for `markov_avg_sops`: variables, grid, ID variable, and grouping. |
 | `draws`, `simulation_draws`, `bootstrap_draws` | Optional stored draw-level outputs. |
 
@@ -254,11 +254,11 @@ There are two public SOP styles:
 ```mermaid
 flowchart TD
   CALL["sops() or avg_sops()"] --> VALIDATE["Validate model, variables, times, state support"]
-  VALIDATE --> BASELINE["Build one-row-per-person prediction data"]
+  VALIDATE --> BASELINE["Resolve fixed prediction profiles"]
   BASELINE --> CF{"avg_sops()?"}
   CF -- "yes" --> GRID["Expand counterfactual variable grid"]
   GRID --> STACK["Stack copied baseline cohorts"]
-  CF -- "no" --> DIRECT["Use resolved prediction data"]
+  CF -- "no" --> DIRECT["Use resolved prediction profiles"]
   STACK --> ARRAY["soprob_markov()"]
   DIRECT --> ARRAY
   ARRAY --> RECURSE["Markov recursion over requested times"]
@@ -266,10 +266,17 @@ flowchart TD
   SHAPE --> OUT["markov_sops or markov_avg_sops"]
 ```
 
+When `newdata` is supplied to `sops()` or `avg_sops()`, every row is treated as
+a separate baseline prediction profile. The APIs regenerate `rowid` so
+ungrouped individual inference can join draws back to prediction rows without
+depending on user-supplied identifiers. When `newdata = NULL`, wrapper-stored or
+explicit `refit_data` is treated as longitudinal source data and collapsed to
+one prediction row per `id_var`.
+
 `avg_sops()` is a G-computation wrapper. It creates a counterfactual grid from
-`variables`, duplicates baseline data for each grid row, calls the same SOP
-engine, and averages over the patient dimension. Optional `by` variables keep
-subgroup averages separate.
+`variables`, duplicates the fixed standardization profiles for each grid row,
+calls the same SOP engine, and averages over the profile dimension. Optional
+`by` variables keep subgroup averages separate.
 
 ### 4. Add Inference
 
@@ -312,6 +319,12 @@ The inference methods are intentionally separate:
   normalizes those weights to mean 1 for model fitting, refits the model with
   row-expanded weights, and uses the same patient weights for marginal SOP
   averaging.
+
+For refit bootstrap inference with user-supplied prediction profiles, the
+transition model is refit on `refit_data` or wrapper-stored longitudinal data,
+while SOPs are replayed on the fixed `newdata_pred` profiles from the original
+SOP object. When no `newdata` was supplied, marginal bootstrap inference derives
+the prediction profiles from each bootstrap refit sample.
 
 For first-order frequentist `orm` and `vglm` models, simulation inference can use
 the optimized fast path. Second-order Markov models fall back to replaying the
@@ -534,10 +547,21 @@ SOP bootstrap inference has two public targets:
 For `method = "bootstrap", engine = "fwb"`, weights are drawn at the patient ID
 level, normalized to mean 1 over patients for model fitting, expanded to rows,
 and then separately normalized to sum 1 by `marginalize_sops_array()` when
-averaging counterfactual SOPs. For individual SOPs, each FWB refit predicts on
+averaging empirical counterfactual SOPs. When `avg_sops()` was built from
+user-supplied `newdata`, those rows are fixed standardization profiles:
+`baseline_weights` is set to `NULL`, a warning is emitted, and the supplied
+profiles are averaged equally. For individual SOPs, each FWB refit predicts on
 the fixed `newdata_pred` rows stored on the original `markov_sops` object. This
 mirrors the default exponential weighting behavior of the external `fwb`
 package without adding it as a dependency.
+
+Follow-up TODO:
+
+- Avoid recomputing robust standard errors inside VGAM bootstrap updates.
+  `vglm_markov(id_var = ...)` stores a call that can re-enter the robust-wrapper
+  path during `stats::update()`. Bootstrap refits only need coefficients, so the
+  update path should strip or ignore `id_var` while preserving model metadata for
+  downstream SOP workflows.
 
 ## Score Bootstrap Design
 
@@ -552,10 +576,19 @@ For each draw it:
 4. Applies a one-step update to the coefficient vector using the model
    covariance/bread information.
 5. Replays SOP prediction with the updated coefficients.
-6. For marginal SOPs, passes normalized baseline weights into marginalization.
+6. For marginal SOPs, passes normalized baseline weights into marginalization
+   only when the prediction population is the empirical stored/refit cohort.
 
 This engine is especially useful when refit bootstrap is expensive but cluster
 resampling is needed.
+
+Score-bootstrap coefficient perturbations are always based on the fitted model's
+score contributions and original cluster IDs, not on the prediction data. If
+`avg_sops()` was built from user-supplied `newdata`, the score-bootstrap engine
+generates coefficient draws from the original scores, sets `baseline_weights` to
+`NULL`, warns, and averages the fixed profiles equally. If `newdata = NULL`,
+the empirical prediction rows and the score-bootstrap patient weights are
+coupled so the score-bootstrap approximation mirrors the FWB target.
 
 ## Endpoint and Summary Layer
 
@@ -648,6 +681,9 @@ Important validation checks include:
 - `get_vcov_robust()` prefers an explicit `data` argument over evaluating a
   model call's stored `data` symbol when resolving formula-based clusters,
   avoiding environment-dependent cluster alignment.
+- Markov fitting wrappers warn when `id_var` and `time` contain duplicate
+  combinations, because automatic stored-data prediction keeps only one
+  prediction row per ID.
 - Bootstrap helpers preserve missing-state information so predictions can be
   expanded back to the original state support.
 

@@ -148,6 +148,11 @@ the refit data with positive patient-level weights, so it is available for
 individual \code{sops()} objects.
 }
 
+For marginal \code{avg_sops()} objects built from user-supplied \code{newdata}, the
+supplied rows are fixed standardization profiles. Score bootstrap and FWB use
+the original/refit data for coefficient or refit uncertainty, but set
+\code{baseline_weights = NULL} and average the fixed profiles equally.
+
 This design ensures consistency: the same vcov is used for both point
 estimates and inference, regardless of how \code{inferences()} is called.
 }

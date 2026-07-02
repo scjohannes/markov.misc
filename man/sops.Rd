@@ -31,10 +31,11 @@ sops(
 \item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, or \code{blrm}). For
 \code{vglm} models, the family must be \code{cumulative(reverse = TRUE, ...)}.}
 
-\item{newdata}{Optional. A data frame of new data for prediction. If NULL,
-uses the data stored by \code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or
-\code{\link[=vglm_markov]{vglm_markov()}}. When repeated IDs are present, one prediction row per ID
-is extracted automatically.}
+\item{newdata}{Optional. A data frame of prediction profiles. When supplied,
+every row is treated as a separate baseline profile and the internal
+\code{rowid} column is regenerated. If \code{NULL}, uses the data stored by
+\code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}} and extracts one
+prediction row per \code{id_var}.}
 
 \item{refit_data}{Optional full longitudinal data used by bootstrap refit
 inference. Defaults to data stored on wrapper-fitted models.}
@@ -74,7 +75,9 @@ fitted random-effect draws in posterior predictions for known IDs.}
 
 \item{id_var}{Character ID column used when \code{include_re = TRUE}. For \code{blrm},
 \code{NULL} is inferred from wrapper metadata, then \code{model$clusterInfo$name}
-when available, otherwise \code{"id"}.}
+when available, otherwise \code{"id"}. For frequentist models, \code{id_var} is used
+for stored-data extraction and refit bootstrap metadata, not for ordinary
+user-supplied prediction rows.}
 
 \item{n_draws}{Integer number of posterior draws to sample for \code{blrm}, or
 \code{NULL} to use all stored draws. Defaults to 100.}

@@ -185,6 +185,120 @@ test_that("sops uses stored full data and extracts earliest prediction rows", {
   expect_equal(attr(automatic, "id_var"), "id")
 })
 
+test_that("sops treats supplied newdata rows as fixed prediction profiles", {
+  skip_if_not_installed("VGAM")
+
+  data <- make_test_data(n_patients = 35, follow_up_time = 6, seed = 1008)
+  fit <- vglm_markov(
+    ordered(y) ~ time_lin + tx + yprev,
+    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+    data = data,
+    id_var = "id"
+  )
+
+  profiles <- data[data$time == 1, , drop = FALSE][seq_len(3), ]
+  profiles$id <- c(1, 1, 1)
+  profiles$time <- c(1, 2, 3)
+  profiles$rowid <- c(99, 99, 99)
+  profiles_no_id <- profiles[, setdiff(names(profiles), "id"), drop = FALSE]
+
+  out <- sops(
+    fit,
+    newdata = profiles_no_id,
+    times = 1:2,
+    ylevels = 1:6,
+    absorb = 6
+  )
+  prediction_data <- attr(out, "newdata_pred")
+
+  expect_equal(nrow(prediction_data), nrow(profiles_no_id))
+  expect_equal(prediction_data$rowid, seq_len(nrow(profiles_no_id)))
+  expect_equal(sort(unique(out$rowid)), seq_len(nrow(profiles_no_id)))
+  expect_equal(attr(out, "id_var"), "id")
+  expect_equal(nrow(attr(out, "refit_data")), nrow(data))
+
+  withr::local_seed(10081)
+  inferred <- inferences(
+    out,
+    method = "bootstrap",
+    engine = "fwb",
+    n_sim = 1,
+    return_draws = TRUE,
+    use_coefstart = FALSE
+  )
+  draws <- get_draws(inferred)
+
+  expect_equal(attr(inferred, "n_successful"), 1L)
+  expect_equal(sort(unique(draws$rowid)), seq_len(nrow(profiles_no_id)))
+})
+
+test_that("avg_sops treats supplied newdata rows as standardization profiles", {
+  skip_if_not_installed("VGAM")
+
+  data <- make_test_data(n_patients = 35, follow_up_time = 6, seed = 1009)
+  fit <- vglm_markov(
+    ordered(y) ~ time_lin + tx + yprev,
+    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+    data = data,
+    id_var = "id"
+  )
+
+  profiles <- data[data$time == 1, , drop = FALSE][seq_len(4), ]
+  profiles$id <- c(1, 1, 1, 1)
+  profiles$time <- c(1, 2, 3, 4)
+  profiles$rowid <- 100 + seq_len(nrow(profiles))
+  profiles_no_id <- profiles[, setdiff(names(profiles), "id"), drop = FALSE]
+
+  out <- avg_sops(
+    fit,
+    newdata = profiles_no_id,
+    variables = list(tx = c(0, 1)),
+    times = 1:2,
+    ylevels = 1:6,
+    absorb = 6
+  )
+  prediction_data <- attr(out, "newdata_pred")
+
+  expect_equal(nrow(prediction_data), nrow(profiles_no_id) * 2L)
+  expect_equal(
+    prediction_data$rowid,
+    rep(seq_len(nrow(profiles_no_id)), times = 2L)
+  )
+  expect_equal(attr(out, "id_var"), "id")
+  expect_equal(nrow(attr(out, "refit_data")), nrow(data))
+
+  withr::local_seed(10091)
+  expect_warning(
+    inferred <- inferences(
+      out,
+      method = "bootstrap",
+      engine = "fwb",
+      n_sim = 1,
+      return_draws = TRUE,
+      use_coefstart = FALSE
+    ),
+    "baseline weights have been set to NULL"
+  )
+  expect_equal(attr(inferred, "n_successful"), 1L)
+})
+
+test_that("Markov wrappers warn about duplicate id-time rows", {
+  skip_if_not_installed("VGAM")
+
+  data <- make_test_data(n_patients = 35, follow_up_time = 6, seed = 1010)
+  data <- rbind(data, data[1, , drop = FALSE])
+
+  expect_warning(
+    vglm_markov(
+      ordered(y) ~ time_lin + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id"
+    ),
+    "duplicate `id` x `time` combinations"
+  )
+})
+
 test_that("individual sops supports FWB but rejects standard bootstrap", {
   skip_if_not_installed("VGAM")
 

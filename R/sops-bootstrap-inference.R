@@ -59,6 +59,8 @@ inferences_bootstrap <- function(
   # --- 1. Extract Stored Attributes ---
   model <- attr(object, "model")
   newdata_orig <- attr(object, "newdata_orig")
+  prediction_data <- attr(object, "newdata_pred")
+  newdata_supplied <- isTRUE(attr(object, "newdata_supplied"))
   refit_data <- attr(object, "refit_data") %||% newdata_orig
   call_args <- attr(object, "call_args")
   avg_args <- attr(object, "avg_args")
@@ -82,6 +84,10 @@ inferences_bootstrap <- function(
 
   if (!id_var %in% names(refit_data)) {
     stop("ID variable '", id_var, "' not found in data.")
+  }
+
+  if (newdata_supplied && engine == "fwb") {
+    warn_fixed_profile_bootstrap_weights("FWB")
   }
 
   # --- 2. Validate Data is Longitudinal (Not Just Baseline) ---
@@ -147,33 +153,42 @@ inferences_bootstrap <- function(
       !ylevel_names %in% as_state_labels(missing_states)
     ]
 
-    # B. Compute standardized SOPs using G-computation on bootstrap data
-    # Extract baseline data (one row per patient)
-    if (engine == "standard") {
-      baseline_boot <- resolve_markov_prediction_data(
-        boot_data,
-        id_var = "new_id",
-        tvarname = tvarname,
-        data_label = "bootstrap data"
-      )
+    grid <- do.call(expand.grid, variables)
+    if (newdata_supplied) {
+      newdata_cf <- prediction_data
+      n_cf <- nrow(grid)
+      if (is.null(newdata_cf) || nrow(newdata_cf) %% n_cf != 0L) {
+        stop("Stored prediction data is not aligned with counterfactual grid.")
+      }
       baseline_weights <- NULL
     } else {
-      baseline_boot <- resolve_markov_prediction_data(
-        boot_data,
-        id_var = id_var,
-        tvarname = tvarname,
-        data_label = "bootstrap data"
-      )
-      baseline_weights <- fwb_baseline_weights(
-        fwb_weights = fwb_weights,
-        baseline_data = baseline_boot,
-        id_var = id_var
-      )
-    }
+      # B. Compute standardized SOPs using G-computation on bootstrap data
+      # Extract baseline data (one row per patient)
+      if (engine == "standard") {
+        baseline_boot <- resolve_markov_prediction_data(
+          boot_data,
+          id_var = "new_id",
+          tvarname = tvarname,
+          data_label = "bootstrap data"
+        )
+        baseline_weights <- NULL
+      } else {
+        baseline_boot <- resolve_markov_prediction_data(
+          boot_data,
+          id_var = id_var,
+          tvarname = tvarname,
+          data_label = "bootstrap data"
+        )
+        baseline_weights <- fwb_baseline_weights(
+          fwb_weights = fwb_weights,
+          baseline_data = baseline_boot,
+          id_var = id_var
+        )
+      }
 
-    # Create counterfactual datasets for each variable value
-    grid <- do.call(expand.grid, variables)
-    newdata_cf <- create_counterfactual_data(baseline_boot, grid, variables)
+      # Create counterfactual datasets for each variable value
+      newdata_cf <- create_counterfactual_data(baseline_boot, grid, variables)
+    }
 
     # Compute individual SOPs for counterfactual data
     sops_array <- tryCatch(
@@ -202,7 +217,7 @@ inferences_bootstrap <- function(
     # C. Marginalize (average) across patients for each counterfactual
     # sops_array is [n_pat, n_times, n_boot_states]
     n_cf <- nrow(grid)
-    n_each <- nrow(baseline_boot)
+    n_each <- nrow(newdata_cf) / n_cf
     boot_avg <- marginalize_sops_array(
       sops_array = sops_array,
       grid = grid,
@@ -275,6 +290,8 @@ inferences_bootstrap <- function(
       packages = c("rms", "VGAM", "Hmisc", "stats"),
       globals = c(
         "model",
+        "prediction_data",
+        "newdata_supplied",
         "variables",
         "times",
         "ylevels",
@@ -309,6 +326,8 @@ inferences_bootstrap <- function(
       packages = c("rms", "VGAM", "Hmisc", "stats"),
       globals = c(
         "model",
+        "prediction_data",
+        "newdata_supplied",
         "variables",
         "times",
         "ylevels",

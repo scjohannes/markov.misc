@@ -9,12 +9,16 @@
 #' @param model A `robcov_vglm` object with stored `scores`, `bread`, and
 #'   `cluster` components, or an `orm` object fitted with `x = TRUE, y = TRUE`.
 #'   For `orm`, `cluster` must be supplied.
-#' @param baseline_data Baseline data (one row per patient).
+#' @param baseline_data Optional baseline data (one row per patient) used only
+#'   when patient-level averaging weights should be returned.
 #' @param id_var Name of patient ID variable in `baseline_data`.
 #' @param n_sim Number of simulation draws.
 #' @param score_weight_dist Cluster weight distribution. Currently only
 #'   `"exponential"` is supported.
 #' @param cluster Optional row-level cluster vector for `orm` models.
+#' @param return_baseline_weights Logical. If `TRUE`, return normalized
+#'   patient-level averaging weights aligned to `baseline_data`. If `FALSE`,
+#'   only coefficient perturbations are generated.
 #'
 #' @return A list with:
 #'   \itemize{
@@ -30,7 +34,8 @@ generate_score_bootstrap_draws <- function(
   id_var,
   n_sim,
   score_weight_dist = "exponential",
-  cluster = NULL
+  cluster = NULL,
+  return_baseline_weights = TRUE
 ) {
   if (!inherits(model, "robcov_vglm") && !inherits(model, "orm")) {
     stop(
@@ -43,8 +48,13 @@ generate_score_bootstrap_draws <- function(
 
   score_weight_dist <- match.arg(score_weight_dist, choices = "exponential")
 
-  if (!id_var %in% names(baseline_data)) {
-    stop("ID variable '", id_var, "' not found in baseline data.")
+  if (isTRUE(return_baseline_weights)) {
+    if (is.null(baseline_data) || !is.data.frame(baseline_data)) {
+      stop("`baseline_data` must be supplied as a data frame.")
+    }
+    if (!id_var %in% names(baseline_data)) {
+      stop("ID variable '", id_var, "' not found in baseline data.")
+    }
   }
 
   components <- score_bootstrap_components(model, cluster = cluster)
@@ -86,27 +96,35 @@ generate_score_bootstrap_draws <- function(
   cluster_fac <- factor(cluster_chr, levels = cluster_ids)
   scores_clustered <- rowsum(scores, cluster_fac, reorder = FALSE)
 
-  baseline_ids <- as.character(baseline_data[[id_var]])
-  cluster_idx <- match(baseline_ids, cluster_ids)
-  if (anyNA(cluster_idx)) {
-    missing_ids <- unique(baseline_ids[is.na(cluster_idx)])
-    stop(
-      "Some baseline IDs used in avg_sops() were not found in the cluster ",
-      "variable stored in robcov_vglm: ",
-      paste(utils::head(missing_ids, 5), collapse = ", "),
-      if (length(missing_ids) > 5) " ..." else "",
-      ". Ensure avg_sops(id_var = ...) matches the clustering used in ",
-      "robcov_vglm(cluster = ...)."
-    )
+  cluster_idx <- NULL
+  n_pat <- 0L
+  if (isTRUE(return_baseline_weights)) {
+    baseline_ids <- as.character(baseline_data[[id_var]])
+    cluster_idx <- match(baseline_ids, cluster_ids)
+    if (anyNA(cluster_idx)) {
+      missing_ids <- unique(baseline_ids[is.na(cluster_idx)])
+      stop(
+        "Some baseline IDs used in avg_sops() were not found in the cluster ",
+        "variable stored in robcov_vglm: ",
+        paste(utils::head(missing_ids, 5), collapse = ", "),
+        if (length(missing_ids) > 5) " ..." else "",
+        ". Ensure avg_sops(id_var = ...) matches the clustering used in ",
+        "robcov_vglm(cluster = ...)."
+      )
+    }
+    n_pat <- length(baseline_ids)
   }
 
   n_clusters <- length(cluster_ids)
-  n_pat <- length(baseline_ids)
   p <- length(beta_hat)
 
   beta_draws <- matrix(NA_real_, nrow = n_sim, ncol = p)
   colnames(beta_draws) <- names(beta_hat)
-  baseline_weights <- matrix(NA_real_, nrow = n_sim, ncol = n_pat)
+  baseline_weights <- if (isTRUE(return_baseline_weights)) {
+    matrix(NA_real_, nrow = n_sim, ncol = n_pat)
+  } else {
+    NULL
+  }
 
   for (i in seq_len(n_sim)) {
     # Exponential multipliers are centered at 1; centered form drives score perturbation.
@@ -152,12 +170,14 @@ generate_score_bootstrap_draws <- function(
     # one-step update from the total score perturbation.
     beta_draws[i, ] <- beta_hat + as.vector(bread %*% U_star)
 
-    w_patient <- w_cluster[cluster_idx]
-    w_sum <- sum(w_patient)
-    if (!is.finite(w_sum) || w_sum <= 0) {
-      stop("Invalid baseline weights generated for score bootstrap.")
+    if (isTRUE(return_baseline_weights)) {
+      w_patient <- w_cluster[cluster_idx]
+      w_sum <- sum(w_patient)
+      if (!is.finite(w_sum) || w_sum <= 0) {
+        stop("Invalid baseline weights generated for score bootstrap.")
+      }
+      baseline_weights[i, ] <- w_patient / w_sum
     }
-    baseline_weights[i, ] <- w_patient / w_sum
   }
 
   list(beta_draws = beta_draws, baseline_weights = baseline_weights)
@@ -246,16 +266,16 @@ compute_scores_orm <- function(model) {
   for (i in seq_len(n)) {
     k <- y_idx[i]
     if (k == 1L) {
-      d_eta[i, 1L] <- -cum_probs[i, 1L] * (1 - cum_probs[i, 1L]) /
-        probs[i, 1L]
+      d_eta[i, 1L] <- -cum_probs[i, 1L] * (1 - cum_probs[i, 1L]) / probs[i, 1L]
     } else if (k == M + 1L) {
-      d_eta[i, M] <- cum_probs[i, M] * (1 - cum_probs[i, M]) /
-        probs[i, M + 1L]
+      d_eta[i, M] <- cum_probs[i, M] * (1 - cum_probs[i, M]) / probs[i, M + 1L]
     } else {
       d_eta[i, k - 1L] <- cum_probs[i, k - 1L] *
-        (1 - cum_probs[i, k - 1L]) / probs[i, k]
+        (1 - cum_probs[i, k - 1L]) /
+        probs[i, k]
       d_eta[i, k] <- -cum_probs[i, k] *
-        (1 - cum_probs[i, k]) / probs[i, k]
+        (1 - cum_probs[i, k]) /
+        probs[i, k]
     }
   }
 

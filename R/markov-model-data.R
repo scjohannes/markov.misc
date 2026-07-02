@@ -59,6 +59,8 @@ orm_markov <- function(
   id_var <- validate_markov_id_var(id_var, data, "data")
   if (is.null(id_var)) {
     warn_missing_markov_id_var("orm_markov()")
+  } else {
+    warn_duplicate_markov_id_time(data, id_var, wrapper = "orm_markov()")
   }
 
   fit <- rms::orm(
@@ -165,6 +167,8 @@ blrm_markov <- function(
   id_var <- validate_markov_id_var(id_var, data, "data")
   if (is.null(id_var)) {
     warn_missing_markov_id_var("blrm_markov()")
+  } else {
+    warn_duplicate_markov_id_time(data, id_var, wrapper = "blrm_markov()")
   }
 
   fit <- rmsb::blrm(
@@ -251,6 +255,42 @@ warn_missing_markov_id_var <- function(wrapper) {
   )
 }
 
+warn_duplicate_markov_id_time <- function(
+  data,
+  id_var,
+  tvarname = "time",
+  wrapper = "the Markov wrapper"
+) {
+  if (
+    is.null(id_var) ||
+      !id_var %in% names(data) ||
+      !tvarname %in% names(data)
+  ) {
+    return(invisible(NULL))
+  }
+
+  key <- data[c(id_var, tvarname)]
+  if (anyDuplicated(key) == 0L) {
+    return(invisible(NULL))
+  }
+
+  warning(
+    wrapper,
+    " received data with duplicate `",
+    id_var,
+    "` x `",
+    tvarname,
+    "` combinations. This is usually accidental in Markov transition data; ",
+    "automatic SOP prediction from stored data will use one prediction row ",
+    "per `",
+    id_var,
+    "`.",
+    call. = FALSE
+  )
+
+  invisible(NULL)
+}
+
 markov_attach_model_data <- function(model, data, id_var = NULL) {
   if (!is.null(data)) {
     attr(model, "markov_data") <- data
@@ -335,6 +375,7 @@ markov_align_model_data <- function(data, model_or_frame) {
 }
 
 resolve_markov_source_data <- function(model, newdata, refit_data = NULL) {
+  newdata_supplied <- !is.null(newdata)
   refit_data <- refit_data %||% markov_model_data(model)
   source_data <- newdata %||% refit_data
 
@@ -350,7 +391,8 @@ resolve_markov_source_data <- function(model, newdata, refit_data = NULL) {
 
   list(
     source_data = source_data,
-    refit_data = refit_data
+    refit_data = refit_data,
+    newdata_supplied = newdata_supplied
   )
 }
 
@@ -371,17 +413,6 @@ resolve_markov_prediction_data <- function(
 
   if (tvarname %in% names(data)) {
     split_idx <- split(seq_len(nrow(data)), id)
-    has_longitudinal_repeats <- any(vapply(
-      split_idx,
-      function(idx) {
-        length(unique(data[[tvarname]][idx])) > 1
-      },
-      logical(1)
-    ))
-    if (!has_longitudinal_repeats) {
-      return(data)
-    }
-
     baseline_idx <- vapply(
       split_idx,
       function(idx) {
@@ -404,8 +435,6 @@ resolve_markov_prediction_data <- function(
 }
 
 ensure_markov_rowid <- function(data) {
-  if (!"rowid" %in% names(data)) {
-    data$rowid <- seq_len(nrow(data))
-  }
+  data$rowid <- seq_len(nrow(data))
   data
 }

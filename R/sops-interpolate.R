@@ -125,6 +125,15 @@ baseline_rows_for_anchor <- function(x, id_var) {
       "attributes."
     )
   }
+
+  if (isTRUE(attr(x, "newdata_supplied"))) {
+    newdata_pred <- attr(x, "newdata_pred")
+    if (inherits(x, "markov_sops") && !is.null(newdata_pred)) {
+      return(newdata_pred)
+    }
+    return(newdata_orig)
+  }
+
   if (!is.null(id_var) && id_var %in% names(newdata_orig)) {
     return(resolve_markov_prediction_data(
       newdata_orig,

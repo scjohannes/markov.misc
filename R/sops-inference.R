@@ -107,6 +107,11 @@
 #' the refit data with positive patient-level weights, so it is available for
 #' individual `sops()` objects.
 #'
+#' For marginal `avg_sops()` objects built from user-supplied `newdata`, the
+#' supplied rows are fixed standardization profiles. Score bootstrap and FWB use
+#' the original/refit data for coefficient or refit uncertainty, but set
+#' `baseline_weights = NULL` and average the fixed profiles equally.
+#'
 #'
 #' This design ensures consistency: the same vcov is used for both point
 #' estimates and inference, regardless of how `inferences()` is called.
@@ -330,6 +335,7 @@ inferences_simulation <- function(
   model <- attr(object, "model")
   newdata_orig <- attr(object, "newdata_orig")
   newdata_pred_stored <- attr(object, "newdata_pred")
+  newdata_supplied <- isTRUE(attr(object, "newdata_supplied"))
   call_args <- attr(object, "call_args")
   avg_args <- attr(object, "avg_args")
 
@@ -364,16 +370,24 @@ inferences_simulation <- function(
   # --- 2. Prepare Prediction Data (COMPUTED ONCE) ---
   if (is_avg) {
     # For avg_sops: create counterfactual datasets
-    baseline_data <- resolve_markov_prediction_data(
-      newdata_orig,
-      id_var = id_var,
-      tvarname = tvarname
-    )
     grid <- do.call(expand.grid, variables)
-    newdata_pred <- newdata_pred_stored %||%
-      create_counterfactual_data(baseline_data, grid, variables)
     n_cf <- nrow(grid)
-    n_each <- nrow(baseline_data)
+    if (!is.null(newdata_pred_stored)) {
+      newdata_pred <- newdata_pred_stored
+      if (nrow(newdata_pred) %% n_cf != 0L) {
+        stop("Stored prediction data is not aligned with counterfactual grid.")
+      }
+      n_each <- nrow(newdata_pred) / n_cf
+      baseline_data <- newdata_pred[seq_len(n_each), , drop = FALSE]
+    } else {
+      baseline_data <- resolve_markov_prediction_data(
+        newdata_orig,
+        id_var = id_var,
+        tvarname = tvarname
+      )
+      newdata_pred <- create_counterfactual_data(baseline_data, grid, variables)
+      n_each <- nrow(baseline_data)
+    }
   } else {
     # For individual sops: use data directly
     newdata_pred <- newdata_pred_stored %||% newdata_orig
@@ -424,14 +438,20 @@ inferences_simulation <- function(
 
     score_draws <- generate_score_bootstrap_draws(
       model = model,
-      baseline_data = baseline_data,
+      baseline_data = if (newdata_supplied) NULL else baseline_data,
       id_var = id_var,
       n_sim = n_sim,
       score_weight_dist = score_weight_dist,
-      cluster = cluster
+      cluster = cluster,
+      return_baseline_weights = !newdata_supplied
     )
     beta_draws <- score_draws$beta_draws
-    baseline_weights_draws <- score_draws$baseline_weights
+    baseline_weights_draws <- if (newdata_supplied) {
+      warn_fixed_profile_bootstrap_weights("score-bootstrap")
+      NULL
+    } else {
+      score_draws$baseline_weights
+    }
   } else {
     stop("Unknown simulation engine: ", engine)
   }
@@ -693,4 +713,14 @@ inferences_simulation <- function(
   }
 
   final_result
+}
+
+warn_fixed_profile_bootstrap_weights <- function(engine) {
+  warning(
+    "User-supplied `newdata` is treated as fixed standardization profiles; ",
+    engine,
+    " baseline weights have been set to NULL and profiles will be averaged ",
+    "equally.",
+    call. = FALSE
+  )
 }

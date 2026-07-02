@@ -26,9 +26,11 @@ avg_sops(
 \item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, or \code{blrm}). For
 \code{vglm} models, the family \strong{must} be \code{cumulative(reverse = TRUE, ...)}.}
 
-\item{newdata}{Optional data frame for prediction. When repeated IDs are
-present, one prediction row per ID is extracted automatically. If \code{NULL},
-uses data stored by \code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}}.}
+\item{newdata}{Optional data frame of standardization profiles. When
+supplied, every row is treated as a separate baseline profile and the
+internal \code{rowid} column is regenerated. If \code{NULL}, uses data stored by
+\code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}} and extracts one
+prediction row per \code{id_var}.}
 
 \item{refit_data}{Optional full longitudinal data used by bootstrap refit
 inference. Defaults to data stored on wrapper-fitted models.}
@@ -48,8 +50,11 @@ factor time uses all fitted visit levels and numeric time is inferred from
 \item{id_var}{Name of the patient ID variable. Required for bootstrap
 inference and for \code{blrm} random-effect prediction. If \code{NULL}, defaults to
 \code{"id"}; for wrapper-fitted models, it is inferred from stored metadata.
-For \code{blrm} models with \code{include_re = TRUE}, \code{model$clusterInfo$name} is
-used before the final \code{"id"} fallback when wrapper metadata is absent.}
+For user-supplied \code{newdata}, \code{id_var} is required only for \code{blrm} random
+effects. Refit bootstrap inference uses \code{id_var} from \code{refit_data} or
+wrapper-stored model data. For \code{blrm} models with \code{include_re = TRUE},
+\code{model$clusterInfo$name} is used before the final \code{"id"} fallback when
+wrapper metadata is absent.}
 
 \item{p2varname}{Optional second previous-state variable. \code{NULL} uses a
 first-order Markov recursion; a non-\code{NULL} column name uses a second-order

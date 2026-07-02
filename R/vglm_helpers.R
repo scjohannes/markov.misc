@@ -156,6 +156,11 @@ vglm_markov <- function(
       stop("`id_var` requires `data` to be supplied as a data frame.")
     }
     id_var <- validate_markov_id_var(id_var, original_data, "data")
+    warn_duplicate_markov_id_time(
+      original_data,
+      id_var,
+      wrapper = "vglm_markov()"
+    )
   } else if (!is.null(original_data) && "id" %in% names(original_data)) {
     warn_missing_markov_id_var("vglm_markov()")
   }

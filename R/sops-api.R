@@ -8,10 +8,11 @@
 #'
 #' @param model A fitted model object (e.g., `vglm`, `orm`, or `blrm`). For
 #'   `vglm` models, the family must be `cumulative(reverse = TRUE, ...)`.
-#' @param newdata Optional. A data frame of new data for prediction. If NULL,
-#'   uses the data stored by [orm_markov()], [blrm_markov()], or
-#'   [vglm_markov()]. When repeated IDs are present, one prediction row per ID
-#'   is extracted automatically.
+#' @param newdata Optional. A data frame of prediction profiles. When supplied,
+#'   every row is treated as a separate baseline profile and the internal
+#'   `rowid` column is regenerated. If `NULL`, uses the data stored by
+#'   [orm_markov()], [blrm_markov()], or [vglm_markov()] and extracts one
+#'   prediction row per `id_var`.
 #' @param refit_data Optional full longitudinal data used by bootstrap refit
 #'   inference. Defaults to data stored on wrapper-fitted models.
 #' @param times Visit-scale time points to estimate. For numeric time
@@ -39,7 +40,9 @@
 #'   fitted random-effect draws in posterior predictions for known IDs.
 #' @param id_var Character ID column used when `include_re = TRUE`. For `blrm`,
 #'   `NULL` is inferred from wrapper metadata, then `model$clusterInfo$name`
-#'   when available, otherwise `"id"`.
+#'   when available, otherwise `"id"`. For frequentist models, `id_var` is used
+#'   for stored-data extraction and refit bootstrap metadata, not for ordinary
+#'   user-supplied prediction rows.
 #' @param n_draws Integer number of posterior draws to sample for `blrm`, or
 #'   `NULL` to use all stored draws. Defaults to 100.
 #' @param seed Optional random seed for reproducible random draw sampling.
@@ -145,12 +148,29 @@ sops <- function(
   data_res <- resolve_markov_source_data(model, newdata, refit_data)
   newdata_orig <- data_res$source_data
   refit_data <- data_res$refit_data
+  newdata_supplied <- data_res$newdata_supplied
   id_var <- markov_model_id_var(model, id_var)
-  if (!is.null(id_var)) {
+
+  if (inherits(model, "blrm") && isTRUE(include_re)) {
+    id_var <- resolve_blrm_id_var(model, newdata_orig, id_var)
     validate_markov_id_var(id_var, newdata_orig, "newdata")
+  }
+
+  if (!is.null(id_var)) {
     if (!is.null(refit_data)) {
       validate_markov_id_var(id_var, refit_data, "refit_data")
     }
+  }
+
+  if (!newdata_supplied) {
+    if (is.null(id_var)) {
+      stop(
+        "Automatic SOP prediction from stored model data requires `id_var`. ",
+        "Fit with `orm_markov(id_var = ...)`, `blrm_markov(id_var = ...)`, ",
+        "`vglm_markov(id_var = ...)`, or supply explicit `newdata`."
+      )
+    }
+    validate_markov_id_var(id_var, newdata_orig, "stored model data")
   }
 
   # Resolve default times from the full supplied/stored data before extracting
@@ -166,11 +186,15 @@ sops <- function(
   times <- time_res$times
   validate_factor_gap(gap, t_covs, time_res$time_info)
 
-  newdata <- resolve_markov_prediction_data(
-    newdata_orig,
-    id_var = id_var,
-    tvarname = tvarname
-  )
+  newdata <- if (newdata_supplied) {
+    newdata_orig
+  } else {
+    resolve_markov_prediction_data(
+      newdata_orig,
+      id_var = id_var,
+      tvarname = tvarname
+    )
+  }
   newdata <- ensure_markov_rowid(newdata)
 
   if (is.null(ylevels)) {
@@ -217,7 +241,8 @@ sops <- function(
       conf_level = conf_level,
       return_draws = return_draws,
       newdata_orig = newdata_orig,
-      refit_data = refit_data
+      refit_data = refit_data,
+      newdata_supplied = newdata_supplied
     ))
   }
 
@@ -269,7 +294,8 @@ sops <- function(
     extra_attrs = list(
       newdata_pred = newdata,
       refit_data = refit_data,
-      id_var = id_var
+      id_var = id_var,
+      newdata_supplied = newdata_supplied
     )
   )
 }
@@ -294,7 +320,8 @@ sops_blrm <- function(
   conf_level,
   return_draws,
   newdata_orig,
-  refit_data
+  refit_data,
+  newdata_supplied
 ) {
   validate_sops_by(by, newdata)
 
@@ -432,7 +459,8 @@ sops_blrm <- function(
       draws = draws_df,
       newdata_pred = newdata,
       refit_data = refit_data,
-      id_var = id_var
+      id_var = id_var,
+      newdata_supplied = newdata_supplied
     )
   )
 }
@@ -544,9 +572,11 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'
 #' @param model A fitted model object (e.g., `vglm`, `orm`, or `blrm`). For
 #'   `vglm` models, the family **must** be `cumulative(reverse = TRUE, ...)`.
-#' @param newdata Optional data frame for prediction. When repeated IDs are
-#'   present, one prediction row per ID is extracted automatically. If `NULL`,
-#'   uses data stored by [orm_markov()], [blrm_markov()], or [vglm_markov()].
+#' @param newdata Optional data frame of standardization profiles. When
+#'   supplied, every row is treated as a separate baseline profile and the
+#'   internal `rowid` column is regenerated. If `NULL`, uses data stored by
+#'   [orm_markov()], [blrm_markov()], or [vglm_markov()] and extracts one
+#'   prediction row per `id_var`.
 #' @param refit_data Optional full longitudinal data used by bootstrap refit
 #'   inference. Defaults to data stored on wrapper-fitted models.
 #' @param variables A named list specifying the variable(s) to standardize over.
@@ -561,8 +591,11 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #' @param id_var Name of the patient ID variable. Required for bootstrap
 #'   inference and for `blrm` random-effect prediction. If `NULL`, defaults to
 #'   `"id"`; for wrapper-fitted models, it is inferred from stored metadata.
-#'   For `blrm` models with `include_re = TRUE`, `model$clusterInfo$name` is
-#'   used before the final `"id"` fallback when wrapper metadata is absent.
+#'   For user-supplied `newdata`, `id_var` is required only for `blrm` random
+#'   effects. Refit bootstrap inference uses `id_var` from `refit_data` or
+#'   wrapper-stored model data. For `blrm` models with `include_re = TRUE`,
+#'   `model$clusterInfo$name` is used before the final `"id"` fallback when
+#'   wrapper metadata is absent.
 #' @param p2varname Optional second previous-state variable. `NULL` uses a
 #'   first-order Markov recursion; a non-`NULL` column name uses a second-order
 #'   recursion.
@@ -676,17 +709,21 @@ avg_sops <- function(
   data_res <- resolve_markov_source_data(model, newdata, refit_data)
   newdata_orig <- data_res$source_data
   refit_data <- data_res$refit_data
+  newdata_supplied <- data_res$newdata_supplied
 
   if (inherits(model, "blrm") && isTRUE(include_re)) {
     id_var <- resolve_blrm_id_var(model, newdata_orig, id_var)
+    validate_markov_id_var(id_var, newdata_orig, "newdata")
   } else {
     id_var <- markov_model_id_var(model, id_var) %||% "id"
   }
 
-  # Validate id_var exists
-  validate_markov_id_var(id_var, newdata_orig, "newdata")
   if (!is.null(refit_data)) {
     validate_markov_id_var(id_var, refit_data, "refit_data")
+  }
+
+  if (!newdata_supplied) {
+    validate_markov_id_var(id_var, newdata_orig, "stored model data")
   }
 
   # Validate variables exist in data
@@ -698,11 +735,15 @@ avg_sops <- function(
   # --- 2. Extract Baseline Data (One Row Per Patient) ---
   # For standardization, we need unique patient baseline covariates
   # This matches standardize_sops() behavior
-  baseline_data <- resolve_markov_prediction_data(
-    newdata_orig,
-    id_var = id_var,
-    tvarname = tvarname
-  )
+  baseline_data <- if (newdata_supplied) {
+    newdata_orig
+  } else {
+    resolve_markov_prediction_data(
+      newdata_orig,
+      id_var = id_var,
+      tvarname = tvarname
+    )
+  }
   baseline_data <- ensure_markov_rowid(baseline_data)
 
   # --- 3. Create Counterfactual Datasets ---
@@ -745,6 +786,7 @@ avg_sops <- function(
     attr(result, "newdata_pred") <- newdata_expanded
     attr(result, "refit_data") <- refit_data
     attr(result, "id_var") <- id_var
+    attr(result, "newdata_supplied") <- newdata_supplied
     return(result)
   }
 
@@ -808,7 +850,8 @@ avg_sops <- function(
     extra_attrs = list(
       newdata_pred = newdata_expanded,
       refit_data = refit_data,
-      id_var = id_var
+      id_var = id_var,
+      newdata_supplied = newdata_supplied
     )
   )
 }

@@ -36,9 +36,18 @@
   one prediction row per patient when `newdata = NULL`.
 - `orm_markov()` now stores an update-safe `rms::orm()` call so fractional
   weighted bootstrap refits work for grouped and ungrouped `sops()` objects.
+- `sops()` and `avg_sops()` now treat user-supplied `newdata` rows as fixed
+  prediction or standardization profiles, regenerate their internal `rowid`
+  values, and reserve `id_var` for stored-data extraction, refit bootstrap
+  clustering, and `blrm` random-effect prediction.
 - `inferences()` now supports fractional weighted bootstrap refits via
   `method = "bootstrap", engine = "fwb"`, using mean-one exponential
   patient-level weights for fitting and weighted SOP marginalization.
+- `inferences()` now treats user-supplied `avg_sops(newdata = ...)`
+  standardization profiles as fixed targets for score bootstrap and FWB
+  inference: coefficient/refit uncertainty still comes from the original data,
+  but profile averaging is unweighted and a warning reports that
+  `baseline_weights` were set to `NULL`.
 - `inferences()` now accepts `Matrix` package covariance objects returned by
   `rms::robcov()` for `orm_markov()` fits by coercing them to base matrices
   before coefficient/covariance validation.
