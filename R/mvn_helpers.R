@@ -272,7 +272,10 @@ get_vcov_robust <- function(
     # Prefer the explicit `data` argument when supplied. Model calls often store
     # only a symbol such as `data`, and evaluating that symbol from a caller can
     # resolve to an unrelated object in interactive/test wrapper environments.
-    model_data <- NULL
+    model_data <- markov_model_data(model)
+    if (!is.null(model_data) && !cluster_var %in% names(model_data)) {
+      model_data <- NULL
+    }
     if (!is.null(data) && cluster_var %in% names(data)) {
       model_data <- data
     }
@@ -361,6 +364,10 @@ get_vcov_robust <- function(
 }
 
 validate_coef_vcov <- function(beta, Sigma, arg = "vcov") {
+  if (methods::is(Sigma, "Matrix")) {
+    Sigma <- as.matrix(Sigma)
+  }
+
   if (!is.matrix(Sigma)) {
     stop("`", arg, "` must be a matrix.")
   }

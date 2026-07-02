@@ -101,6 +101,21 @@ test_that("validate_coef_vcov reports structural mismatches", {
   )
 })
 
+test_that("validate_coef_vcov accepts Matrix covariance objects", {
+  skip_if_not_installed("Matrix")
+
+  beta <- c(a = 1, b = 2)
+  matrix_vcov <- Matrix::Matrix(diag(2), sparse = FALSE)
+  dimnames(matrix_vcov) <- list(names(beta), names(beta))
+  expected_vcov <- diag(2)
+  dimnames(expected_vcov) <- list(names(beta), names(beta))
+
+  expect_equal(
+    markov.misc:::validate_coef_vcov(beta, matrix_vcov),
+    expected_vcov
+  )
+})
+
 test_that("set_coef() updates nested robcov_vglm fits and vgam aliases", {
   skip_if_not_installed("VGAM")
 
