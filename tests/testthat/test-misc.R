@@ -188,11 +188,8 @@ test_that("state conversion helpers validate required columns", {
     states_to_drs(data.frame(id = 1), follow_up_time = 3),
     "data must contain columns"
   )
-  expect_error(
-    states_to_tte_old(data.frame(id = 1)),
-    "data must contain columns"
-  )
   expect_error(states_to_tte(data.frame(id = 1)), "data must contain columns")
+  expect_error(states_to_tte_v2(data.frame(id = 1)), "data must contain columns")
   expect_error(
     format_competing_risks(data.frame(id = 1)),
     "data must contain columns"
@@ -265,8 +262,8 @@ test_that("states_to_drs handles death, sustained home time, and covariates", {
   )
 
   expect_equal(result$id, 1:3)
-  expect_equal(result$drs, c(3, 2, -1))
-  expect_equal(result$age, c(50, 60, 70))
+  expect_equal(result$drs, c(1, 2, 6))
+  expect_equal(as.numeric(result$age), c(50, 60, 70))
 
   no_covs <- states_to_drs(data, follow_up_time = 4, covariates = NULL)
   expect_equal(names(no_covs), c("id", "tx", "drs"))
@@ -290,7 +287,7 @@ test_that("states_to_drs preserves character treatment labels", {
   )
 })
 
-test_that("states_to_tte_old and states_to_tte collapse trajectories", {
+test_that("states_to_tte functions collapse trajectories", {
   data <- data.frame(
     id = rep(1:2, each = 5),
     time = rep(1:5, 2),
@@ -300,10 +297,17 @@ test_that("states_to_tte_old and states_to_tte collapse trajectories", {
     age = rep(c(50, 60), each = 5)
   )
 
-  old <- states_to_tte_old(data, covariates = "age")
-  current <- states_to_tte(data, covariates = "age", absorbing_state = 6)
+  legacy <- states_to_tte(data, covariates = "age")
+  current <- states_to_tte_v2(data, covariates = "age", absorbing_state = 6)
 
-  expect_equal(names(old), c("id", "tx", "yprev", "start", "stop", "y", "age"))
+  expect_equal(
+    names(legacy),
+    c("id", "tx", "yprev", "start", "stop", "y", "age")
+  )
+  expect_equal(legacy$id, c(1, 1, 2, 2))
+  expect_equal(legacy$start, c(0, 3, 0, 3))
+  expect_equal(legacy$stop, c(3, 5, 3, 4))
+  expect_equal(legacy$age, c(50, 50, 60, 60))
   expect_equal(current$id, c(1, 1, 2, 2, 2))
   expect_equal(current$start, c(0, 2, 0, 2, 3))
   expect_equal(current$stop, c(2, 5, 2, 3, 4))
@@ -320,12 +324,12 @@ test_that("states_to_tte functions keep baseline rows with missing previous stat
     age = rep(c(50, 60), each = 3)
   )
 
-  old <- states_to_tte_old(data, covariates = "age")
-  current <- states_to_tte(data, covariates = "age", absorbing_state = 6)
+  legacy <- states_to_tte(data, covariates = "age")
+  current <- states_to_tte_v2(data, covariates = "age", absorbing_state = 6)
 
-  expect_equal(old$id, c(1, 1, 2, 2))
-  expect_equal(old$yprev, c(NA, 2, NA, 3))
-  expect_equal(old$age, c(50, 50, 60, 60))
+  expect_equal(legacy$id, c(1, 1, 2, 2))
+  expect_equal(legacy$yprev, c(NA, 2, NA, 3))
+  expect_equal(legacy$age, c(50, 50, 60, 60))
   expect_equal(current$id, c(1, 1, 2, 2))
   expect_equal(current$yprev, c(NA, 2, NA, 3))
   expect_equal(current$age, c(50, 50, 60, 60))

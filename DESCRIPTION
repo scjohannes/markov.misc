@@ -32,6 +32,7 @@ LazyData: true
 Suggests: 
     dplyr,
     knitr,
+    Matrix,
     ordinal,
     posterior,
     rmsb,
