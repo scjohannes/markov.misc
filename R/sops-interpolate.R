@@ -30,13 +30,19 @@ standardize_time_map <- function(time_map) {
 
   real_time <- suppressWarnings(as.numeric(real_time))
   visit <- as.character(visit)
-  bad <- is.na(visit) | !nzchar(visit) | is.na(real_time) | !is.finite(real_time)
+  bad <- is.na(visit) |
+    !nzchar(visit) |
+    is.na(real_time) |
+    !is.finite(real_time)
   if (any(bad)) {
     stop("`time_map` contains missing or non-finite visit/time values.")
   }
   if (anyDuplicated(visit)) {
     dup <- unique(visit[duplicated(visit)])
-    stop("`time_map` contains duplicate visit entries: ", paste(dup, collapse = ", "))
+    stop(
+      "`time_map` contains duplicate visit entries: ",
+      paste(dup, collapse = ", ")
+    )
   }
 
   data.frame(visit = visit, real_time = real_time, stringsAsFactors = FALSE)
@@ -72,7 +78,10 @@ validate_sop_xout <- function(xout, lower, upper) {
 }
 
 sop_measure_cols <- function(x) {
-  intersect(c("estimate", "conf.low", "conf.high", "std.error", "draw"), names(x))
+  intersect(
+    c("estimate", "conf.low", "conf.high", "std.error", "draw"),
+    names(x)
+  )
 }
 
 split_key <- function(data, cols) {
@@ -108,6 +117,7 @@ rows_match_values <- function(data, values) {
 }
 
 baseline_rows_for_anchor <- function(x, id_var) {
+  id_var <- id_var %||% attr(x, "id_var")
   newdata_orig <- attr(x, "newdata_orig")
   if (is.null(newdata_orig)) {
     stop(
@@ -116,7 +126,16 @@ baseline_rows_for_anchor <- function(x, id_var) {
     )
   }
   if (!is.null(id_var) && id_var %in% names(newdata_orig)) {
-    return(newdata_orig[!duplicated(newdata_orig[[id_var]]), , drop = FALSE])
+    return(resolve_markov_prediction_data(
+      newdata_orig,
+      id_var = id_var,
+      tvarname = attr(x, "tvarname") %||% "time"
+    ))
+  }
+
+  newdata_pred <- attr(x, "newdata_pred")
+  if (!is.null(newdata_pred)) {
+    return(newdata_pred)
   }
   newdata_orig
 }
@@ -205,7 +224,11 @@ empirical_baseline_anchor <- function(x, origin_time) {
       data.frame(.dummy = 1L)
     }
     if (!pvarname %in% names(attr(x, "newdata_orig"))) {
-      stop("Previous-state variable `", pvarname, "` not found in `newdata_orig`.")
+      stop(
+        "Previous-state variable `",
+        pvarname,
+        "` not found in `newdata_orig`."
+      )
     }
     baseline <- baseline_rows_for_anchor(x, attr(x, "avg_args")$id_var)
     return(state_distribution_anchor(
@@ -256,7 +279,11 @@ empirical_baseline_anchor <- function(x, origin_time) {
   }
   baseline <- baseline_rows_for_anchor(x, NULL)
   if (!pvarname %in% names(baseline)) {
-    stop("Previous-state variable `", pvarname, "` not found in `newdata_orig`.")
+    stop(
+      "Previous-state variable `",
+      pvarname,
+      "` not found in `newdata_orig`."
+    )
   }
   state_distribution_anchor(
     x = x,
@@ -367,7 +394,10 @@ repeat_anchor_for_draws <- function(anchor, draws, value_col) {
 
   draw_ids <- sort(unique(draws$draw_id))
   anchor_value <- anchor$estimate
-  anchor <- anchor[, intersect(names(anchor), c(names(draws), ".sop_real_time")), drop = FALSE]
+  anchor <- anchor[,
+    intersect(names(anchor), c(names(draws), ".sop_real_time")),
+    drop = FALSE
+  ]
   anchor[[value_col]] <- anchor_value
 
   bind_rows_fill(lapply(draw_ids, function(draw_id) {
@@ -384,7 +414,10 @@ interpolate_sop_draws <- function(
   anchor,
   normalize
 ) {
-  if (!is.data.frame(draws) || !all(c("draw_id", "time", "state") %in% names(draws))) {
+  if (
+    !is.data.frame(draws) ||
+      !all(c("draw_id", "time", "state") %in% names(draws))
+  ) {
     return(NULL)
   }
   value_col <- sop_draw_value_col(draws)
@@ -442,8 +475,7 @@ interpolated_ci_from_draws <- function(draws, result, conf_level, conf_type) {
   ci <- ci[, c(join_cols, "conf.low", "conf.high", "std.error"), drop = FALSE]
 
   result$.sop_order <- seq_len(nrow(result))
-  result_base <- result[
-    ,
+  result_base <- result[,
     setdiff(names(result), c("conf.low", "conf.high", "std.error")),
     drop = FALSE
   ]
@@ -532,7 +564,9 @@ interpolate_sops <- function(
 
   use_origin <- !is.null(origin_time) && origin == "empirical_baseline"
   if (!is.null(origin_time)) {
-    if (!is.numeric(origin_time) || length(origin_time) != 1 || is.na(origin_time)) {
+    if (
+      !is.numeric(origin_time) || length(origin_time) != 1 || is.na(origin_time)
+    ) {
       stop("`origin_time` must be a single finite numeric value.")
     }
     if (!is.finite(origin_time)) {

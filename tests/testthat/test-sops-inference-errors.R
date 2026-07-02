@@ -480,7 +480,7 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
       update_datadist = TRUE,
       use_coefstart = FALSE
     ),
-    "only supports 'markov_avg_sops'",
+    "Standard refit bootstrap is not supported",
     fixed = TRUE
   )
 
@@ -497,7 +497,7 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
       update_datadist = TRUE,
       use_coefstart = FALSE
     ),
-    "Original newdata not stored",
+    "Full refit data not stored",
     fixed = TRUE
   )
 

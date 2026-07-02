@@ -16,7 +16,9 @@ make_factor_visit_case <- function(n_patients = 80, n_visits = 4, seed = 2026) {
     sample(seq_len(4), nrow(data), replace = TRUE),
     levels = as.character(seq_len(4))
   )
-  eta <- -0.35 * data$tx + 0.25 * as.integer(data$time) +
+  eta <- -0.35 *
+    data$tx +
+    0.25 * as.integer(data$time) +
     0.2 * as.integer(as.character(data$yprev))
   p_worse <- stats::plogis(eta - mean(eta))
   y_num <- pmin(
@@ -36,13 +38,27 @@ make_interpolation_case <- function() {
   )
   x$estimate <- mapply(
     function(time, state, tx) {
-      if (tx == 0 && time == "v1" && state == "1") return(0.8)
-      if (tx == 0 && time == "v1" && state == "2") return(0.2)
-      if (tx == 0 && time == "v2" && state == "1") return(0.4)
-      if (tx == 0 && time == "v2" && state == "2") return(0.6)
-      if (tx == 1 && time == "v1" && state == "1") return(0.7)
-      if (tx == 1 && time == "v1" && state == "2") return(0.3)
-      if (tx == 1 && time == "v2" && state == "1") return(0.5)
+      if (tx == 0 && time == "v1" && state == "1") {
+        return(0.8)
+      }
+      if (tx == 0 && time == "v1" && state == "2") {
+        return(0.2)
+      }
+      if (tx == 0 && time == "v2" && state == "1") {
+        return(0.4)
+      }
+      if (tx == 0 && time == "v2" && state == "2") {
+        return(0.6)
+      }
+      if (tx == 1 && time == "v1" && state == "1") {
+        return(0.7)
+      }
+      if (tx == 1 && time == "v1" && state == "2") {
+        return(0.3)
+      }
+      if (tx == 1 && time == "v2" && state == "1") {
+        return(0.5)
+      }
       0.5
     },
     as.character(x$time),
@@ -65,6 +81,55 @@ make_interpolation_case <- function() {
     tx = c(0, 1, 0, 1)
   )
   x
+}
+
+make_absorbing_factor_visit_data <- function(n_patients = 80, seed = 20260531) {
+  visit_days <- stats::setNames(c(3, 7, 14, 21), as.character(1:4))
+  raw_data <- sim_actt2_brownian(
+    n_patients = n_patients,
+    mu_treatment_effect = -0.03,
+    seed = seed
+  )
+
+  baseline_state <- raw_data[raw_data$time == 1, c("id", "yprev")]
+  names(baseline_state)[2] <- "baseline_yprev"
+
+  visit_data <- raw_data[
+    raw_data$time %in% unname(visit_days),
+    c("id", "tx", "time", "y", "yprev")
+  ]
+  visit_data <- merge(
+    visit_data,
+    baseline_state,
+    by = "id",
+    all.x = TRUE,
+    sort = FALSE
+  )
+  visit_data <- visit_data[order(visit_data$id, visit_data$time), ]
+  visit_data$visit_day <- visit_data$time
+  visit_data$time <- factor(
+    match(visit_data$visit_day, unname(visit_days)),
+    levels = seq_along(visit_days),
+    labels = names(visit_days)
+  )
+  visit_data$yprev <- ave(
+    visit_data$y,
+    visit_data$id,
+    FUN = function(y) c(NA_integer_, y[-length(y)])
+  )
+  first_visit <- !duplicated(visit_data$id)
+  visit_data$yprev[first_visit] <- visit_data$baseline_yprev[first_visit]
+  visit_data$baseline_yprev <- NULL
+
+  list(
+    data = prepare_markov_data(
+      visit_data,
+      absorbing_state = 8L,
+      factor_previous = TRUE
+    ),
+    visit_days = visit_days,
+    absorb = "8"
+  )
 }
 
 add_interpolation_draws <- function(x) {
@@ -126,7 +191,10 @@ test_that("factor visit time works through SOP APIs and the fast path", {
     ylevels = factor(1:4),
     pvarname = "yprev"
   )
-  expect_equal(as.character(attr(averaged, "avg_args")$times), as.character(1:4))
+  expect_equal(
+    as.character(attr(averaged, "avg_args")$times),
+    as.character(1:4)
+  )
 
   components <- markov.misc:::markov_msm_build(
     model = fit,
@@ -210,9 +278,116 @@ test_that("factor visit simulation and bootstrap inference smoke-test", {
     ylevels = factor(1:4),
     pvarname = "yprev"
   )
-  boot <- inferences(avg_full, method = "bootstrap", n_sim = 1, return_draws = TRUE)
+  boot <- inferences(
+    avg_full,
+    method = "bootstrap",
+    n_sim = 1,
+    return_draws = TRUE
+  )
   expect_s3_class(boot, "markov_avg_sops")
   expect_false(is.null(attr(boot, "bootstrap_draws")))
+})
+
+test_that("factor visit orm avg_sops requires absorbing state", {
+  skip_if_not_installed("rms")
+
+  case <- make_absorbing_factor_visit_data(n_patients = 80, seed = 2031)
+  data <- case$data
+
+  dd <- rms::datadist(data)
+  old_dd_exists <- exists("dd", envir = globalenv(), inherits = FALSE)
+  old_dd <- if (old_dd_exists) get("dd", envir = globalenv()) else NULL
+  assign("dd", dd, envir = globalenv())
+  old_options <- options(datadist = "dd")
+  on.exit(
+    {
+      options(old_options)
+      if (old_dd_exists) {
+        assign("dd", old_dd, envir = globalenv())
+      } else if (exists("dd", envir = globalenv(), inherits = FALSE)) {
+        remove(list = "dd", envir = globalenv())
+      }
+    },
+    add = TRUE
+  )
+
+  fit <- orm_markov(
+    y ~ tx + time + yprev,
+    data = data,
+    id_var = "id",
+    opt_method = "LM",
+    scale = TRUE,
+    penalty = 0.1,
+    maxit = 100
+  )
+
+  expect_error(
+    avg_sops(
+      fit,
+      variables = list(tx = c(0, 1)),
+      times = NULL,
+      ylevels = fit$yunique
+    ),
+    "pass it via `absorb`"
+  )
+})
+
+test_that("factor visit orm SOP interpolation uses absorbing state", {
+  skip_if_not_installed("rms")
+
+  case <- make_absorbing_factor_visit_data(n_patients = 80, seed = 2031)
+  data <- case$data
+
+  dd <- rms::datadist(data)
+  old_dd_exists <- exists("dd", envir = globalenv(), inherits = FALSE)
+  old_dd <- if (old_dd_exists) get("dd", envir = globalenv()) else NULL
+  assign("dd", dd, envir = globalenv())
+  old_options <- options(datadist = "dd")
+  on.exit(
+    {
+      options(old_options)
+      if (old_dd_exists) {
+        assign("dd", old_dd, envir = globalenv())
+      } else if (exists("dd", envir = globalenv(), inherits = FALSE)) {
+        remove(list = "dd", envir = globalenv())
+      }
+    },
+    add = TRUE
+  )
+
+  fit <- orm_markov(
+    y ~ tx + time + yprev,
+    data = data,
+    id_var = "id",
+    opt_method = "LM",
+    scale = TRUE,
+    penalty = 0.1,
+    maxit = 100
+  )
+
+  sop_visit <- avg_sops(
+    fit,
+    variables = list(tx = c(0, 1)),
+    times = NULL,
+    ylevels = fit$yunique,
+    absorb = case$absorb
+  )
+  expect_equal(
+    as.character(attr(sop_visit, "avg_args")$times),
+    names(case$visit_days)
+  )
+  expect_false(anyNA(sop_visit$estimate))
+
+  sop_days <- interpolate_sops(
+    sop_visit,
+    time_map = case$visit_days,
+    xout = 0:max(case$visit_days),
+    origin_time = 0
+  )
+  expect_false(anyNA(sop_days$estimate))
+
+  sums <- stats::aggregate(estimate ~ tx + time, sop_days, sum)
+  expect_equal(sums$estimate, rep(1, nrow(sums)), tolerance = 1e-10)
 })
 
 test_that("interpolate_sops maps visits, anchors baseline, and normalizes states", {
@@ -307,7 +482,10 @@ test_that("interpolate_sops warns when interval-bearing objects do not store dra
 
 test_that("interpolate_sops handles blrm-style stored posterior draws", {
   x <- add_interpolation_intervals(make_interpolation_case())
-  draws <- attr(add_interpolation_draws(make_interpolation_case()), "simulation_draws")
+  draws <- attr(
+    add_interpolation_draws(make_interpolation_case()),
+    "simulation_draws"
+  )
   attr(x, "draws") <- draws
   attr(x, "method") <- "posterior"
   attr(x, "conf_level") <- 0.8
@@ -369,7 +547,10 @@ test_that("plot_sops bars work with derived facet labels on interpolated draws",
   attr(out, "simulation_draws") <- draws
 
   expect_equal(anyDuplicated(out[c("time", "state", "tx_label")]), 0L)
-  expect_s3_class(plot_sops(out, geom = "bar", facet_var = "tx_label"), "ggplot")
+  expect_s3_class(
+    plot_sops(out, geom = "bar", facet_var = "tx_label"),
+    "ggplot"
+  )
 })
 
 test_that("interpolate_sops guardrails are clear", {
@@ -407,7 +588,11 @@ test_that("time_in_state uses trapezoidal AUC on mapped real time", {
   )
   day_1_auc <- day_1_auc[order(day_1_auc$tx), , drop = FALSE]
 
-  expect_equal(day_1_auc$total_time[day_1_auc$tx == 0], 3.633333, tolerance = 1e-6)
+  expect_equal(
+    day_1_auc$total_time[day_1_auc$tx == 0],
+    3.633333,
+    tolerance = 1e-6
+  )
   expect_equal(day_1_auc$total_time[day_1_auc$tx == 1], 3.5, tolerance = 1e-10)
 
   interpolated <- interpolate_sops(
@@ -417,7 +602,11 @@ test_that("time_in_state uses trapezoidal AUC on mapped real time", {
     origin_time = 0
   )
   interpolated_auc <- time_in_state(interpolated, target_states = "1")
-  interpolated_auc <- interpolated_auc[order(interpolated_auc$tx), , drop = FALSE]
+  interpolated_auc <- interpolated_auc[
+    order(interpolated_auc$tx),
+    ,
+    drop = FALSE
+  ]
 
   expect_equal(interpolated_auc, day_1_auc)
 })

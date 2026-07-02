@@ -180,7 +180,11 @@ soprob_markov <- function(
     stop("Previous-state variable `", pvarname, "` not found in `data`.")
   }
   if (!is.null(p2varname) && !p2varname %in% names(data)) {
-    stop("Second previous-state variable `", p2varname, "` not found in `data`.")
+    stop(
+      "Second previous-state variable `",
+      p2varname,
+      "` not found in `data`."
+    )
   }
   time_res <- resolve_sop_times(
     object,
@@ -196,7 +200,8 @@ soprob_markov <- function(
 
   draw_indices <- NULL
   if (ftype == "rmsb") {
-    draw_indices <- draw_indices_arg %||% select_posterior_draws(object, n_draws, seed)
+    draw_indices <- draw_indices_arg %||%
+      select_posterior_draws(object, n_draws, seed)
   }
 
   # Define prediction function
@@ -269,6 +274,7 @@ soprob_markov <- function(
 
   # Predict probabilities at T1
   p_t1 <- prd(object, data) # Returns [n_pat x n_states] or [nd x n_pat x n_states]
+  check_transition_probabilities(p_t1, "the first SOP time point")
 
   if (nd == 0) {
     P[, 1, ] <- p_t1
@@ -332,6 +338,7 @@ soprob_markov <- function(
     # This returns matrix: [ (n_pat * n_yna) x n_states ]
     # Rows 1:N are transitions from State 1, Rows N+1:2N from State 2, etc.
     trans_probs <- prd(object, edata_base)
+    check_transition_probabilities(trans_probs, paste0("SOP time point ", it))
 
     # --- 5. The Update Step (Markov) ---
     # Formula: P(S_t = k) = Sum_over_j [ P(S_t-1 = j) * P(S_t=k | S_t-1=j) ]
@@ -371,28 +378,32 @@ soprob_markov <- function(
     } else {
       # trans_probs is [draw x (patient * previous state) x state].
       p_current <- array(0, dim = c(nd, n_pat, n_states))
-      dimnames(p_current) <- list(dimnames(P)[[1]], rownames(data), ylevel_names)
+      dimnames(p_current) <- list(
+        dimnames(P)[[1]],
+        rownames(data),
+        ylevel_names
+      )
 
       for (i in seq_along(yna)) {
         prev_state_name <- yna[i]
-        prob_prev <- P[, , it - 1, prev_state_name]
+        prob_prev <- P[,, it - 1, prev_state_name]
         row_indices <- ((i - 1) * n_pat + 1):(i * n_pat)
         probs_transition <- trans_probs[, row_indices, , drop = FALSE]
 
         for (k in seq_len(n_states)) {
-          p_current[, , k] <- p_current[, , k] +
-            probs_transition[, , k] * prob_prev
+          p_current[,, k] <- p_current[,, k] +
+            probs_transition[,, k] * prob_prev
         }
       }
 
       if (length(absorb_idx) > 0) {
         for (a_state in absorb_idx) {
           # total dead at t = new deaths + already dead
-          p_current[, , a_state] <- p_current[, , a_state] +
-            P[, , it - 1, a_state]
+          p_current[,, a_state] <- p_current[,, a_state] +
+            P[,, it - 1, a_state]
         }
       }
-      P[, , it, ] <- p_current
+      P[,, it, ] <- p_current
     }
   }
 
@@ -404,12 +415,30 @@ match_state_indices <- function(values, ylevel_names, varname) {
   if (anyNA(idx)) {
     bad <- unique(as.character(values[is.na(idx)]))
     stop(
-      "Values in `", varname, "` are not among `ylevels`: ",
+      "Values in `",
+      varname,
+      "` are not among `ylevels`: ",
       paste(utils::head(bad, 5), collapse = ", "),
       if (length(bad) > 5) " ..." else ""
     )
   }
   idx
+}
+
+check_transition_probabilities <- function(probs, context) {
+  if (!anyNA(probs)) {
+    return(invisible(NULL))
+  }
+
+  stop(
+    "Model prediction returned missing transition probabilities during ",
+    context,
+    ". This often happens when the SOP recursion asks for transitions from ",
+    "a state level that is not represented in the fitted transition model. ",
+    "If that level is absorbing, pass it via `absorb`; otherwise check that ",
+    "`data`, `ylevels`, and fitted factor levels agree.",
+    call. = FALSE
+  )
 }
 
 soprob_markov_second_order_run <- function(
@@ -454,7 +483,12 @@ soprob_markov_second_order_run <- function(
     joint_prev <- array(
       0,
       dim = c(nd, n_pat, n_states, n_states),
-      dimnames = list(dimnames(P)[[1]], rownames(data), ylevel_names, ylevel_names)
+      dimnames = list(
+        dimnames(P)[[1]],
+        rownames(data),
+        ylevel_names,
+        ylevel_names
+      )
     )
     for (i in seq_len(n_pat)) {
       if (prev_idx[i] %in% absorb_idx) {
@@ -477,7 +511,8 @@ soprob_markov_second_order_run <- function(
     KEEP.OUT.ATTRS = FALSE
   )
   n_pairs <- nrow(pair_grid)
-  predictable_pair <- pair_grid$h %in% non_absorb_idx &
+  predictable_pair <- pair_grid$h %in%
+    non_absorb_idx &
     pair_grid$j %in% non_absorb_idx
   block_rows <- lapply(seq_len(n_pairs), function(i) {
     ((i - 1) * n_pat + 1):(i * n_pat)
@@ -510,6 +545,10 @@ soprob_markov_second_order_run <- function(
 
     predict_rows <- unlist(block_rows[predictable_pair], use.names = FALSE)
     trans_probs <- prd(object, edata_base[predict_rows, , drop = FALSE])
+    check_transition_probabilities(
+      trans_probs,
+      paste0("second-order SOP time point ", it)
+    )
     cursor <- 1L
 
     if (nd == 0) {
@@ -530,7 +569,8 @@ soprob_markov_second_order_run <- function(
           rows <- cursor:(cursor + n_pat - 1L)
           transition <- trans_probs[rows, , drop = FALSE]
           for (l in seq_len(n_states)) {
-            joint_current[, j, l] <- joint_current[, j, l] + transition[, l] * prob_prev
+            joint_current[, j, l] <- joint_current[, j, l] +
+              transition[, l] * prob_prev
           }
           cursor <- cursor + n_pat
         }
@@ -543,22 +583,22 @@ soprob_markov_second_order_run <- function(
         h <- pair_grid$h[pair_i]
         j <- pair_grid$j[pair_i]
         if (j %in% absorb_idx) {
-          joint_current[, , j, j] <- joint_current[, , j, j] +
-            joint_prev[, , h, j]
+          joint_current[,, j, j] <- joint_current[,, j, j] +
+            joint_prev[,, h, j]
         } else if (predictable_pair[pair_i]) {
           rows <- cursor:(cursor + n_pat - 1L)
-          prob_prev <- joint_prev[, , h, j]
+          prob_prev <- joint_prev[,, h, j]
           if (any(prob_prev > 0)) {
             transition <- trans_probs[, rows, , drop = FALSE]
             for (l in seq_len(n_states)) {
-              joint_current[, , j, l] <- joint_current[, , j, l] +
-                transition[, , l] * prob_prev
+              joint_current[,, j, l] <- joint_current[,, j, l] +
+                transition[,, l] * prob_prev
             }
           }
           cursor <- cursor + n_pat
         }
       }
-      P[, , it, ] <- apply(joint_current, c(1, 2, 4), sum)
+      P[,, it, ] <- apply(joint_current, c(1, 2, 4), sum)
       joint_prev <- joint_current
     }
   }

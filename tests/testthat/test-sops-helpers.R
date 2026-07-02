@@ -26,7 +26,7 @@ test_that("sops() validates inputs and supports stratified aggregation", {
     {
       expect_error(
         sops(model, newdata = NULL, times = 1, ylevels = 1:2),
-        "Please provide `newdata`",
+        "Provide newdata",
         fixed = TRUE
       )
       expect_error(
