@@ -42,9 +42,11 @@ patient at each time point. Should accept parameters:
 \item Additional named arguments matching columns in \code{baseline_data}
 \item parameter: treatment effect (log odds ratio)
 \item extra_params: named vector of coefficients
-Must return a numeric value representing the linear predictor.
-Default is \code{lp_violet}, which implements the VIOLET study model
-(see \code{?lp_violet} for details).
+Must return either one numeric value, used for every threshold in a
+proportional odds model, or a numeric vector with length equal to
+\code{length(intercepts)}, used as threshold-specific linear predictors in a
+partial proportional odds model. Default is \code{lp_violet}, which implements
+the VIOLET study model (see \code{?lp_violet} for details).
 }}
 
 \item{extra_params}{Named numeric vector of model coefficients used by
@@ -75,12 +77,13 @@ A data frame with columns:
 }
 \description{
 This function generates individual patient trajectories over time based on
-a proportional odds model with customizable intercepts, linear predictor
-function, and baseline patient characteristics.
+a proportional odds or partial proportional odds model with customizable
+intercepts, linear predictor function, and baseline patient characteristics.
 }
 \details{
 The function implements a discrete-time Markov model where transition
-probabilities are determined by a proportional odds model. At each time step:
+probabilities are determined by a proportional odds or partial proportional
+odds model. At each time step:
 \enumerate{
 \item Calculate linear predictor for each active patient
 \item Apply intercepts to get cumulative probabilities
@@ -90,9 +93,12 @@ probabilities are determined by a proportional odds model. At each time step:
 }
 
 States are assumed to be ordered integers (e.g., 1=Home, 2=Hospital mild,
-3=Hospital oxygen, 4=Hospital NIV, 5=Ventilator, 6=Death). The model
-uses a proportional odds structure where higher intercepts represent
-more severe health states.
+3=Hospital oxygen, 4=Hospital NIV, 5=Ventilator, 6=Death). By default the
+model uses a proportional odds structure where higher intercepts represent
+more severe health states. If \code{lp_function} returns threshold-specific
+linear predictors, the induced cumulative probabilities must remain
+nondecreasing across thresholds; otherwise the function stops because the
+implied state probabilities would be negative.
 }
 \examples{
 \dontrun{
@@ -128,6 +134,26 @@ my_custom_lp <- function(yprev, t, age, sofa, tx, parameter = 0, extra_params) {
 
 trajectories_custom_lp <- sim_trajectories_markov(
   lp_function = my_custom_lp,
+  parameter = log(0.75),
+  seed = 12345
+)
+
+# Partial proportional odds: treatment affects each threshold differently
+my_ppo_lp <- function(yprev, t, age, sofa, tx, parameter = 0, extra_params) {
+  base_lp <- lp_violet(
+    yprev = yprev,
+    t = t,
+    age = age,
+    sofa = sofa,
+    tx = 0,
+    parameter = parameter,
+    extra_params = extra_params
+  )
+  base_lp + tx * parameter * c(0.25, 0.5, 1, 1, 1)
+}
+
+trajectories_ppo <- sim_trajectories_markov(
+  lp_function = my_ppo_lp,
   parameter = log(0.75),
   seed = 12345
 )
