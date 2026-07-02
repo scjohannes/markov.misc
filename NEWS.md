@@ -6,7 +6,9 @@
 - Removed stale `taooh*` archive exports and fixed several edge cases in
   `soprob_markov()`, `states_to_tte()`, `sim_trajectories_markov()`,
   `sim_trajectories_tte()`, `predict_blrm_response_markov()`,
-  `apply_to_bootstrap()`, `vglm.markov()`, and `lp_violet()`.
+  `apply_to_bootstrap()`, `vglm_markov()`, and `lp_violet()`.
+- Breaking change: the old dotted VGAM wrapper name `vglm.markov()` has been
+  removed. Use `vglm_markov()` instead.
 - `soprob_markov()`, `sops()`, and `avg_sops()` now support second-order
   Markov recursion via `p2varname`, and `rmsb::blrm()` models use sampled
   posterior draws as the native uncertainty path with optional fitted random
@@ -30,9 +32,32 @@
   SOP prediction, MVN inference with full `rms::robcov()` covariance matrices,
   refit bootstrap inference, and score-bootstrap inference via
   `inferences(..., engine = "score_bootstrap", cluster = <id>)`.
+- Added `orm_markov()` and `blrm_markov()`, and expanded
+  `vglm_markov(id_var = ...)`, so wrapper-fitted models store their original
+  longitudinal data and ID variable, frequentist wrappers compute
+  cluster-robust covariance automatically, and `sops()`/`avg_sops()` can extract
+  one prediction row per patient when `newdata = NULL`.
+- `orm_markov()` now stores an update-safe `rms::orm()` call so fractional
+  weighted bootstrap refits work for grouped and ungrouped `sops()` objects.
+- `sops()` and `avg_sops()` now treat user-supplied `newdata` rows as fixed
+  prediction or standardization profiles, regenerate their internal `rowid`
+  values, and reserve `id_var` for stored-data extraction, refit bootstrap
+  clustering, and `blrm` random-effect prediction.
 - `inferences()` now supports fractional weighted bootstrap refits via
   `method = "bootstrap", engine = "fwb"`, using mean-one exponential
   patient-level weights for fitting and weighted SOP marginalization.
+- `inferences()` now treats user-supplied `avg_sops(newdata = ...)`
+  standardization profiles as fixed targets for score bootstrap and FWB
+  inference: coefficient/refit uncertainty still comes from the original data,
+  but profile averaging is unweighted and a warning reports that
+  `baseline_weights` were set to `NULL`.
+- `inferences()` now accepts `Matrix` package covariance objects returned by
+  `rms::robcov()` for `orm_markov()` fits by coercing them to base matrices
+  before coefficient/covariance validation.
+- `inferences(method = "bootstrap", engine = "fwb")` now supports individual
+  `sops()` objects when full refit data and `id_var` metadata are available.
+  Ordinary standard bootstrap remains limited to `avg_sops()` because it can
+  drop state support needed by fixed individual prediction rows.
 - `interpolate_sops()` maps visit-scale SOP output to real elapsed time with
   optional empirical baseline anchoring, and `time_in_state()` can now compute
   trapezoidal real-time AUC while `soprob_markov()`, `sops()`, and `avg_sops()`
@@ -41,6 +66,9 @@
   supports model-derived SOP summaries from `avg_sops()` and `inferences()`,
   including confidence ribbons for line plots and low-alpha draw overlays for
   stacked bar plots when draws are stored.
+- `plot_sops()` now respects the stored `ylevels` order on model-derived SOP
+  objects, so character state labels such as `"10"` no longer sort before
+  `"2"` in color and fill scales.
 - `prepare_markov_data()`, `soprob_markov()`, `avg_sops()`, and `inferences()`
   now support numeric previous-state effects, including nonlinear terms such as
   `rms::rcs(yprev, 6)`, while preserving factor previous-state behavior by

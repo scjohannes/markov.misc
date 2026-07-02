@@ -464,6 +464,11 @@ plot_sops_select_draw_ids <- function(draw_ids, n_draws) {
 }
 
 plot_sops_state_levels <- function(data, state_var) {
+  ylevels <- attr(data, "ylevels", exact = TRUE)
+  if (!is.null(ylevels)) {
+    return(as_state_labels(ylevels))
+  }
+
   if (is.factor(data[[state_var]])) {
     return(levels(data[[state_var]]))
   }

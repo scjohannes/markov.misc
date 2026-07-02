@@ -86,7 +86,7 @@ describe("avg_sops() and inferences() pipeline", {
 
   fit_inline_pipeline_model <- function(data) {
     suppressWarnings(
-      markov.misc::vglm.markov(
+      markov.misc::vglm_markov(
         ordered(y) ~ rms::rcs(time, 4) * tx + yprev + age,
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
         data = data
@@ -96,7 +96,7 @@ describe("avg_sops() and inferences() pipeline", {
 
   fit_numeric_yprev_model <- function(data) {
     suppressWarnings(
-      markov.misc::vglm.markov(
+      markov.misc::vglm_markov(
         ordered(y) ~ rms::rcs(time, 4) * tx + rms::rcs(yprev, 6),
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
         data = data
@@ -571,7 +571,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     avg <- markov.misc::avg_sops(
       model = model,
-      newdata = case$data,
+      refit_data = case$data,
       variables = "tx",
       times = 1:8,
       ylevels = case$ylevels,
@@ -618,7 +618,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     avg <- markov.misc::avg_sops(
       model = model,
-      newdata = case$data,
+      refit_data = case$data,
       variables = "tx",
       times = 1:8,
       ylevels = case$ylevels,
@@ -659,7 +659,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     avg <- markov.misc::avg_sops(
       model = model,
-      newdata = case$data,
+      refit_data = case$data,
       variables = "tx",
       times = 1:7,
       ylevels = case$ylevels,
@@ -691,7 +691,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     avg <- markov.misc::avg_sops(
       model = robust_model,
-      newdata = case$baseline,
+      refit_data = case$data,
       variables = "tx",
       times = 1:8,
       ylevels = case$ylevels,
@@ -701,7 +701,7 @@ describe("avg_sops() and inferences() pipeline", {
       t_covs = case$t_covs,
       id_var = "id"
     )
-    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$baseline))
+    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$data))
 
     withr::local_seed(4403)
     inferred <- markov.misc::inferences(
@@ -741,7 +741,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     avg <- markov.misc::avg_sops(
       model = robust_model,
-      newdata = case$baseline,
+      refit_data = case$data,
       variables = "tx",
       times = 1:7,
       ylevels = case$ylevels,
@@ -853,7 +853,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     explicit_avg <- markov.misc::avg_sops(
       model = explicit_robust,
-      newdata = case$baseline,
+      refit_data = case$data,
       variables = "tx",
       times = 1:8,
       ylevels = case$ylevels,
@@ -865,7 +865,7 @@ describe("avg_sops() and inferences() pipeline", {
     )
     inline_avg <- markov.misc::avg_sops(
       model = inline_robust,
-      newdata = case$baseline,
+      refit_data = case$data,
       variables = "tx",
       times = 1:8,
       ylevels = case$ylevels,
@@ -914,7 +914,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(inline_draws$draw, explicit_draws$draw, tolerance = 1e-10)
   })
 
-  test_that("full-PO vglm.markov() with inline rcs matches VGAM::vglm()", {
+  test_that("full-PO vglm_markov() with inline rcs matches VGAM::vglm()", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
 
@@ -938,7 +938,7 @@ describe("avg_sops() and inferences() pipeline", {
       )
     )
     markov_fit <- suppressWarnings(
-      markov.misc::vglm.markov(
+      markov.misc::vglm_markov(
         form,
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
         data = data
@@ -960,7 +960,7 @@ describe("avg_sops() and inferences() pipeline", {
     )
   })
 
-  test_that("inline rcs vglm.markov() model can use column-level PPO constraints", {
+  test_that("inline rcs vglm_markov() model can use column-level PPO constraints", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
 
@@ -978,7 +978,7 @@ describe("avg_sops() and inferences() pipeline", {
     form <- ordered(y) ~ rms::rcs(time, 4) + tx + age + yprev
 
     fit_po <- suppressWarnings(
-      markov.misc::vglm.markov(
+      markov.misc::vglm_markov(
         form,
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
         data = data
@@ -1001,7 +1001,7 @@ describe("avg_sops() and inferences() pipeline", {
     )
 
     fit_ppo <- suppressWarnings(
-      markov.misc::vglm.markov(
+      markov.misc::vglm_markov(
         form,
         family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
         data = data,
@@ -1031,7 +1031,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_true(all(is.finite(out$estimate)))
   })
 
-  test_that("vglm.markov() constrained PPO matches explicit spline basis", {
+  test_that("vglm_markov() constrained PPO matches explicit spline basis", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
 
@@ -1090,7 +1090,7 @@ describe("avg_sops() and inferences() pipeline", {
 
     inline_form <- ordered(y) ~ rms::rcs(time, 4) + tx + age + yprev
     inline_po <- suppressWarnings(
-      markov.misc::vglm.markov(
+      markov.misc::vglm_markov(
         inline_form,
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
         data = data
@@ -1115,7 +1115,7 @@ describe("avg_sops() and inferences() pipeline", {
     )
 
     inline_fit <- suppressWarnings(
-      markov.misc::vglm.markov(
+      markov.misc::vglm_markov(
         inline_form,
         family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
         data = data,

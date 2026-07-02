@@ -21,8 +21,8 @@ knitr::opts_chunk$set(
 
 When the outcome has many ordered levels, a categorical previous-state effect can become too large. We can instead model the previous state effect using a restricted cubic spline to allow for non-linear effects.
 
-This vignette simulates a 30-level quality-of-life outcome and fits an `orm()`
-transition model with `rms::rcs(yprev, 5)`.
+This vignette simulates a 30-level quality-of-life outcome and fits an
+`orm_markov()` transition model with `rms::rcs(yprev, 5)`.
 
 ## Simulate Many Ordered States
 
@@ -50,19 +50,14 @@ raw_data <- sim_trajectories_brownian(
   sigma_rw = 0.18,
   mu_drift = -0.08,
   mu_quad = 0.005,
-  mu_treatment_effect = -0.01,
+  mu_treatment_effect = 0.08,
   treatment_prob = 0.5,
   drift_change_times = NULL,
   latent_dist = "normal",
   seed = SEED
 )
 
-summary_table <- data.frame(
-  patients = length(unique(raw_data$id)),
-  rows = nrow(raw_data),
-  observed_states = length(unique(raw_data$y))
-)
-summary_table
+plot_sops(raw_data, geom = "bar")
 ```
 
 ## Fit `rcs(yprev, 5)`
@@ -81,11 +76,10 @@ model_data$y <- ordered(model_data$y, levels = STATE_LEVELS)
 dd <- rms::datadist(model_data)
 options(datadist = "dd")
 
-fit_many <- rms::orm(
+fit_many <- orm_markov(
   y ~ rms::rcs(time, 4) + tx + rms::rcs(yprev, 5),
   data = model_data,
-  x = TRUE,
-  y = TRUE,
+  id_var = "id",
   opt_method = "LM",
   scale = TRUE,
   penalty = 0.1,
@@ -98,17 +92,14 @@ fit_many
 ## SOPs
 
 ```{r avg-sops}
-baseline_data <- model_data[model_data$time == 1, , drop = FALSE]
-
 sop_many <- avg_sops(
   fit_many,
-  newdata = baseline_data,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
   ylevels = fit_many$yunique,
-  pvarname = "yprev",
-  id_var = "id"
-)
+  pvarname = "yprev"
+) |> 
+  inferences(n_sim = 10)
 
 sop_many[
   sop_many$time == FOLLOW_UP &

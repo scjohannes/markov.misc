@@ -1,8 +1,8 @@
 ---
-title:  "Time as a Factor with orm()"
+title:  "Time as a Factor with orm_markov()"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Time as a Factor with orm()}
+  %\VignetteIndexEntry{Time as a Factor with orm_markov()}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -22,8 +22,8 @@ knitr::opts_chunk$set(
 Outcome assessments may happen at scheduled visits rather than a regular daily
 grid, without the possibility of accurately reconstructing daily states. This
 vignette starts from simulated daily ACTT-2-style trajectories, keeps only days
-3, 7, 14, and 21, and fits an `rms::orm()` transition model where `time` is a
-visit factor.
+3, 7, 14, and 21, and fits an `orm_markov()` transition model where `time` is
+a visit factor.
 
 ## Visit Data
 
@@ -92,27 +92,24 @@ model. The returned SOPs are on the visit scale.
 dd <- rms::datadist(model_data)
 options(datadist = "dd")
 
-fit_visit <- rms::orm(
+fit_visit <- orm_markov(
   y ~ tx + time + yprev,
   data = model_data,
-  x = TRUE,
-  y = TRUE,
+  id_var = "id",
   opt_method = "LM",
   scale = TRUE,
   penalty = 0.1,
   maxit = 100
 )
 
-baseline_data <- model_data[!duplicated(model_data$id), , drop = FALSE]
-
 sop_visit <- avg_sops(
   fit_visit,
-  newdata = baseline_data,
   variables = list(tx = c(0, 1)),
   times = NULL,
   ylevels = fit_visit$yunique,
-  id_var = "id"
-)
+  absorb = as.character(ABSORB)
+) |> 
+  inferences(n_sim = 100)
 
 attr(sop_visit, "avg_args")$times
 ```

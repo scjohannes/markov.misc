@@ -14,8 +14,9 @@
 #'   \itemize{
 #'     \item `"simulation"` (default): Uses simulation engines that do not
 #'       refit models. Works for both individual and averaged SOPs.
-#'     \item `"bootstrap"`: Resamples patients with replacement, refits model.
-#'  Only works for `markov_avg_sops` objects.
+#'     \item `"bootstrap"`: Refits the model on resampled or weighted patient
+#'       data. Standard resampling works for `markov_avg_sops`; fractional
+#'       weighted bootstrap also works for individual `markov_sops`.
 #'   }
 #' @param engine Character. Inference engine. For `method = "simulation"`:
 #'   \itemize{
@@ -26,8 +27,10 @@
 #'   }
 #'   For `method = "bootstrap"`, use `"standard"` for ordinary patient
 #'   resampling with replacement or `"fwb"` for fractional weighted bootstrap
-#'   refits using exponential patient-level weights. The legacy default
-#'   `"mvn"` maps to `"standard"` when `method = "bootstrap"`.
+#'   refits using exponential patient-level weights. `engine = "fwb"` is the
+#'   only refit-bootstrap engine supported for individual `sops()` objects. The
+#'   legacy default `"mvn"` maps to `"standard"` when
+#'   `method = "bootstrap"`.
 #' @param score_weight_dist Character. Cluster weight distribution for
 #'   `engine = "score_bootstrap"`. Currently only `"exponential"` is supported.
 #' @param n_sim Number of simulation draws (for simulation) or bootstrap
@@ -95,9 +98,19 @@
 #' 2. Refit model on bootstrap sample (handles missing states through releveling)
 #' 3. Compute SOPs using G-computation
 #' 4. Compute percentile-based confidence intervals
-#' Bootstrap requires the full longitudinal dataset (all time
-#' points) in the original `newdata` passed to `avg_sops()`, not just baseline
-#' data. This is because the model must be refit on each bootstrap sample.
+#' Bootstrap requires the full longitudinal dataset (all time points) either in
+#' the original `newdata`/`refit_data` passed to `sops()` or `avg_sops()`, or
+#' stored on the model by [orm_markov()], [blrm_markov()], or [vglm_markov()].
+#' Standard bootstrap is intentionally limited to marginal `avg_sops()` objects
+#' because ordinary resampling can drop outcome-state support needed by fixed
+#' individual prediction rows. Fractional weighted bootstrap keeps every row in
+#' the refit data with positive patient-level weights, so it is available for
+#' individual `sops()` objects.
+#'
+#' For marginal `avg_sops()` objects built from user-supplied `newdata`, the
+#' supplied rows are fixed standardization profiles. Score bootstrap and FWB use
+#' the original/refit data for coefficient or refit uncertainty, but set
+#' `baseline_weights = NULL` and average the fixed profiles equally.
 #'
 #'
 #' This design ensures consistency: the same vcov is used for both point
@@ -108,50 +121,45 @@
 #'
 #' @examples
 #' \dontrun{
-#' # Step 1: Fit model and wrap with cluster-robust vcov
-#' fit <- vglm(y ~ time + tx + yprev, family = cumulative(reverse = TRUE,
-#' parallel = TRUE), data = data)
-#' fit_robust <- robcov_vglm(fit, cluster = data$id)
+#' # Step 1: Fit model with stored data and cluster-robust vcov
+#' fit_robust <- vglm_markov(
+#'   ordered(y) ~ time + tx + yprev,
+#'   family = cumulative(reverse = TRUE, parallel = TRUE),
+#'   data = data,
+#'   id_var = "id"
+#' )
 #'
-#' # Step 2a: Simulation inference (use baseline data only)
-#' baseline_data <- data |> filter(time == 1)
+#' # Step 2a: Simulation inference
 #' result_sim <- avg_sops(
 #'   model = fit_robust,
-#'   newdata = baseline_data,  # Baseline only for simulation
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
 #'   ylevels = factor(1:6),
-#'   absorb = "6",
-#'   id_var = "id"
+#'   absorb = "6"
 #' ) |>
 #'   inferences(method = "simulation", n_sim = 1000)
 #'
 #' # Step 2a-bis: Score bootstrap simulation (requires robcov_vglm)
 #' result_score <- avg_sops(
 #'   model = fit_robust,
-#'   newdata = baseline_data,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
 #'   ylevels = factor(1:6),
-#'   absorb = "6",
-#'   id_var = "id"
+#'   absorb = "6"
 #' ) |>
 #'   inferences(method = "simulation", engine = "score_bootstrap", n_sim = 1000)
 #'
-#' # orm fits use rms::robcov() for full robust covariance matrices.
+#' # orm_markov() uses rms::robcov() for full robust covariance matrices.
 #' dd <- rms::datadist(data)
 #' options(datadist = "dd")
-#' fit_orm <- rms::orm(y ~ time + tx + yprev, data = data, x = TRUE, y = TRUE)
-#' fit_orm_robust <- rms::robcov(fit_orm, cluster = data$id)
+#' fit_orm <- orm_markov(y ~ time + tx + yprev, data = data, id_var = "id")
 #'
 #' avg_orm <- avg_sops(
-#'   model = fit_orm_robust,
-#'   newdata = baseline_data,
+#'   model = fit_orm,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
 #'   ylevels = factor(1:6),
-#'   absorb = "6",
-#'   id_var = "id"
+#'   absorb = "6"
 #' )
 #' result_orm <- avg_orm |>
 #'   inferences(method = "simulation", engine = "mvn", n_sim = 1000)
@@ -164,26 +172,31 @@
 #'     n_sim = 1000
 #'   )
 #'
-#' # Step 2b: Bootstrap inference (must use full data)
+#' # Step 2b: Bootstrap inference reuses stored full data
 #' result_boot <- avg_sops(
 #'   model = fit_robust,
-#'   newdata = data,  # Full longitudinal data for bootstrap
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
 #'   ylevels = factor(1:6),
-#'   absorb = "6",
-#'   id_var = "id"
+#'   absorb = "6"
 #' ) |>
 #'   inferences(method = "bootstrap", n_sim = 500)
 #'
 #' # Individual-level SOPs with simulation inference
 #' ind_result <- sops(
 #'   model = fit_robust,
-#'   newdata = baseline_data,
 #'   times = 1:60,
 #'   ylevels = factor(1:6),
 #'   absorb = "6") |>
 #'   inferences(n_sim = 500)
+#'
+#' # Individual-level refit bootstrap uses FWB.
+#' ind_boot <- sops(
+#'   model = fit_robust,
+#'   times = 1:60,
+#'   ylevels = factor(1:6),
+#'   absorb = "6") |>
+#'   inferences(method = "bootstrap", engine = "fwb", n_sim = 500)
 #'
 #' # Extract draws for custom analyses
 #' get_draws(ind_result)
@@ -321,6 +334,8 @@ inferences_simulation <- function(
   # --- 1. Extract Stored Attributes ---
   model <- attr(object, "model")
   newdata_orig <- attr(object, "newdata_orig")
+  newdata_pred_stored <- attr(object, "newdata_pred")
+  newdata_supplied <- isTRUE(attr(object, "newdata_supplied"))
   call_args <- attr(object, "call_args")
   avg_args <- attr(object, "avg_args")
 
@@ -355,14 +370,27 @@ inferences_simulation <- function(
   # --- 2. Prepare Prediction Data (COMPUTED ONCE) ---
   if (is_avg) {
     # For avg_sops: create counterfactual datasets
-    baseline_data <- newdata_orig[!duplicated(newdata_orig[[id_var]]), ]
     grid <- do.call(expand.grid, variables)
-    newdata_pred <- create_counterfactual_data(baseline_data, grid, variables)
     n_cf <- nrow(grid)
-    n_each <- nrow(baseline_data)
+    if (!is.null(newdata_pred_stored)) {
+      newdata_pred <- newdata_pred_stored
+      if (nrow(newdata_pred) %% n_cf != 0L) {
+        stop("Stored prediction data is not aligned with counterfactual grid.")
+      }
+      n_each <- nrow(newdata_pred) / n_cf
+      baseline_data <- newdata_pred[seq_len(n_each), , drop = FALSE]
+    } else {
+      baseline_data <- resolve_markov_prediction_data(
+        newdata_orig,
+        id_var = id_var,
+        tvarname = tvarname
+      )
+      newdata_pred <- create_counterfactual_data(baseline_data, grid, variables)
+      n_each <- nrow(baseline_data)
+    }
   } else {
     # For individual sops: use data directly
-    newdata_pred <- newdata_orig
+    newdata_pred <- newdata_pred_stored %||% newdata_orig
     grid <- NULL
     n_cf <- 1
     n_each <- nrow(newdata_pred)
@@ -410,14 +438,20 @@ inferences_simulation <- function(
 
     score_draws <- generate_score_bootstrap_draws(
       model = model,
-      baseline_data = baseline_data,
+      baseline_data = if (newdata_supplied) NULL else baseline_data,
       id_var = id_var,
       n_sim = n_sim,
       score_weight_dist = score_weight_dist,
-      cluster = cluster
+      cluster = cluster,
+      return_baseline_weights = !newdata_supplied
     )
     beta_draws <- score_draws$beta_draws
-    baseline_weights_draws <- score_draws$baseline_weights
+    baseline_weights_draws <- if (newdata_supplied) {
+      warn_fixed_profile_bootstrap_weights("score-bootstrap")
+      NULL
+    } else {
+      score_draws$baseline_weights
+    }
   } else {
     stop("Unknown simulation engine: ", engine)
   }
@@ -679,4 +713,14 @@ inferences_simulation <- function(
   }
 
   final_result
+}
+
+warn_fixed_profile_bootstrap_weights <- function(engine) {
+  warning(
+    "User-supplied `newdata` is treated as fixed standardization profiles; ",
+    engine,
+    " baseline weights have been set to NULL and profiles will be averaged ",
+    "equally.",
+    call. = FALSE
+  )
 }

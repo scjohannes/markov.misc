@@ -1,8 +1,8 @@
 ---
-title: "Partial Proportional-Odds SOPs with vglm()"
+title: "Partial Proportional-Odds SOPs with vglm_markov()"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Partial Proportional-Odds SOPs with vglm()}
+  %\VignetteIndexEntry{Partial Proportional-Odds SOPs with vglm_markov()}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -19,7 +19,7 @@ knitr::opts_chunk$set(
 )
 ```
 
-Partial proportional-odds models can relax the proportional-odds assumption for selected predictors while keeping the rest of the transition model parsimonious. This vignette fits such a model with `vglm.markov()`, allowing the linear time basis to deviate from
+Partial proportional-odds models can relax the proportional-odds assumption for selected predictors while keeping the rest of the transition model parsimonious. This vignette fits such a model with `vglm_markov()`, allowing the linear time basis to deviate from
 proportional odds while treatment and previous state remain proportional.
 
 ## Simulate Data
@@ -61,20 +61,20 @@ raw_data <- sim_actt2_brownian(
   collapse_actt2_states()
 
 model_data <- prepare_markov_data(raw_data, absorbing_state = 6)
-baseline_data <- model_data[!duplicated(model_data$id), , drop = FALSE]
 ```
 
 ## Constraint
 ```{r fit-ppo}
 form <- ordered(y) ~ tx + rms::rcs(time, 4) + yprev
 
-fit_po <- vglm.markov(
+fit_po <- vglm_markov(
   form,
   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-  data = model_data
+  data = model_data,
+  id_var = "id"
 )
 
-constraints <- fit_po@constraints
+constraints <- fit_po$vglm_fit@constraints
 linear_time_term <- grep(
   "^rms::rcs\\(time, 4\\).*time$",
   names(constraints),
@@ -90,20 +90,21 @@ constraints[[linear_time_term]] <- cbind(
   linear_deviation = seq_len(n_thresholds) - 1
 )
 
-fit_ppo <- vglm.markov(
+fit_ppo <- vglm_markov(
   form,
   family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
   data = model_data,
+  id_var = "id",
   constraints = constraints,
-  etastart = fit_po@predictors
+  etastart = fit_po$vglm_fit@predictors
 )
-fit_ppo@call$constraints <- constraints
+fit_ppo$vglm_fit@call$constraints <- constraints
 
 data.frame(
   model = c("Full PO", "Linear-time PPO"),
   log_likelihood = c(
-    as.numeric(stats::logLik(fit_po)),
-    as.numeric(stats::logLik(fit_ppo))
+    as.numeric(stats::logLik(fit_po$vglm_fit)),
+    as.numeric(stats::logLik(fit_ppo$vglm_fit))
   ),
   coefficients = c(length(stats::coef(fit_po)), length(stats::coef(fit_ppo)))
 )
@@ -114,15 +115,12 @@ data.frame(
 ```{r avg-sops}
 sop_ppo <- avg_sops(
   fit_ppo,
-  newdata = baseline_data,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
   ylevels = factor(STATE_LEVELS, levels = STATE_LEVELS),
-  absorb = ABSORB,
-  id_var = "id"
-)
-
-head(sop_ppo)
+  absorb = ABSORB
+) |> 
+  inferences(n_sim = 100)
 ```
 
 ```{r plot-ppo}
@@ -136,5 +134,3 @@ plot_sops(
     y = "State occupancy probability"
   )
 ```
-
-## References

@@ -8,17 +8,36 @@ test_that("sops() validates inputs and supports stratified aggregation", {
   )
   sops_array <- array(
     c(
-      0.1, 0.2, 0.3,
-      0.4, 0.5, 0.6,
-      0.9, 0.8, 0.7,
-      0.6, 0.5, 0.4
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.9,
+      0.8,
+      0.7,
+      0.6,
+      0.5,
+      0.4
     ),
     dim = c(3, 2, 2)
   )
 
   with_mocked_bindings(
     validate_markov_model = function(object) NULL,
-    soprob_markov = function(object, data, times, ylevels, absorb, tvarname, pvarname, gap, t_covs, ...) {
+    soprob_markov = function(
+      object,
+      data,
+      times,
+      ylevels,
+      absorb,
+      tvarname,
+      pvarname,
+      gap,
+      t_covs,
+      ...
+    ) {
       expect_equal(times, c(1, 2))
       expect_equal(ylevels, c(1, 2))
       sops_array
@@ -26,7 +45,7 @@ test_that("sops() validates inputs and supports stratified aggregation", {
     {
       expect_error(
         sops(model, newdata = NULL, times = 1, ylevels = 1:2),
-        "Please provide `newdata`",
+        "Provide newdata",
         fixed = TRUE
       )
       expect_error(
@@ -40,7 +59,13 @@ test_that("sops() validates inputs and supports stratified aggregation", {
         fixed = TRUE
       )
       expect_error(
-        sops(model, newdata = newdata, times = 1:2, ylevels = 1:2, by = "missing"),
+        sops(
+          model,
+          newdata = newdata,
+          times = 1:2,
+          ylevels = 1:2,
+          by = "missing"
+        ),
         "not found in newdata",
         fixed = TRUE
       )
@@ -91,7 +116,18 @@ test_that("sops() infers ylevels from supported model containers", {
 
   with_mocked_bindings(
     validate_markov_model = function(object) NULL,
-    soprob_markov = function(object, data, times, ylevels, absorb, tvarname, pvarname, gap, t_covs, ...) {
+    soprob_markov = function(
+      object,
+      data,
+      times,
+      ylevels,
+      absorb,
+      tvarname,
+      pvarname,
+      gap,
+      t_covs,
+      ...
+    ) {
       expect_equal(ylevels, c("1", "2"))
       sops_array
     },
@@ -99,7 +135,10 @@ test_that("sops() infers ylevels from supported model containers", {
       vglm_model <- methods::new("vglm")
       vglm_model@extra <- list(colnames.y = c("1", "2"))
       vglm_model@family <- methods::new("vglmff")
-      vglm_model@call <- quote(VGAM::vglm(y ~ x, family = VGAM::cumulative(reverse = TRUE)))
+      vglm_model@call <- quote(VGAM::vglm(
+        y ~ x,
+        family = VGAM::cumulative(reverse = TRUE)
+      ))
 
       robust_model <- list(extra = list(colnames.y = c("1", "2")))
       class(robust_model) <- "robcov_vglm"
@@ -182,13 +221,21 @@ test_that("avg_sops() validates inputs and preserves grouping metadata", {
         "Provide newdata",
         fixed = TRUE
       )
-      expect_error(
-        avg_sops(model, newdata = data.frame(tx = 0), variables = "tx", times = 1),
-        "ID variable 'id' not found",
-        fixed = TRUE
+      expect_no_error(
+        avg_sops(
+          model,
+          newdata = data.frame(tx = 0),
+          variables = "tx",
+          times = 1
+        )
       )
       expect_error(
-        avg_sops(model, newdata = newdata, variables = list(missing = 1), times = 1),
+        avg_sops(
+          model,
+          newdata = newdata,
+          variables = list(missing = 1),
+          times = 1
+        ),
         "Variables not in data",
         fixed = TRUE
       )
@@ -313,7 +360,10 @@ test_that("get_draws() preserves covariates for individual SOP draws", {
   orig_row <- data[sample_row$rowid, ]
 
   expect_s3_class(draws, "data.frame")
-  expect_contains(names(draws), c("draw_id", "rowid", "time", "state", "estimate"))
+  expect_contains(
+    names(draws),
+    c("draw_id", "rowid", "time", "state", "estimate")
+  )
   expect_contains(names(draws), c("tx", "age"))
   expect_equal(sample_row$tx, orig_row$tx)
   expect_equal(sample_row$age, orig_row$age)
@@ -416,7 +466,18 @@ test_that("standardize_sops() validates inputs and marginalizes arrays", {
 
   with_mocked_bindings(
     validate_markov_model = function(object) NULL,
-    soprob_markov = function(object, data, times, ylevels, absorb, tvarname, pvarname, gap, t_covs, ...) {
+    soprob_markov = function(
+      object,
+      data,
+      times,
+      ylevels,
+      absorb,
+      tvarname,
+      pvarname,
+      gap,
+      t_covs,
+      ...
+    ) {
       if (all(data$tx == 1)) {
         array(
           c(0.8, 0.6, 0.2, 0.4, 0.7, 0.5, 0.3, 0.5),
@@ -538,10 +599,14 @@ test_that("time_in_state() handles bootstrap data frames", {
 test_that("time_in_state() handles arrays and validation branches", {
   arr3 <- array(
     c(
-      0.8, 0.6,
-      0.2, 0.4,
-      0.7, 0.5,
-      0.3, 0.5
+      0.8,
+      0.6,
+      0.2,
+      0.4,
+      0.7,
+      0.5,
+      0.3,
+      0.5
     ),
     dim = c(2, 2, 2),
     dimnames = list(NULL, NULL, c("1", "2"))
@@ -556,7 +621,11 @@ test_that("time_in_state() handles arrays and validation branches", {
   expect_equal(time_in_state(arr3, target_states = "1"), c(1.0, 1.0))
   expect_equal(dim(time_in_state(arr4, target_states = c("1", "2"))), c(2L, 2L))
   expect_equal(time_in_state(unnamed, target_states = 1), c(0.4, 1.6))
-  expect_error(time_in_state(1:3), "must be an array or data frame", fixed = TRUE)
+  expect_error(
+    time_in_state(1:3),
+    "must be an array or data frame",
+    fixed = TRUE
+  )
   expect_error(time_in_state(matrix(1, 2, 2)), "must be 3D or 4D", fixed = TRUE)
   expect_error(
     time_in_state(arr3, target_states = "3"),
@@ -589,7 +658,10 @@ test_that("low-level SOP helpers validate model families and state metadata", {
     "argument is missing|Cannot determine"
   )
 
-  model@call <- quote(VGAM::vglm(y ~ x, family = VGAM::cumulative(reverse = FALSE)))
+  model@call <- quote(VGAM::vglm(
+    y ~ x,
+    family = VGAM::cumulative(reverse = FALSE)
+  ))
   expect_error(
     markov.misc:::validate_markov_model(model),
     "must use reverse = TRUE",

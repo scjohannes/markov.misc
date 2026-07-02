@@ -6,7 +6,7 @@ test_that("score-bootstrap simulation adds CIs and metadata for avg_sops", {
   withr::local_seed(2001)
   result <- avg_sops(
     model = case$model,
-    newdata = case$baseline,
+    refit_data = case$data,
     variables = list(tx = c(0, 1)),
     times = case$times,
     ylevels = case$ylevels,
@@ -37,7 +37,7 @@ test_that("score-bootstrap simulation stores draw-level output with expected str
   withr::local_seed(2002)
   result <- avg_sops(
     model = case$model,
-    newdata = case$baseline,
+    refit_data = case$data,
     variables = list(tx = c(0, 1)),
     times = case$times,
     ylevels = case$ylevels,
@@ -60,6 +60,45 @@ test_that("score-bootstrap simulation stores draw-level output with expected str
   expect_all_true(is.finite(draws$estimate))
 })
 
+test_that("score-bootstrap treats supplied newdata as fixed profiles", {
+  skip_if_not_installed("VGAM")
+  skip_if_not_installed("rms")
+
+  case <- make_score_bootstrap_case(seed = 2010)
+  profiles <- case$baseline[seq_len(5), , drop = FALSE]
+  profiles <- profiles[, setdiff(names(profiles), "id"), drop = FALSE]
+
+  avg <- avg_sops(
+    model = case$model,
+    newdata = profiles,
+    refit_data = case$data,
+    variables = list(tx = c(0, 1)),
+    times = case$times[1:2],
+    ylevels = case$ylevels,
+    absorb = case$absorb,
+    id_var = "id"
+  )
+
+  withr::local_seed(2010)
+  expect_warning(
+    result <- inferences(
+      avg,
+      method = "simulation",
+      engine = "score_bootstrap",
+      n_sim = 3,
+      return_draws = TRUE
+    ),
+    "baseline weights have been set to NULL"
+  )
+
+  draws <- get_draws(result)
+
+  expect_equal(attr(result, "n_successful"), 3L)
+  expect_equal(nrow(attr(avg, "newdata_pred")), nrow(profiles) * 2L)
+  expect_contains(names(draws), c("draw_id", "estimate", "time", "state", "tx"))
+  expect_false("id" %in% names(draws))
+})
+
 test_that("score-bootstrap simulation does not expose draws when return_draws is FALSE", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
@@ -68,7 +107,7 @@ test_that("score-bootstrap simulation does not expose draws when return_draws is
   withr::local_seed(2003)
   result <- avg_sops(
     model = case$model,
-    newdata = case$baseline,
+    refit_data = case$data,
     variables = list(tx = c(0, 1)),
     times = case$times,
     ylevels = case$ylevels,
@@ -94,7 +133,7 @@ test_that("score-bootstrap simulation rejects user-supplied vcov", {
 
   avg_result <- avg_sops(
     model = case$model,
-    newdata = case$baseline,
+    refit_data = case$data,
     variables = list(tx = c(0, 1)),
     times = case$times,
     ylevels = case$ylevels,
@@ -121,7 +160,7 @@ test_that("score-bootstrap simulation validates score_weight_dist", {
   case <- make_score_bootstrap_case(seed = 2005)
   avg_result <- avg_sops(
     model = case$model,
-    newdata = case$baseline,
+    refit_data = case$data,
     variables = list(tx = c(0, 1)),
     times = case$times,
     ylevels = case$ylevels,
@@ -145,7 +184,11 @@ test_that("generate_score_bootstrap_draws returns valid dimensions and normalize
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
-  case <- make_score_bootstrap_case(seed = 2006, n_patients = 35, follow_up_time = 8)
+  case <- make_score_bootstrap_case(
+    seed = 2006,
+    n_patients = 35,
+    follow_up_time = 8
+  )
 
   draws <- generate_score_bootstrap_draws(
     model = case$model,

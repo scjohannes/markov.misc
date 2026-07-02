@@ -10,7 +10,8 @@ generate_score_bootstrap_draws(
   id_var,
   n_sim,
   score_weight_dist = "exponential",
-  cluster = NULL
+  cluster = NULL,
+  return_baseline_weights = TRUE
 )
 }
 \arguments{
@@ -18,7 +19,8 @@ generate_score_bootstrap_draws(
 \code{cluster} components, or an \code{orm} object fitted with \verb{x = TRUE, y = TRUE}.
 For \code{orm}, \code{cluster} must be supplied.}
 
-\item{baseline_data}{Baseline data (one row per patient).}
+\item{baseline_data}{Optional baseline data (one row per patient) used only
+when patient-level averaging weights should be returned.}
 
 \item{id_var}{Name of patient ID variable in \code{baseline_data}.}
 
@@ -28,6 +30,10 @@ For \code{orm}, \code{cluster} must be supplied.}
 \code{"exponential"} is supported.}
 
 \item{cluster}{Optional row-level cluster vector for \code{orm} models.}
+
+\item{return_baseline_weights}{Logical. If \code{TRUE}, return normalized
+patient-level averaging weights aligned to \code{baseline_data}. If \code{FALSE},
+only coefficient perturbations are generated.}
 }
 \value{
 A list with:

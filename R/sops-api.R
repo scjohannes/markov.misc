@@ -8,8 +8,13 @@
 #'
 #' @param model A fitted model object (e.g., `vglm`, `orm`, or `blrm`). For
 #'   `vglm` models, the family must be `cumulative(reverse = TRUE, ...)`.
-#' @param newdata Optional. A data frame of new data for prediction. If NULL,
-#'   uses the data used to fit the model.
+#' @param newdata Optional. A data frame of prediction profiles. When supplied,
+#'   every row is treated as a separate baseline profile and the internal
+#'   `rowid` column is regenerated. If `NULL`, uses the data stored by
+#'   [orm_markov()], [blrm_markov()], or [vglm_markov()] and extracts one
+#'   prediction row per `id_var`.
+#' @param refit_data Optional full longitudinal data used by bootstrap refit
+#'   inference. Defaults to data stored on wrapper-fitted models.
 #' @param times Visit-scale time points to estimate. For numeric time
 #'   variables this is usually a numeric vector. For factor-valued visit
 #'   indices, values are matched to fitted visit levels; if `NULL`, all
@@ -34,8 +39,10 @@
 #' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
 #'   fitted random-effect draws in posterior predictions for known IDs.
 #' @param id_var Character ID column used when `include_re = TRUE`. For `blrm`,
-#'   `NULL` is inferred from `model$clusterInfo$name` when available, otherwise
-#'   `"id"`.
+#'   `NULL` is inferred from wrapper metadata, then `model$clusterInfo$name`
+#'   when available, otherwise `"id"`. For frequentist models, `id_var` is used
+#'   for stored-data extraction and refit bootstrap metadata, not for ordinary
+#'   user-supplied prediction rows.
 #' @param n_draws Integer number of posterior draws to sample for `blrm`, or
 #'   `NULL` to use all stored draws. Defaults to 100.
 #' @param seed Optional random seed for reproducible random draw sampling.
@@ -115,6 +122,7 @@
 sops <- function(
   model,
   newdata = NULL,
+  refit_data = NULL,
   times = NULL,
   ylevels = NULL,
   absorb = NULL,
@@ -137,18 +145,39 @@ sops <- function(
   # Validate model compatibility
   validate_markov_model(model)
 
-  if (is.null(newdata)) {
-    stop("Please provide `newdata` (should be baseline data).")
+  data_res <- resolve_markov_source_data(model, newdata, refit_data)
+  newdata_orig <- data_res$source_data
+  refit_data <- data_res$refit_data
+  newdata_supplied <- data_res$newdata_supplied
+  id_var <- markov_model_id_var(model, id_var)
+
+  if (inherits(model, "blrm") && isTRUE(include_re)) {
+    id_var <- resolve_blrm_id_var(model, newdata_orig, id_var)
+    validate_markov_id_var(id_var, newdata_orig, "newdata")
   }
 
-  # Ensure rowid exists for tracking
-  if (!"rowid" %in% names(newdata)) {
-    newdata$rowid <- seq_len(nrow(newdata))
+  if (!is.null(id_var)) {
+    if (!is.null(refit_data)) {
+      validate_markov_id_var(id_var, refit_data, "refit_data")
+    }
   }
 
+  if (!newdata_supplied) {
+    if (is.null(id_var)) {
+      stop(
+        "Automatic SOP prediction from stored model data requires `id_var`. ",
+        "Fit with `orm_markov(id_var = ...)`, `blrm_markov(id_var = ...)`, ",
+        "`vglm_markov(id_var = ...)`, or supply explicit `newdata`."
+      )
+    }
+    validate_markov_id_var(id_var, newdata_orig, "stored model data")
+  }
+
+  # Resolve default times from the full supplied/stored data before extracting
+  # one prediction row per ID.
   time_res <- resolve_sop_times(
     model,
-    newdata,
+    newdata_orig,
     times,
     tvarname,
     t_covs = t_covs,
@@ -156,6 +185,17 @@ sops <- function(
   )
   times <- time_res$times
   validate_factor_gap(gap, t_covs, time_res$time_info)
+
+  newdata <- if (newdata_supplied) {
+    newdata_orig
+  } else {
+    resolve_markov_prediction_data(
+      newdata_orig,
+      id_var = id_var,
+      tvarname = tvarname
+    )
+  }
+  newdata <- ensure_markov_rowid(newdata)
 
   if (is.null(ylevels)) {
     # Try to infer from model
@@ -199,7 +239,10 @@ sops <- function(
       seed = seed,
       posterior_summary = posterior_summary,
       conf_level = conf_level,
-      return_draws = return_draws
+      return_draws = return_draws,
+      newdata_orig = newdata_orig,
+      refit_data = refit_data,
+      newdata_supplied = newdata_supplied
     ))
   }
 
@@ -229,7 +272,14 @@ sops <- function(
     class_name = "markov_sops",
     model = model,
     call_args = sops_call_args(
-      times, ylevels, absorb, tvarname, pvarname, p2varname, gap, t_covs,
+      times,
+      ylevels,
+      absorb,
+      tvarname,
+      pvarname,
+      p2varname,
+      gap,
+      t_covs,
       by = by
     ),
     tvarname = tvarname,
@@ -240,7 +290,13 @@ sops <- function(
     gap = gap,
     t_covs = t_covs,
     by = by,
-    newdata_orig = newdata
+    newdata_orig = newdata_orig,
+    extra_attrs = list(
+      newdata_pred = newdata,
+      refit_data = refit_data,
+      id_var = id_var,
+      newdata_supplied = newdata_supplied
+    )
   )
 }
 
@@ -262,7 +318,10 @@ sops_blrm <- function(
   seed,
   posterior_summary,
   conf_level,
-  return_draws
+  return_draws,
+  newdata_orig,
+  refit_data,
+  newdata_supplied
 ) {
   validate_sops_by(by, newdata)
 
@@ -365,7 +424,14 @@ sops_blrm <- function(
     class_name = "markov_sops",
     model = model,
     call_args = sops_call_args(
-      times, ylevels, absorb, tvarname, pvarname, p2varname, gap, t_covs,
+      times,
+      ylevels,
+      absorb,
+      tvarname,
+      pvarname,
+      p2varname,
+      gap,
+      t_covs,
       by = by,
       include_re = include_re,
       id_var = id_var,
@@ -382,7 +448,7 @@ sops_blrm <- function(
     gap = gap,
     t_covs = t_covs,
     by = by,
-    newdata_orig = newdata,
+    newdata_orig = newdata_orig,
     extra_attrs = list(
       method = "posterior",
       engine = "posterior",
@@ -390,7 +456,11 @@ sops_blrm <- function(
       draw_ids = draw_indices,
       conf_level = conf_level,
       posterior_summary = posterior_summary,
-      draws = draws_df
+      draws = draws_df,
+      newdata_pred = newdata,
+      refit_data = refit_data,
+      id_var = id_var,
+      newdata_supplied = newdata_supplied
     )
   )
 }
@@ -403,15 +473,31 @@ split_draw_indices <- function(draw_indices, chunk_size = NULL) {
   split(draw_indices, ceiling(seq_along(draw_indices) / chunk_size))
 }
 
-summarize_posterior_draw_matrix <- function(draw_values, posterior_summary, conf_level) {
+summarize_posterior_draw_matrix <- function(
+  draw_values,
+  posterior_summary,
+  conf_level
+) {
   alpha <- 1 - conf_level
   estimate <- switch(
     posterior_summary,
     mean = colMeans(draw_values, na.rm = TRUE),
     median = apply(draw_values, 2, stats::median, na.rm = TRUE)
   )
-  conf.low <- apply(draw_values, 2, stats::quantile, probs = alpha / 2, na.rm = TRUE)
-  conf.high <- apply(draw_values, 2, stats::quantile, probs = 1 - alpha / 2, na.rm = TRUE)
+  conf.low <- apply(
+    draw_values,
+    2,
+    stats::quantile,
+    probs = alpha / 2,
+    na.rm = TRUE
+  )
+  conf.high <- apply(
+    draw_values,
+    2,
+    stats::quantile,
+    probs = 1 - alpha / 2,
+    na.rm = TRUE
+  )
   std.error <- apply(draw_values, 2, stats::sd, na.rm = TRUE)
   data.frame(
     estimate = as.numeric(estimate),
@@ -421,28 +507,52 @@ summarize_posterior_draw_matrix <- function(draw_values, posterior_summary, conf
   )
 }
 
-summarize_posterior_draws_df <- function(draws_df, group_cols, posterior_summary, conf_level) {
+summarize_posterior_draws_df <- function(
+  draws_df,
+  group_cols,
+  posterior_summary,
+  conf_level
+) {
   alpha <- 1 - conf_level
   split_key <- interaction(draws_df[, group_cols, drop = FALSE], drop = TRUE)
   groups <- split(seq_len(nrow(draws_df)), split_key)
   out <- draws_df[vapply(groups, `[`, integer(1), 1L), group_cols, drop = FALSE]
   values <- lapply(groups, function(idx) draws_df$estimate[idx])
-  out$estimate <- vapply(values, function(x) {
-    switch(
-      posterior_summary,
-      mean = mean(x, na.rm = TRUE),
-      median = stats::median(x, na.rm = TRUE)
-    )
-  }, numeric(1))
-  out$conf.low <- vapply(values, stats::quantile, numeric(1), probs = alpha / 2, na.rm = TRUE)
-  out$conf.high <- vapply(values, stats::quantile, numeric(1), probs = 1 - alpha / 2, na.rm = TRUE)
+  out$estimate <- vapply(
+    values,
+    function(x) {
+      switch(
+        posterior_summary,
+        mean = mean(x, na.rm = TRUE),
+        median = stats::median(x, na.rm = TRUE)
+      )
+    },
+    numeric(1)
+  )
+  out$conf.low <- vapply(
+    values,
+    stats::quantile,
+    numeric(1),
+    probs = alpha / 2,
+    na.rm = TRUE
+  )
+  out$conf.high <- vapply(
+    values,
+    stats::quantile,
+    numeric(1),
+    probs = 1 - alpha / 2,
+    na.rm = TRUE
+  )
   out$std.error <- vapply(values, stats::sd, numeric(1), na.rm = TRUE)
   rownames(out) <- NULL
   out
 }
 
 sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
-  meta_cols <- setdiff(names(result), c("estimate", "conf.low", "conf.high", "std.error"))
+  meta_cols <- setdiff(
+    names(result),
+    c("estimate", "conf.low", "conf.high", "std.error")
+  )
   n_draws <- nrow(draw_values)
   n_cells <- ncol(draw_values)
   out <- result[rep(seq_len(n_cells), times = n_draws), meta_cols, drop = FALSE]
@@ -462,10 +572,13 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'
 #' @param model A fitted model object (e.g., `vglm`, `orm`, or `blrm`). For
 #'   `vglm` models, the family **must** be `cumulative(reverse = TRUE, ...)`.
-#' @param newdata Data frame for prediction. For **simulation inference**, pass
-#'   baseline data only (one row per patient). For **bootstrap inference**, you
-#'   must pass the full longitudinal dataset (all time points) since the model
-#'   needs to be refit on bootstrap samples. If NULL, extracts from model.
+#' @param newdata Optional data frame of standardization profiles. When
+#'   supplied, every row is treated as a separate baseline profile and the
+#'   internal `rowid` column is regenerated. If `NULL`, uses data stored by
+#'   [orm_markov()], [blrm_markov()], or [vglm_markov()] and extracts one
+#'   prediction row per `id_var`.
+#' @param refit_data Optional full longitudinal data used by bootstrap refit
+#'   inference. Defaults to data stored on wrapper-fitted models.
 #' @param variables A named list specifying the variable(s) to standardize over.
 #'   E.g., `list(tx = c(0, 1))` creates counterfactual datasets for treatment
 #'   and control.
@@ -477,8 +590,12 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'   `newdata`.
 #' @param id_var Name of the patient ID variable. Required for bootstrap
 #'   inference and for `blrm` random-effect prediction. If `NULL`, defaults to
-#'   `"id"`; for `blrm` models with `include_re = TRUE`, it is first inferred
-#'   from `model$clusterInfo$name` when available.
+#'   `"id"`; for wrapper-fitted models, it is inferred from stored metadata.
+#'   For user-supplied `newdata`, `id_var` is required only for `blrm` random
+#'   effects. Refit bootstrap inference uses `id_var` from `refit_data` or
+#'   wrapper-stored model data. For `blrm` models with `include_re = TRUE`,
+#'   `model$clusterInfo$name` is used before the final `"id"` fallback when
+#'   wrapper metadata is absent.
 #' @param p2varname Optional second previous-state variable. `NULL` uses a
 #'   first-order Markov recursion; a non-`NULL` column name uses a second-order
 #'   recursion.
@@ -532,32 +649,37 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'
 #' @examples
 #' \dontrun{
-#' # For simulation inference: use baseline data (one row per patient)
-#' baseline_data <- data |> filter(time == 1)
+#' fit <- vglm_markov(
+#'   ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
+#'   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+#'   data = data,
+#'   id_var = "id"
+#' )
+#'
+#' # Wrapper-fitted models can use stored data and extract baseline rows.
 #' result <- avg_sops(
 #'   model = fit,
-#'   newdata = baseline_data,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
 #'   ylevels = 1:6,
 #'   absorb = 6
 #' ) |> inferences(method = "simulation", n_sim = 500)
 #'
-#' # For bootstrap inference: must use full data (all time points)
+#' # Refit bootstrap can reuse the stored full longitudinal data.
 #' result_boot <- avg_sops(
 #'   model = fit,
-#'   newdata = data,  # Full longitudinal data
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
 #'   ylevels = 1:6,
 #'   absorb = 6
-#' ) |> inferences(method = "bootstrap", n_sim = 500)
+#' ) |> inferences(method = "bootstrap", engine = "fwb", n_sim = 500)
 #' }
 #'
 #' @export
 avg_sops <- function(
   model,
   newdata = NULL,
+  refit_data = NULL,
   variables = NULL,
   by = NULL,
   times = NULL,
@@ -574,6 +696,8 @@ avg_sops <- function(
   # --- 1. Input Validation ---
   # Validate model compatibility
   validate_markov_model(model)
+  args <- list(...)
+  tvarname <- args$tvarname %||% "time"
 
   if (is.null(variables)) {
     stop(
@@ -582,23 +706,28 @@ avg_sops <- function(
     )
   }
 
-  if (is.null(newdata)) {
-    stop("Provide newdata or ensure model stores data (x = TRUE).")
-  }
+  data_res <- resolve_markov_source_data(model, newdata, refit_data)
+  newdata_orig <- data_res$source_data
+  refit_data <- data_res$refit_data
+  newdata_supplied <- data_res$newdata_supplied
 
   if (inherits(model, "blrm") && isTRUE(include_re)) {
-    id_var <- resolve_blrm_id_var(model, newdata, id_var)
+    id_var <- resolve_blrm_id_var(model, newdata_orig, id_var)
+    validate_markov_id_var(id_var, newdata_orig, "newdata")
   } else {
-    id_var <- id_var %||% "id"
+    id_var <- markov_model_id_var(model, id_var) %||% "id"
   }
 
-  # Validate id_var exists
-  if (!id_var %in% names(newdata)) {
-    stop("ID variable '", id_var, "' not found in data.")
+  if (!is.null(refit_data)) {
+    validate_markov_id_var(id_var, refit_data, "refit_data")
+  }
+
+  if (!newdata_supplied) {
+    validate_markov_id_var(id_var, newdata_orig, "stored model data")
   }
 
   # Validate variables exist in data
-  missing_vars <- setdiff(names(variables), names(newdata))
+  missing_vars <- setdiff(names(variables), names(newdata_orig))
   if (length(missing_vars) > 0) {
     stop("Variables not in data: ", paste(missing_vars, collapse = ", "))
   }
@@ -606,16 +735,16 @@ avg_sops <- function(
   # --- 2. Extract Baseline Data (One Row Per Patient) ---
   # For standardization, we need unique patient baseline covariates
   # This matches standardize_sops() behavior
-  baseline_data <- newdata[!duplicated(newdata[[id_var]]), ]
-
-  # Could consider not checking ID, but taking tvarname as an argument and then
-  # filtering for min.
-  # newdata[newdata[, tvarname] == 1, ]
-
-  # Ensure rowid exists
-  if (!"rowid" %in% names(baseline_data)) {
-    baseline_data$rowid <- seq_len(nrow(baseline_data))
+  baseline_data <- if (newdata_supplied) {
+    newdata_orig
+  } else {
+    resolve_markov_prediction_data(
+      newdata_orig,
+      id_var = id_var,
+      tvarname = tvarname
+    )
   }
+  baseline_data <- ensure_markov_rowid(baseline_data)
 
   # --- 3. Create Counterfactual Datasets ---
   # For each combination in variables, create a copy of baseline_data with
@@ -653,7 +782,11 @@ avg_sops <- function(
       return_draws = return_draws,
       ...
     )
-    attr(result, "newdata_orig") <- newdata
+    attr(result, "newdata_orig") <- newdata_orig
+    attr(result, "newdata_pred") <- newdata_expanded
+    attr(result, "refit_data") <- refit_data
+    attr(result, "id_var") <- id_var
+    attr(result, "newdata_supplied") <- newdata_supplied
     return(result)
   }
 
@@ -661,7 +794,9 @@ avg_sops <- function(
   sops_ind <- sops(
     model,
     newdata = newdata_expanded,
+    refit_data = refit_data,
     times = times,
+    id_var = id_var,
     p2varname = p2varname,
     ...
   )
@@ -705,12 +840,18 @@ avg_sops <- function(
     absorb = attr(sops_ind, "absorb"),
     gap = attr(sops_ind, "gap"),
     t_covs = attr(sops_ind, "t_covs"),
-    newdata_orig = newdata,
+    newdata_orig = newdata_orig,
     avg_args = list(
       variables = var_list,
       by = by,
       times = resolved_times,
       id_var = id_var
+    ),
+    extra_attrs = list(
+      newdata_pred = newdata_expanded,
+      refit_data = refit_data,
+      id_var = id_var,
+      newdata_supplied = newdata_supplied
     )
   )
 }
@@ -838,7 +979,14 @@ avg_sops_blrm <- function(
     class_name = "markov_avg_sops",
     model = model,
     call_args = sops_call_args(
-      times, ylevels, absorb, tvarname, pvarname, p2varname, gap, t_covs,
+      times,
+      ylevels,
+      absorb,
+      tvarname,
+      pvarname,
+      p2varname,
+      gap,
+      t_covs,
       include_re = include_re,
       id_var = id_var,
       n_draws = n_draws,

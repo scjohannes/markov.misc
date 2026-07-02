@@ -98,6 +98,24 @@ test_that("plot_sops creates model-derived line plots with ribbons", {
   expect_equal(nrow(built$data[[1]]), nrow(data))
 })
 
+test_that("plot_sops respects stored ylevels for model-derived state order", {
+  state_levels <- as.character(1:12)
+  data <- expand.grid(
+    time = 1,
+    state = sort(state_levels),
+    KEEP.OUT.ATTRS = FALSE
+  )
+  data$estimate <- 1 / length(state_levels)
+  class(data) <- c("markov_avg_sops", class(data))
+  attr(data, "ylevels") <- state_levels
+
+  plot <- plot_sops(data, geom = "bar", facet_var = NULL, n_draws = 0)
+  built <- ggplot2::ggplot_build(plot)
+  fill_scale <- built$plot$scales$get_scales("fill")
+
+  expect_equal(fill_scale$get_limits(), state_levels)
+})
+
 test_that("plot_sops warns but plots avg_sops bars without stored draws", {
   data <- make_avg_sops_plot_data(with_draws = FALSE)
 

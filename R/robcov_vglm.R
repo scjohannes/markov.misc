@@ -311,6 +311,17 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = TRUE) {
   )
 
   class(result) <- "robcov_vglm"
+  result <- markov_attach_model_data(
+    result,
+    markov_model_data(fit),
+    markov_model_id_var(fit)
+  )
+  attr(result, "markov_vglm") <- attr(fit, "markov_vglm", exact = TRUE)
+  attr(result, "markov_split_assign") <- attr(
+    fit,
+    "markov_split_assign",
+    exact = TRUE
+  )
   return(result)
 }
 
@@ -457,7 +468,7 @@ align_cluster_vglm <- function(fit, cluster, n) {
 #' @examplesIf rlang::is_installed("VGAM")
 #' trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
 #' markov_data <- prepare_markov_data(trial, absorbing_state = 8)
-#' fit <- vglm.markov(
+#' fit <- vglm_markov(
 #'   ordered(y) ~ time + tx + yprev,
 #'   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
 #'   data = markov_data
@@ -542,7 +553,7 @@ summary.robcov_vglm <- function(object, ...) {
 #' @examplesIf rlang::is_installed("VGAM")
 #' trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
 #' markov_data <- prepare_markov_data(trial, absorbing_state = 8)
-#' fit <- vglm.markov(
+#' fit <- vglm_markov(
 #'   ordered(y) ~ time + tx + yprev,
 #'   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
 #'   data = markov_data
@@ -595,7 +606,7 @@ print.robcov_vglm <- function(x, ...) {
 #' @examplesIf rlang::is_installed("VGAM")
 #' trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
 #' markov_data <- prepare_markov_data(trial, absorbing_state = 8)
-#' fit <- vglm.markov(
+#' fit <- vglm_markov(
 #'   ordered(y) ~ time + tx + yprev,
 #'   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
 #'   data = markov_data
@@ -622,7 +633,7 @@ coef.robcov_vglm <- function(object, ...) {
 #' @examplesIf rlang::is_installed("VGAM")
 #' trial <- sim_actt2_brownian(n_patients = 40, follow_up_time = 6, seed = 1)
 #' markov_data <- prepare_markov_data(trial, absorbing_state = 8)
-#' fit <- vglm.markov(
+#' fit <- vglm_markov(
 #'   ordered(y) ~ time + tx + yprev,
 #'   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
 #'   data = markov_data

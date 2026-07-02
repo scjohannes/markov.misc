@@ -1,8 +1,8 @@
 ---
-title: "Full Proportional-Odds SOPs with vglm() and orm()"
+title: "Full Proportional-Odds SOPs with Markov Fit Wrappers"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Full Proportional-Odds SOPs with vglm() and orm()}
+  %\VignetteIndexEntry{Full Proportional-Odds SOPs with Markov Fit Wrappers}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -19,14 +19,11 @@ knitr::opts_chunk$set(
 )
 ```
 
-This vignette follows the ordinal transition-model and state occupancy
-probability (SOP) framework of Rohde et al. (2024).
-
 We fit the same full proportional-odds first-order transition model using two
 backends:
 
-1. `vglm.markov()`, which returns a `VGAM::vglm()` object.
-2. `rms::orm()`.
+1. `vglm_markov()`, the package-aware VGAM wrapper.
+2. `orm_markov()`, the package-aware rms wrapper.
 
 The vignette uses 200 simulated ACTT-2-style patients on the simulator's native
 8-state outcome scale and a shortened follow-up window to keep computation time
@@ -57,13 +54,6 @@ model_data <- prepare_markov_data(
   raw_data,
   absorbing_state = as.integer(ABSORB),
   factor_previous = TRUE
-)
-baseline_data <- model_data[!duplicated(model_data$id), , drop = FALSE]
-
-c(
-  patients = length(unique(raw_data$id)),
-  transitions = nrow(model_data),
-  states = length(STATE_LEVELS)
 )
 ```
 
@@ -137,20 +127,20 @@ $$
 ## Fit Models
 
 ```{r fit-models}
-fit_vglm <- vglm.markov(
+fit_vglm <- vglm_markov(
   ordered(y) ~ tx + rms::rcs(time, 4) + yprev,
   family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-  data = model_data
+  data = model_data,
+  id_var = "id"
 )
 
 dd <- rms::datadist(model_data)
 options(datadist = "dd")
 
-fit_orm <- rms::orm(
+fit_orm <- orm_markov(
   y ~ tx + rms::rcs(time, 4) + yprev,
   data = model_data,
-  x = TRUE,
-  y = TRUE,
+  id_var = "id",
   opt_method = "LM",
   scale = TRUE,
   maxit = 100
@@ -159,7 +149,7 @@ fit_orm <- rms::orm(
 data.frame(
   backend = c("VGAM vglm", "rms orm"),
   log_likelihood = c(
-    as.numeric(stats::logLik(fit_vglm)),
+    as.numeric(stats::logLik(fit_vglm$vglm_fit)),
     as.numeric(stats::logLik(fit_orm))
   ),
   coefficients = c(length(stats::coef(fit_vglm)), length(stats::coef(fit_orm)))
@@ -171,23 +161,23 @@ data.frame(
 ```{r compute-sops}
 sop_vglm <- avg_sops(
   fit_vglm,
-  newdata = baseline_data,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
   ylevels = factor(STATE_LEVELS, levels = STATE_LEVELS),
-  absorb = ABSORB,
-  id_var = "id"
-)
+  absorb = ABSORB
+) |> 
+  inferences(
+    n_sim = 100
+  )
 
 sop_orm <- avg_sops(
   fit_orm,
-  newdata = baseline_data,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
   ylevels = fit_orm$yunique,
-  absorb = ABSORB,
-  id_var = "id"
-)
+  absorb = ABSORB
+) |> 
+  inferences(n_sim = 100)
 
 combined_sops <- rbind(
   data.frame(backend = "VGAM vglm", as.data.frame(sop_vglm)),
@@ -214,6 +204,3 @@ plot_sops(
 Rohde MD, French B, Stewart TG, Harrell FE. Bayesian transition models for
 ordinal longitudinal outcomes. *Statistics in Medicine*. 2024. doi:
 10.1002/sim.10133.
-
-The associated code repository is
-<https://github.com/maxdrohde/bayesian_ordinal_transition>.

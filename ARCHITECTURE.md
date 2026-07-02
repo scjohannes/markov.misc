@@ -34,8 +34,8 @@ flowchart LR
 
   subgraph "Model preparation"
     PREP["prepare_markov_data()<br/>R/markov-data.R"]
-    FIT["User-fitted ordinal model<br/>orm / blrm / vglm / vglm.markov"]
-    VGLM_FIT["vglm.markov()<br/>R/vglm_helpers.R"]
+    FIT["User-fitted ordinal model<br/>orm_markov / blrm_markov / vglm_markov / backend fits"]
+    VGLM_FIT["vglm_markov()<br/>R/vglm_helpers.R"]
     ROB["robcov_vglm()<br/>R/robcov_vglm.R"]
   end
 
@@ -173,7 +173,10 @@ Important attributes are set in `set_sops_attrs()`:
 | `ylevels`, `absorb` | State support and absorbing states. |
 | `t_covs` | Time-dependent covariate lookup used when formulas contain spline bases or other derived time columns. |
 | `by` | Stratification variables for grouped individual SOPs. |
-| `newdata_orig` | Original prediction data, used by inference and interpolation anchors. |
+| `newdata_orig` | Original source data supplied to the SOP call, or wrapper-stored model data when `newdata = NULL`. User-supplied rows are treated as fixed prediction profiles; wrapper-stored data may be full longitudinal data. |
+| `newdata_pred` | The fixed prediction data used by recursive SOP prediction, with `rowid` regenerated internally. For user-supplied `newdata`, every row is kept. For stored longitudinal source data, this is extracted as the earliest row per `id_var`. |
+| `refit_data` | Full longitudinal data used by refit-bootstrap inference. Wrapper-fitted models can provide this automatically. |
+| `id_var` | Patient or cluster ID variable propagated from wrappers or SOP arguments. It is used for stored-data extraction, refit resampling, and `blrm` random effects, not as the ordinary prediction-row key. |
 | `avg_args` | Extra marginalization instructions for `markov_avg_sops`: variables, grid, ID variable, and grouping. |
 | `draws`, `simulation_draws`, `bootstrap_draws` | Optional stored draw-level outputs. |
 
@@ -250,10 +253,12 @@ Supported model families:
 
 | Family | Typical fit | Notes |
 | --- | --- | --- |
-| `rms::orm` | `orm(y ~ tx + time + yprev, x = TRUE, y = TRUE)` | Full proportional odds. Can be wrapped by `rms::robcov()`. |
-| `rmsb::blrm` | Bayesian ordinal regression | Posterior draws drive SOP uncertainty directly. Supports selected random-effect handling through `cluster()`. |
+| `orm_markov()` | `orm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rms path. Stores full data and ID metadata, fits with `x = TRUE, y = TRUE`, rejects offsets, normalizes the stored `rms::orm()` call for weighted refits, and applies `rms::robcov()` automatically when `id_var` is supplied. |
+| `rms::orm` | `orm(y ~ tx + time + yprev, x = TRUE, y = TRUE)` | Full proportional odds. Can be wrapped by `rms::robcov()`, but plain fits do not store unmodeled ID columns for automatic SOP refits. |
+| `blrm_markov()` | `blrm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rmsb path. Stores full data and ID metadata for automatic SOP prediction data and random-effect ID resolution. Posterior draws remain the uncertainty source. |
+| `rmsb::blrm` | Bayesian ordinal regression | Posterior draws drive SOP uncertainty directly. Supports selected random-effect handling through `cluster()`, but plain fits do not store unmodeled ID columns for automatic SOP data resolution. |
 | `VGAM::vglm` | `vglm(..., family = cumulative(reverse = TRUE, ...))` | Must be a cumulative model with `reverse = TRUE`. Offsets are unsupported. |
-| `vglm.markov()` | Package wrapper around `VGAM::vglm()` | Recommended VGAM path for inline `rms::rcs()` terms and partial proportional odds constraints. |
+| `vglm_markov()` | `vglm_markov(..., data = data, id_var = "id")` | Recommended VGAM path. Stores full data and ID metadata, supports inline `rms::rcs()` terms and partial proportional odds constraints, and returns `robcov_vglm` automatically when `id_var` is supplied. |
 | `robcov_vglm` | `robcov_vglm(vglm_fit, cluster = id)` | Stores a robust sandwich covariance while preserving the underlying `vglm` fit for prediction. |
 
 The model validation boundary is `validate_markov_model()` in
@@ -271,11 +276,11 @@ There are two public SOP styles:
 ```mermaid
 flowchart TD
   CALL["sops() or avg_sops()"] --> VALIDATE["Validate model, variables, times, state support"]
-  VALIDATE --> BASELINE["Build one-row-per-person prediction data"]
+  VALIDATE --> BASELINE["Resolve fixed prediction profiles"]
   BASELINE --> CF{"avg_sops()?"}
   CF -- "yes" --> GRID["Expand counterfactual variable grid"]
   GRID --> STACK["Stack copied baseline cohorts"]
-  CF -- "no" --> DIRECT["Use supplied newdata"]
+  CF -- "no" --> DIRECT["Use resolved prediction profiles"]
   STACK --> ARRAY["soprob_markov()"]
   DIRECT --> ARRAY
   ARRAY --> RECURSE["Markov recursion over requested times"]
@@ -283,10 +288,17 @@ flowchart TD
   SHAPE --> OUT["markov_sops or markov_avg_sops"]
 ```
 
+When `newdata` is supplied to `sops()` or `avg_sops()`, every row is treated as
+a separate baseline prediction profile. The APIs regenerate `rowid` so
+ungrouped individual inference can join draws back to prediction rows without
+depending on user-supplied identifiers. When `newdata = NULL`, wrapper-stored or
+explicit `refit_data` is treated as longitudinal source data and collapsed to
+one prediction row per `id_var`.
+
 `avg_sops()` is a G-computation wrapper. It creates a counterfactual grid from
-`variables`, duplicates baseline data for each grid row, calls the same SOP
-engine, and averages over the patient dimension. Optional `by` variables keep
-subgroup averages separate.
+`variables`, duplicates the fixed standardization profiles for each grid row,
+calls the same SOP engine, and averages over the profile dimension. Optional
+`by` variables keep subgroup averages separate.
 
 ### 4. Add Inference
 
@@ -318,7 +330,9 @@ The inference methods are intentionally separate:
 - Bayesian `blrm` outputs already represent posterior prediction draws. The
   package summarizes those draws rather than simulating new coefficients.
 - MVN simulation draws coefficients from `coef(model)` and a covariance matrix
-  from `stats::vcov()`, `rms::robcov()`, or `robcov_vglm()`.
+  from `stats::vcov()`, `rms::robcov()`, or `robcov_vglm()`. Matrix-package
+  covariance objects are coerced to base matrices before validation and
+  simulation.
 - Score bootstrap uses row-level model scores and cluster multipliers to make
   one-step coefficient draws without full refits.
 - Standard refit bootstrap resamples patients by ID, materializes each bootstrap
@@ -327,6 +341,12 @@ The inference methods are intentionally separate:
   normalizes those weights to mean 1 for model fitting, refits the model with
   row-expanded weights, and uses the same patient weights for marginal SOP
   averaging.
+
+For refit bootstrap inference with user-supplied prediction profiles, the
+transition model is refit on `refit_data` or wrapper-stored longitudinal data,
+while SOPs are replayed on the fixed `newdata_pred` profiles from the original
+SOP object. When no `newdata` was supplied, marginal bootstrap inference derives
+the prediction profiles from each bootstrap refit sample.
 
 For first-order frequentist `orm` and `vglm` models, simulation inference can use
 the optimized fast path. Second-order Markov models fall back to replaying the
@@ -357,7 +377,7 @@ flowchart TD
 Backend-specific prediction functions live in `R/sops-backends.R`:
 
 - `predict_vglm_response_markov()` handles ordinary `vglm` prediction and the
-  package-native `vglm.markov()` matrix path.
+  package-native `vglm_markov()` matrix path.
 - `predict_orm_response_markov()` builds an `orm` design matrix and converts
   threshold linear predictors to category probabilities.
 - `predict_blrm_response_markov()` evaluates posterior draws, optional
@@ -407,21 +427,29 @@ probability of each next state?
 For inference, `set_coef.orm()` mutates a copy of the model coefficients, and
 `get_vcov_robust()` can use `rms::robcov()` output.
 
-### `vglm` and `vglm.markov`
+### `vglm` and `vglm_markov`
 
 VGAM support has two paths:
 
 - Ordinary `VGAM::predict(..., type = "response")` for compatible models.
-- A package-native model-matrix path for `vglm.markov()` fits and inline spline
+- A package-native model-matrix path for `vglm_markov()` fits and inline spline
   metadata.
 
-`vglm.markov()` in `R/vglm_helpers.R` mirrors `VGAM::vglm()` but adds two package
+`vglm_markov()` in `R/vglm_helpers.R` mirrors `VGAM::vglm()` but adds package
 behaviors:
 
 - It injects `rms` formula helpers such as `rcs()` and `%ia%` while constructing
   model frames and prediction matrices.
 - It splits inline restricted cubic spline assignment metadata by generated
   basis column so partial proportional-odds constraints can target those columns.
+- It stores the row-aligned original data and `id_var` metadata when a data
+  frame is supplied.
+- When `id_var` is supplied, it returns `robcov_vglm()` directly so MVN
+  inference uses the cluster-robust covariance without another wrapper call.
+
+The exported VGAM wrapper name is intentionally snake_case only:
+`vglm_markov()`. The former dotted name `vglm.markov()` is not retained as a
+compatibility alias.
 
 `get_effective_coefs_vglm()` combines VGAM constraint matrices with raw
 coefficients so the fast path can compute threshold linear predictors with
@@ -436,6 +464,9 @@ in three places:
 - `validate_markov_model()` unwraps the fit for model-family checks.
 - Prediction uses `vglm_fit`.
 - Inference uses the robust covariance in `var`.
+- Wrapper metadata such as `markov_data` and `markov_id_var` is copied from the
+  underlying `vglm` fit so refit-bootstrap inference can recover the original
+  longitudinal data.
 
 The score calculation uses VGAM's VLM model matrix and derivative information to
 obtain observation-level score contributions, then optionally aggregates them
@@ -444,7 +475,7 @@ correction by default; callers can set `adjust = FALSE` when they need the
 previous unadjusted estimator or direct comparison with unadjusted external
 sandwich estimators.
 
-### `blrm`
+### `blrm` and `blrm_markov`
 
 Bayesian `rmsb::blrm` support treats posterior draws as the uncertainty source.
 The backend:
@@ -457,6 +488,13 @@ The backend:
 The result shape is draw-aware from the start: posterior SOP arrays carry a draw
 dimension, and public APIs summarize or preserve those draws depending on
 `return_draws`.
+
+`blrm_markov()` in `R/markov-model-data.R` wraps `rmsb::blrm()` with the same
+stored-data contract as the frequentist wrappers. It rejects offsets, fits with
+`x = TRUE, y = TRUE` by default, stores the row-aligned original data, and
+records `id_var` when supplied. Unlike `orm_markov()` and `vglm_markov()`, it
+does not add a robust covariance layer because Bayesian posterior draws provide
+the native uncertainty path.
 
 ## Fast Path
 
@@ -517,14 +555,35 @@ exponential weights instead of duplicated ID lookups.
 - Return the fitted model, releveled data, updated state support, and missing
   states.
 
-SOP bootstrap inference currently targets `markov_avg_sops`, because marginal
-SOPs have a clear population-level resampling interpretation.
+SOP bootstrap inference has two public targets:
+
+- `markov_avg_sops` supports ordinary patient resampling and fractional
+  weighted bootstrap. Marginal SOPs have a clear population-level resampling
+  interpretation, and ordinary resampling can zero-pad missing states after
+  bootstrap releveled fits.
+- `markov_sops` supports fractional weighted bootstrap only. Ordinary standard
+  bootstrap can drop outcome or previous-state support that fixed individual
+  prediction rows need, while FWB keeps every row in the refit data present with
+  positive patient-level weights.
 
 For `method = "bootstrap", engine = "fwb"`, weights are drawn at the patient ID
 level, normalized to mean 1 over patients for model fitting, expanded to rows,
 and then separately normalized to sum 1 by `marginalize_sops_array()` when
-averaging counterfactual SOPs. This mirrors the default exponential weighting
-behavior of the external `fwb` package without adding it as a dependency.
+averaging empirical counterfactual SOPs. When `avg_sops()` was built from
+user-supplied `newdata`, those rows are fixed standardization profiles:
+`baseline_weights` is set to `NULL`, a warning is emitted, and the supplied
+profiles are averaged equally. For individual SOPs, each FWB refit predicts on
+the fixed `newdata_pred` rows stored on the original `markov_sops` object. This
+mirrors the default exponential weighting behavior of the external `fwb`
+package without adding it as a dependency.
+
+Follow-up TODO:
+
+- Avoid recomputing robust standard errors inside VGAM bootstrap updates.
+  `vglm_markov(id_var = ...)` stores a call that can re-enter the robust-wrapper
+  path during `stats::update()`. Bootstrap refits only need coefficients, so the
+  update path should strip or ignore `id_var` while preserving model metadata for
+  downstream SOP workflows.
 
 ## Score Bootstrap Design
 
@@ -539,10 +598,19 @@ For each draw it:
 4. Applies a one-step update to the coefficient vector using the model
    covariance/bread information.
 5. Replays SOP prediction with the updated coefficients.
-6. For marginal SOPs, passes normalized baseline weights into marginalization.
+6. For marginal SOPs, passes normalized baseline weights into marginalization
+   only when the prediction population is the empirical stored/refit cohort.
 
 This engine is especially useful when refit bootstrap is expensive but cluster
 resampling is needed.
+
+Score-bootstrap coefficient perturbations are always based on the fitted model's
+score contributions and original cluster IDs, not on the prediction data. If
+`avg_sops()` was built from user-supplied `newdata`, the score-bootstrap engine
+generates coefficient draws from the original scores, sets `baseline_weights` to
+`NULL`, warns, and averages the fixed profiles equally. If `newdata = NULL`,
+the empirical prediction rows and the score-bootstrap patient weights are
+coupled so the score-bootstrap approximation mirrors the FWB target.
 
 ## Endpoint and Summary Layer
 
@@ -607,7 +675,9 @@ For line plots, model-derived summaries can show confidence ribbons. For stacked
 bar plots, `markov_avg_sops` objects with stored draws can overlay a deterministic
 subset of draw-level bars. The plotting functions validate that each plotted
 time/state/facet/linetype combination is unique, which prevents accidental
-overplotting of multiple scenarios.
+overplotting of multiple scenarios. Model-derived SOP plots use the stored
+`ylevels` attribute for discrete state scale order so character state labels
+keep model/state-support order rather than lexicographic order.
 
 `plot_bootstrap_sops()` supports the older wide bootstrap SOP format from
 `bootstrap_standardized_sops()`. `plot_results()` visualizes operating
@@ -627,11 +697,15 @@ Important validation checks include:
   requested target states are checked against available columns.
 - `t_covs` is required when formula-derived time covariates cannot be rebuilt
   from raw `times`.
-- `validate_coef_vcov()` requires coefficient vectors and covariance matrices to
-  have matching dimensions and names.
+- `validate_coef_vcov()` coerces Matrix-package covariance objects to base
+  matrices, then requires coefficient vectors and covariance matrices to have
+  matching dimensions and names.
 - `get_vcov_robust()` prefers an explicit `data` argument over evaluating a
   model call's stored `data` symbol when resolving formula-based clusters,
   avoiding environment-dependent cluster alignment.
+- Markov fitting wrappers warn when `id_var` and `time` contain duplicate
+  combinations, because automatic stored-data prediction keeps only one
+  prediction row per ID.
 - Bootstrap helpers preserve missing-state information so predictions can be
   expanded back to the original state support.
 
@@ -733,13 +807,15 @@ Useful regression themes include:
 
 - Simulation output contracts and absorbing-state behavior.
 - `prepare_markov_data()` with categorical and numeric previous states.
-- `vglm.markov()` inline spline terms, `%ia%` formulas, offset rejection, and
-  constraints.
+- `orm_markov()`, `blrm_markov()`, and `vglm_markov()` stored data/ID metadata,
+  robust covariance where applicable, inline spline terms, `%ia%` formulas,
+  offset rejection, and constraints.
 - SOP recursion for first-order and second-order models.
 - Equivalence between slow prediction and fast-path prediction for eligible
   models.
 - `avg_sops()` counterfactual grids, `by` strata, and stored attributes.
-- MVN, score-bootstrap, posterior, and refit-bootstrap inference paths.
+- MVN, score-bootstrap, posterior, standard refit-bootstrap, and FWB refit
+  inference paths.
 - Draw extraction, interpolation, and time-in-state integration.
 - Missing-state bootstrap samples and mapping back to original state labels.
 
@@ -759,7 +835,8 @@ interfaces or examples change.
 | `R/simulate-recurrent-event.R` | `recurr_event()` | Recurrent event generator used by TTE simulation. |
 | `R/simulate-tte.R` | `sim_trajectories_tte()` | Latent time-to-event simulator expanded to daily states. |
 | `R/lp_violet.R` | `lp_violet()` | Default VIOLET-inspired linear predictor for Markov simulation. |
-| `R/vglm_helpers.R` | `vglm.markov()`, `add_rms_formula_helpers()`, `split_rcs_assign()` | Package-aware VGAM fitting wrapper. |
+| `R/markov-model-data.R` | `orm_markov()`, `blrm_markov()`, `markov_model_data()`, `markov_model_id_var()`, prediction-row helpers | Wrapper metadata and automatic stored-data resolution for SOP workflows. |
+| `R/vglm_helpers.R` | `vglm_markov()`, `add_rms_formula_helpers()`, `split_rcs_assign()` | Package-aware VGAM fitting wrapper. |
 | `R/vgam_helpers.R` | `get_effective_coefs()` and class-specific helpers | Converts raw model coefficients and constraints to threshold-specific coefficient matrices. |
 | `R/robcov_vglm.R` | `robcov_vglm()`, `compute_scores_vglm()`, `compare_se_orm_vglm()` | Robust covariance and VGAM score support. |
 | `R/mvn_helpers.R` | `set_coef()`, `get_vcov_robust()`, `validate_coef_vcov()`, `get_coef()` | Coefficient mutation and covariance extraction for inference. |
@@ -770,7 +847,7 @@ interfaces or examples change.
 | `R/sops-fast-path.R` | `markov_msm_build()`, `markov_msm_run()`, `lp_to_probs()`, `compute_Gamma()` | Optimized repeated prediction for eligible first-order models. |
 | `R/sops-result-helpers.R` | `set_sops_attrs()`, `restore_sops_attrs()`, `create_counterfactual_data()`, `marginalize_sops_array()`, `array_to_df_individual()` | Tidy SOP object construction and attribute preservation. |
 | `R/sops-inference.R` | `inferences()`, `inferences_simulation()` | Main inference dispatcher and coefficient-draw replay. |
-| `R/sops-bootstrap-inference.R` | `inferences_bootstrap()` | Standard and fractional weighted refit-bootstrap inference for marginal SOPs. |
+| `R/sops-bootstrap-inference.R` | `inferences_bootstrap()` | Standard and fractional weighted refit-bootstrap inference for marginal SOPs, plus FWB refit inference for individual SOPs. |
 | `R/sops-score-bootstrap.R` | `generate_score_bootstrap_draws()`, `score_bootstrap_components()`, `compute_scores_orm()` | One-step score-bootstrap engine. |
 | `R/sops-draws.R` | `compute_ci_from_draws()`, `get_draws()` | Interval summaries and draw extraction. |
 | `R/bootstrap_helpers.R` | `fast_group_bootstrap()`, `generate_fwb_bootstrap_weights()`, `materialize_bootstrap_sample()`, `materialize_fwb_bootstrap_sample()`, `apply_to_bootstrap()`, `apply_to_fwb_bootstrap()`, `bootstrap_analysis_wrapper()` | Memory-efficient standard and fractional weighted bootstrap utilities. |
@@ -779,7 +856,7 @@ interfaces or examples change.
 | `R/sops-interpolate.R` | `interpolate_sops()` and helpers | Visit-to-real-time SOP interpolation and draw-aware interval recomputation. |
 | `R/sops-time-in-state.R` | `time_in_state()` and helpers | Expected time in target states for arrays, tidy SOPs, and bootstrap frames. |
 | `R/endpoint-summaries.R` | `jackknife_mcse()`, `states_to_ttest()`, `states_to_drs()` | Patient-level endpoint summaries. |
-| `R/endpoint-tte.R` | `states_to_tte_old()`, `states_to_tte()`, `calc_time_in_state_diff()` | Start-stop and true time-in-state transformations. |
+| `R/endpoint-tte.R` | `states_to_tte()`, `states_to_tte_v2()`, `calc_time_in_state_diff()` | Start-stop and true time-in-state transformations. |
 | `R/competing-risks.R` | `format_competing_risks()` | Competing-risk formatting from start-stop data. |
 | `R/power.R` | `sample_from_arrow()`, `tidy_po()`, `assess_operating_characteristics()`, `summarize_oc_results()` | Operating-characteristic simulation helpers. |
 | `R/viz.R` | `plot_sops()`, `plot_results()`, `plot_bootstrap_sops()` | SOP, bootstrap, and operating-characteristic plots. |

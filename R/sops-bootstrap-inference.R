@@ -10,7 +10,8 @@
 #' patients with replacement, refits the model, and computes SOPs for each
 #' bootstrap sample.
 #'
-#' @param object A `markov_avg_sops` object.
+#' @param object A `markov_avg_sops` object, or a `markov_sops` object when
+#'   `engine = "fwb"`.
 #' @param engine Bootstrap engine, `"standard"` or `"fwb"`.
 #' @param n_boot Number of bootstrap iterations.
 #' @param workers Number of parallel workers. If NULL or 1, uses sequential
@@ -35,17 +36,32 @@ inferences_bootstrap <- function(
 ) {
   engine <- match.arg(engine, choices = c("standard", "fwb"))
 
-  # Bootstrap only supports avg_sops for now
   if (!inherits(object, "markov_avg_sops")) {
-    stop(
-      "Bootstrap inference currently only supports 'markov_avg_sops' objects. ",
-      "For individual-level SOPs, use method = 'simulation'."
-    )
+    if (engine != "fwb") {
+      stop(
+        "Standard refit bootstrap is not supported for individual-level ",
+        "SOPs because ordinary resampling can drop outcome-state support ",
+        "needed by fixed prediction rows. Use `engine = \"fwb\"`, or call ",
+        "`avg_sops()` for marginal bootstrap inference."
+      )
+    }
+    return(inferences_bootstrap_sops_fwb(
+      object = object,
+      n_boot = n_boot,
+      workers = workers,
+      conf_level = conf_level,
+      return_draws = return_draws,
+      update_datadist = update_datadist,
+      use_coefstart = use_coefstart
+    ))
   }
 
   # --- 1. Extract Stored Attributes ---
   model <- attr(object, "model")
   newdata_orig <- attr(object, "newdata_orig")
+  prediction_data <- attr(object, "newdata_pred")
+  newdata_supplied <- isTRUE(attr(object, "newdata_supplied"))
+  refit_data <- attr(object, "refit_data") %||% newdata_orig
   call_args <- attr(object, "call_args")
   avg_args <- attr(object, "avg_args")
 
@@ -62,20 +78,24 @@ inferences_bootstrap <- function(
   times <- avg_args$times
   id_var <- avg_args$id_var
 
-  if (is.null(newdata_orig)) {
-    stop("Original newdata not stored. Cannot perform bootstrap.")
+  if (is.null(refit_data)) {
+    stop("Full refit data not stored. Cannot perform bootstrap.")
   }
 
-  if (!id_var %in% names(newdata_orig)) {
+  if (!id_var %in% names(refit_data)) {
     stop("ID variable '", id_var, "' not found in data.")
+  }
+
+  if (newdata_supplied && engine == "fwb") {
+    warn_fixed_profile_bootstrap_weights("FWB")
   }
 
   # --- 2. Validate Data is Longitudinal (Not Just Baseline) ---
   # Check if tvarname exists and has multiple time points per patient
-  if (tvarname %in% names(newdata_orig)) {
+  if (tvarname %in% names(refit_data)) {
     rows_per_patient <- tabulate(match(
-      newdata_orig[[id_var]],
-      unique(newdata_orig[[id_var]])
+      refit_data[[id_var]],
+      unique(refit_data[[id_var]])
     ))
 
     if (all(rows_per_patient == 1)) {
@@ -95,7 +115,7 @@ inferences_bootstrap <- function(
 
   # --- 2. Identify Factor Columns ---
   factor_cols <- c("y", pvarname, p2varname)
-  factor_cols <- intersect(factor_cols, names(newdata_orig))
+  factor_cols <- intersect(factor_cols, names(refit_data))
 
   # --- 4. Define Analysis Function ---
   analysis_fn <- function(boot_data, fwb_weights = NULL) {
@@ -109,7 +129,7 @@ inferences_bootstrap <- function(
       boot_data = boot_data,
       model = model,
       factor_cols = factor_cols,
-      original_data = newdata_orig,
+      original_data = refit_data,
       ylevels = ylevels,
       absorb = absorb,
       update_datadist = update_datadist,
@@ -133,23 +153,42 @@ inferences_bootstrap <- function(
       !ylevel_names %in% as_state_labels(missing_states)
     ]
 
-    # B. Compute standardized SOPs using G-computation on bootstrap data
-    # Extract baseline data (one row per patient)
-    if (engine == "standard") {
-      baseline_boot <- boot_data[!duplicated(boot_data[["new_id"]]), ]
+    grid <- do.call(expand.grid, variables)
+    if (newdata_supplied) {
+      newdata_cf <- prediction_data
+      n_cf <- nrow(grid)
+      if (is.null(newdata_cf) || nrow(newdata_cf) %% n_cf != 0L) {
+        stop("Stored prediction data is not aligned with counterfactual grid.")
+      }
       baseline_weights <- NULL
     } else {
-      baseline_boot <- boot_data[!duplicated(boot_data[[id_var]]), ]
-      baseline_weights <- fwb_baseline_weights(
-        fwb_weights = fwb_weights,
-        baseline_data = baseline_boot,
-        id_var = id_var
-      )
-    }
+      # B. Compute standardized SOPs using G-computation on bootstrap data
+      # Extract baseline data (one row per patient)
+      if (engine == "standard") {
+        baseline_boot <- resolve_markov_prediction_data(
+          boot_data,
+          id_var = "new_id",
+          tvarname = tvarname,
+          data_label = "bootstrap data"
+        )
+        baseline_weights <- NULL
+      } else {
+        baseline_boot <- resolve_markov_prediction_data(
+          boot_data,
+          id_var = id_var,
+          tvarname = tvarname,
+          data_label = "bootstrap data"
+        )
+        baseline_weights <- fwb_baseline_weights(
+          fwb_weights = fwb_weights,
+          baseline_data = baseline_boot,
+          id_var = id_var
+        )
+      }
 
-    # Create counterfactual datasets for each variable value
-    grid <- do.call(expand.grid, variables)
-    newdata_cf <- create_counterfactual_data(baseline_boot, grid, variables)
+      # Create counterfactual datasets for each variable value
+      newdata_cf <- create_counterfactual_data(baseline_boot, grid, variables)
+    }
 
     # Compute individual SOPs for counterfactual data
     sops_array <- tryCatch(
@@ -178,7 +217,7 @@ inferences_bootstrap <- function(
     # C. Marginalize (average) across patients for each counterfactual
     # sops_array is [n_pat, n_times, n_boot_states]
     n_cf <- nrow(grid)
-    n_each <- nrow(baseline_boot)
+    n_each <- nrow(newdata_cf) / n_cf
     boot_avg <- marginalize_sops_array(
       sops_array = sops_array,
       grid = grid,
@@ -237,7 +276,7 @@ inferences_bootstrap <- function(
   # --- 5. Apply to Bootstrap Samples ---
   if (engine == "standard") {
     boot_ids <- fast_group_bootstrap(
-      data = newdata_orig,
+      data = refit_data,
       id_var = id_var,
       n_boot = n_boot
     )
@@ -245,12 +284,14 @@ inferences_bootstrap <- function(
     boot_results <- apply_to_bootstrap(
       boot_samples = boot_ids,
       analysis_fn = analysis_fn,
-      data = newdata_orig,
+      data = refit_data,
       id_var = id_var,
       workers = workers,
       packages = c("rms", "VGAM", "Hmisc", "stats"),
       globals = c(
         "model",
+        "prediction_data",
+        "newdata_supplied",
         "variables",
         "times",
         "ylevels",
@@ -271,7 +312,7 @@ inferences_bootstrap <- function(
     )
   } else {
     fwb_samples <- generate_fwb_bootstrap_weights(
-      data = newdata_orig,
+      data = refit_data,
       id_var = id_var,
       n_boot = n_boot
     )
@@ -279,12 +320,14 @@ inferences_bootstrap <- function(
     boot_results <- apply_to_fwb_bootstrap(
       fwb_samples = fwb_samples,
       analysis_fn = analysis_fn,
-      data = newdata_orig,
+      data = refit_data,
       id_var = id_var,
       workers = workers,
       packages = c("rms", "VGAM", "Hmisc", "stats"),
       globals = c(
         "model",
+        "prediction_data",
+        "newdata_supplied",
         "variables",
         "times",
         "ylevels",
@@ -348,6 +391,195 @@ inferences_bootstrap <- function(
   }
 
   # Store full bootstrap draws if requested
+  if (return_draws) {
+    attr(final_result, "bootstrap_draws") <- boot_df
+  }
+
+  final_result
+}
+
+inferences_bootstrap_sops_fwb <- function(
+  object,
+  n_boot,
+  workers,
+  conf_level,
+  return_draws,
+  update_datadist,
+  use_coefstart
+) {
+  model <- attr(object, "model")
+  prediction_data <- attr(object, "newdata_pred") %||%
+    attr(object, "newdata_orig")
+  refit_data <- attr(object, "refit_data") %||% markov_model_data(model)
+  call_args <- attr(object, "call_args")
+
+  tvarname <- attr(object, "tvarname")
+  pvarname <- attr(object, "pvarname")
+  p2varname <- attr(object, "p2varname")
+  ylevels <- attr(object, "ylevels")
+  absorb <- attr(object, "absorb")
+  gap <- attr(object, "gap")
+  t_covs <- attr(object, "t_covs")
+  by <- call_args$by %||% attr(object, "by")
+  times <- call_args$times
+  id_var <- attr(object, "id_var") %||% markov_model_id_var(model)
+
+  if (is.null(model)) {
+    stop("Model not stored in object. Cannot perform bootstrap.")
+  }
+  if (is.null(prediction_data)) {
+    stop("Prediction data not stored. Cannot perform bootstrap.")
+  }
+  if (is.null(refit_data)) {
+    stop(
+      "Full refit data not stored. Fit with `orm_markov()` or ",
+      "`vglm_markov(id_var = ...)`, or pass full data to `sops()`."
+    )
+  }
+  if (is.null(id_var)) {
+    stop(
+      "`id_var` is required for fractional weighted bootstrap. Fit with ",
+      "`orm_markov(id_var = ...)`, `vglm_markov(id_var = ...)`, or pass ",
+      "`id_var` to `sops()`."
+    )
+  }
+  validate_markov_id_var(id_var, refit_data, "refit_data")
+
+  prediction_data <- ensure_markov_rowid(prediction_data)
+  factor_cols <- c("y", pvarname, p2varname)
+  factor_cols <- intersect(factor_cols, names(refit_data))
+
+  analysis_fn <- function(boot_data, fwb_weights = NULL) {
+    fit_weights <- boot_data$fwb_weight
+
+    boot_result <- bootstrap_analysis_wrapper(
+      boot_data = boot_data,
+      model = model,
+      factor_cols = factor_cols,
+      original_data = refit_data,
+      ylevels = ylevels,
+      absorb = absorb,
+      update_datadist = update_datadist,
+      use_coefstart = use_coefstart,
+      fit_weights = fit_weights
+    )
+
+    m_boot <- boot_result$model
+    boot_ylevels <- boot_result$ylevels
+    boot_absorb <- boot_result$absorb
+    missing_states <- boot_result$missing_states
+
+    if (is.null(m_boot)) {
+      return(NULL)
+    }
+    if (length(missing_states) > 0) {
+      warning(
+        "Fractional weighted bootstrap unexpectedly dropped outcome-state ",
+        "support; skipping this draw.",
+        call. = FALSE
+      )
+      return(NULL)
+    }
+
+    sops_array <- tryCatch(
+      soprob_markov(
+        object = m_boot,
+        data = prediction_data,
+        times = times,
+        ylevels = factor(boot_ylevels),
+        absorb = boot_absorb,
+        tvarname = tvarname,
+        pvarname = pvarname,
+        p2varname = p2varname,
+        gap = gap,
+        t_covs = t_covs
+      ),
+      error = function(e) {
+        warning("soprob_markov failed: ", e$message)
+        return(NULL)
+      }
+    )
+
+    if (is.null(sops_array)) {
+      return(NULL)
+    }
+
+    array_to_df_individual(
+      sops_array,
+      times,
+      factor(boot_ylevels),
+      prediction_data,
+      by = by
+    )
+  }
+
+  fwb_samples <- generate_fwb_bootstrap_weights(
+    data = refit_data,
+    id_var = id_var,
+    n_boot = n_boot
+  )
+
+  boot_results <- apply_to_fwb_bootstrap(
+    fwb_samples = fwb_samples,
+    analysis_fn = analysis_fn,
+    data = refit_data,
+    id_var = id_var,
+    workers = workers,
+    packages = c("rms", "VGAM", "Hmisc", "stats"),
+    globals = c(
+      "model",
+      "prediction_data",
+      "refit_data",
+      "times",
+      "ylevels",
+      "absorb",
+      "pvarname",
+      "p2varname",
+      "tvarname",
+      "gap",
+      "t_covs",
+      "update_datadist",
+      "factor_cols",
+      "use_coefstart",
+      "id_var",
+      "by"
+    )
+  )
+
+  boot_results <- Filter(Negate(is.null), boot_results)
+  if (length(boot_results) == 0) {
+    stop("All bootstrap iterations failed.")
+  }
+
+  for (i in seq_along(boot_results)) {
+    boot_results[[i]]$draw_id <- i
+  }
+  boot_df <- bind_rows_fill(boot_results)
+
+  if (is.null(by)) {
+    group_cols <- c("rowid", "time", "state")
+  } else {
+    group_cols <- unique(c("time", "state", by))
+  }
+
+  summary_stats <- compute_ci_from_draws(
+    draws_df = boot_df,
+    group_cols = group_cols,
+    conf_level = conf_level,
+    conf_type = "perc"
+  )
+
+  final_result <- merge(object, summary_stats, by = group_cols, all.x = TRUE)
+  final_result <- restore_sops_attrs(final_result, object)
+
+  attr(final_result, "n_boot") <- n_boot
+  attr(final_result, "n_successful") <- length(boot_results)
+  attr(final_result, "conf_level") <- conf_level
+  attr(final_result, "method") <- "bootstrap"
+  attr(final_result, "engine") <- "fwb"
+  attr(final_result, "fwb_weight_type") <- "exponential"
+  attr(final_result, "fwb_weight_scale") <- "cluster_mean_1"
+
   if (return_draws) {
     attr(final_result, "bootstrap_draws") <- boot_df
   }

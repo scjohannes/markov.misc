@@ -14,7 +14,7 @@ pak::pak("scjohannes/markov.misc")
 ## ACTT-2-Style SOP Workflow
 
 This example simulates ACTT-2-style ordinal outcomes, fits a proportional-odds
-Markov transition model with `rms::orm()`, estimates marginal treatment-arm
+Markov transition model with `orm_markov()`, estimates marginal treatment-arm
 SOPs, adds uncertainty, and plots the result.
 
 ```r
@@ -33,30 +33,24 @@ trial <- sim_actt2_brownian(
 )
 
 markov_data <- prepare_markov_data(trial, absorbing_state = 8)
-baseline_data <- markov_data[!duplicated(markov_data$id), , drop = FALSE]
 
 dd <- datadist(markov_data)
 options(datadist = "dd")
 
-fit <- orm(
+fit <- orm_markov(
   y ~ rms::rcs(time, 4) + tx + yprev,
   data = markov_data,
-  x = TRUE,
-  y = TRUE,
+  id_var = "id",
   opt_method = "LM",
   scale = TRUE
 )
 
-fit_robust <- robcov(fit, cluster = markov_data$id)
-
 sop <- avg_sops(
-  fit_robust,
-  newdata = baseline_data,
+  fit,
   variables = list(tx = c(0, 1)),
   times = 1:28,
   ylevels = fit$yunique,
-  absorb = "8",
-  id_var = "id"
+  absorb = "8"
 )
 
 sop_ci <- inferences(

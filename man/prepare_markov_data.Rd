@@ -82,7 +82,7 @@ model_data <- prepare_markov_data(
   absorbing_state = 6,
   factor_previous = FALSE
 )
-fit <- vglm.markov(
+fit <- vglm_markov(
   ordered(y) ~ tx + rcs(time, 4) + rcs(yprev, 6),
   family = cumulative(parallel = TRUE, reverse = TRUE),
   data = model_data

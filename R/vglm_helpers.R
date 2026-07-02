@@ -1,54 +1,61 @@
 #' Fit a VGAM Markov Model
 #'
-#' `vglm.markov()` is the recommended VGAM fitting entrypoint for
-#' `markov.misc` SOP workflows. It follows `VGAM::vglm()` closely and returns a
-#' normal S4 `vglm` object, but marks the fit so the SOP prediction code can use
-#' package-native Markov prediction. For inline restricted cubic spline terms
-#' such as `rcs(time, 4)` or `rms::rcs(time, 4)`, the internal VGAM assignment
-#' metadata is split by generated spline column. This makes it possible to give
-#' individual spline basis columns separate constraint matrices for partial
-#' proportional odds models. Inline splines may be used for time or for numeric
-#' previous-state effects such as `rcs(yprev, 6)`.
+#' `vglm_markov()` is the recommended VGAM fitting entrypoint for
+#' `markov.misc` SOP workflows. It follows `VGAM::vglm()` closely, stores the
+#' row-aligned fitting data for downstream SOP inference, and marks the fit so
+#' the SOP prediction code can use package-native Markov prediction. For inline
+#' restricted cubic spline terms such as `rcs(time, 4)` or `rms::rcs(time, 4)`,
+#' the internal VGAM assignment metadata is split by generated spline column.
+#' This makes it possible to give individual spline basis columns separate
+#' constraint matrices for partial proportional odds models. Inline splines may
+#' be used for time or for numeric previous-state effects such as
+#' `rcs(yprev, 6)`.
 #'
-#' `vglm.markov()` also makes the `rms` formula helpers `rcs()` and `%ia%`
+#' `vglm_markov()` also makes the `rms` formula helpers `rcs()` and `%ia%`
 #' available while building model frames and prediction design matrices. This
 #' lets formulas use `time %ia% yprev` for a linear-time by previous-state
 #' interaction without requiring `library(rms)` in the user's session.
 #'
 #' Non-spline terms, factor terms, and workflows that use explicit precomputed
-#' basis columns keep ordinary VGAM assignment behavior. This function does not
-#' compute robust covariance matrices; wrap the returned fit with
-#' [robcov_vglm()] when robust covariance is needed.
+#' basis columns keep ordinary VGAM assignment behavior. When `id_var` is
+#' supplied, the returned object is wrapped with [robcov_vglm()] using that
+#' patient/cluster ID. When `id_var` is omitted, a plain S4 `vglm` object is
+#' returned; if `data` contains an `id` column, a warning reminds the user that
+#' automatic cluster-robust covariance and FWB refits need `id_var`.
 #'
-#' Offsets are not supported in `markov.misc` SOP workflows, so `vglm.markov()`
+#' Offsets are not supported in `markov.misc` SOP workflows, so `vglm_markov()`
 #' rejects both `offset()` terms and the `offset` argument.
 #'
 #' @inheritParams VGAM::vglm
 #' @param family A VGAM family object, e.g. `VGAM::cumulative()`.
+#' @param id_var Optional character scalar naming the patient or cluster ID
+#'   column in `data`. When supplied, [robcov_vglm()] is applied automatically.
 #' @param constraints Optional VGAM constraints list. For inline `rcs()` terms,
 #'   names should match the column-level constraint names in a full proportional
-#'   odds fit returned by `vglm.markov()`.
+#'   odds fit returned by `vglm_markov()`.
 #'
-#' @return A fitted S4 `vglm` object with an internal Markov marker attribute.
+#' @return A fitted S4 `vglm` object with internal Markov marker attributes, or
+#'   a `robcov_vglm` object when `id_var` is supplied.
 #'
 #' @examples
 #' \dontrun{
 #' library(VGAM)
 #' library(rms)
 #'
-#' fit_po <- vglm.markov(
+#' fit_po <- vglm_markov(
 #'   ordered(y) ~ rcs(time, 4) + tx + age + yprev,
 #'   family = cumulative(reverse = TRUE, parallel = TRUE),
-#'   data = data
+#'   data = data,
+#'   id_var = "id"
 #' )
 #'
-#' fit_numeric_prev <- vglm.markov(
+#' fit_numeric_prev <- vglm_markov(
 #'   ordered(y) ~ rcs(time, 4) + tx + age + rcs(yprev, 6),
 #'   family = cumulative(reverse = TRUE, parallel = TRUE),
 #'   data = prepare_markov_data(data, factor_previous = FALSE)
 #' )
 #'
-#' fit_linear_time_by_prev <- vglm.markov(
+#' fit_linear_time_by_prev <- vglm_markov(
 #'   ordered(y) ~ rcs(time, 6) + tx + age + yprev + time %ia% yprev,
 #'   family = cumulative(reverse = TRUE, parallel = TRUE),
 #'   data = data
@@ -56,7 +63,7 @@
 #'
 #' # In contrast, rcs(time, 6) %ia% yprev follows rms semantics and interacts
 #' # the spline basis columns with yprev when yprev is categorical.
-#' fit_spline_basis_by_prev <- vglm.markov(
+#' fit_spline_basis_by_prev <- vglm_markov(
 #'   ordered(y) ~ rcs(time, 6) + tx + age + yprev + rcs(time, 6) %ia% yprev,
 #'   family = cumulative(reverse = TRUE, parallel = TRUE),
 #'   data = data
@@ -72,7 +79,7 @@
 #'   linear_deviation = seq_len(n_thresholds) - 1
 #' )
 #'
-#' fit_ppo <- vglm.markov(
+#' fit_ppo <- vglm_markov(
 #'   ordered(y) ~ rcs(time, 4) + tx + age + yprev,
 #'   family = cumulative(reverse = TRUE, parallel = FALSE),
 #'   data = data,
@@ -82,10 +89,11 @@
 #'
 #' @seealso [robcov_vglm()], [avg_sops()], [sops()]
 #' @export
-vglm.markov <- function(
+vglm_markov <- function(
   formula,
   family = stop("argument 'family' needs to be assigned"),
   data = list(),
+  id_var = NULL,
   weights = NULL,
   subset = NULL,
   na.action,
@@ -108,13 +116,18 @@ vglm.markov <- function(
   dataname <- as.character(substitute(data))
   function.name <- "vglm"
   ocall <- match.call()
+  data_was_supplied <- !missing(data)
+  original_data <- if (data_was_supplied && is.data.frame(data)) data else NULL
   formula <- add_rms_formula_helpers(formula)
   if (!is.null(form2)) {
     form2 <- add_rms_formula_helpers(form2)
   }
 
   setup_smart <- utils::getFromNamespace("setup.smart", "VGAM")
-  get_smart_prediction <- utils::getFromNamespace("get.smart.prediction", "VGAM")
+  get_smart_prediction <- utils::getFromNamespace(
+    "get.smart.prediction",
+    "VGAM"
+  )
   wrapup_smart <- utils::getFromNamespace("wrapup.smart", "VGAM")
   shadowvglm <- utils::getFromNamespace("shadowvglm", "VGAM")
   eval_vcontrol <- make_vgam_vcontrol_eval()
@@ -124,22 +137,45 @@ vglm.markov <- function(
   if (smart) {
     setup_smart("write")
     smart_open <- TRUE
-    on.exit({
-      if (smart_open) {
-        wrapup_smart()
-      }
-    }, add = TRUE)
+    on.exit(
+      {
+        if (smart_open) {
+          wrapup_smart()
+        }
+      },
+      add = TRUE
+    )
   }
 
   if (missing(data)) {
     data <- environment(formula)
   }
 
+  if (!is.null(id_var)) {
+    if (is.null(original_data)) {
+      stop("`id_var` requires `data` to be supplied as a data frame.")
+    }
+    id_var <- validate_markov_id_var(id_var, original_data, "data")
+    warn_duplicate_markov_id_time(
+      original_data,
+      id_var,
+      wrapper = "vglm_markov()"
+    )
+  } else if (!is.null(original_data) && "id" %in% names(original_data)) {
+    warn_missing_markov_id_var("vglm_markov()")
+  }
+
   mf <- match.call(expand.dots = FALSE)
   m <- match(
     c(
-      "formula", "data", "subset", "weights", "na.action",
-      "etastart", "mustart", "offset"
+      "formula",
+      "data",
+      "subset",
+      "weights",
+      "na.action",
+      "etastart",
+      "mustart",
+      "offset"
     ),
     names(mf),
     0
@@ -149,6 +185,7 @@ vglm.markov <- function(
   mf$drop.unused.levels <- TRUE
   mf[[1]] <- as.name("model.frame")
   mf <- eval(mf, parent.frame())
+  fit_data <- markov_align_model_data(original_data, mf)
 
   mt <- attr(mf, "terms")
   if (terms_has_offset(mt) || !is.null(stats::model.offset(mf))) {
@@ -289,7 +326,9 @@ vglm.markov <- function(
   if (length(fit$fitted.values)) {
     methods::slot(answer, "fitted.values") <- as.matrix(fit$fitted.values)
   }
-  methods::slot(answer, "na.action") <- if (length(aaa <- attr(mf, "na.action"))) {
+  methods::slot(answer, "na.action") <- if (
+    length(aaa <- attr(mf, "na.action"))
+  ) {
     list(aaa)
   } else {
     list()
@@ -348,6 +387,14 @@ vglm.markov <- function(
 
   attr(answer, "markov_vglm") <- TRUE
   attr(answer, "markov_split_assign") <- split_assign$has_rcs
+  answer <- markov_attach_model_data(answer, fit_data, id_var)
+
+  if (!is.null(id_var)) {
+    robust <- robcov_vglm(answer, cluster = fit_data[[id_var]])
+    robust <- markov_attach_model_data(robust, fit_data, id_var)
+    return(robust)
+  }
+
   answer
 }
 

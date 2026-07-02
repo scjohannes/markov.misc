@@ -18,7 +18,7 @@ states_to_drs(
 columns: \code{id}, \code{time}, \code{y} (state), and \code{tx} (treatment).}
 
 \item{follow_up_time}{Integer. Total follow-up time used in the simulation.
-This is needed to calculate days at home from the last discharge.}
+This is needed to assign non-recovery and death sentinel scores.}
 
 \item{target_state}{Integer or integer vector. The state representing "home" or "baseline" (default: 1).}
 
@@ -33,23 +33,26 @@ A data frame with columns:
 \itemize{
 \item id: patient identifier
 \item tx: treatment assignment
-\item drs: days returned to baseline (or -1 if died)
+\item drs: ordinal recovery score
 \item any additional covariates specified
 }
 }
 \description{
-This function calculates "Days Returned to Baseline" (or "Days at Home") for
-each patient. This is defined as the number of days spent in the target state
-(typically Home) after the last discharge from a worse state. Patients who die
-receive a score of -1.
+This function calculates a DRS-style ordinal recovery score for each patient.
+Lower scores represent earlier sustained return to the target state
+(typically Home). Patients who ever reach \code{death_state} receive the worst
+score, \code{follow_up_time + 2}.
 }
 \details{
-The DRS (Days Returned to Baseline) outcome focuses on sustained recovery by
-counting only the days at home after the final discharge. The calculation:
+The DRS (Days Returned to Baseline) outcome focuses on sustained recovery.
+The current scoring is:
 \itemize{
 \item Find the last time point where the patient was NOT at home
-\item Count the remaining days from that point to end of follow-up
-\item If the patient died at any point, assign -1
+\item Assign 0 if the patient was always in the target state
+\item Otherwise assign the last non-target time point
+\item If the patient was still not in the target state at final follow-up, assign
+\code{follow_up_time + 1}
+\item If the patient died at any point, assign \code{follow_up_time + 2}
 }
 
 This outcome is more sensitive to sustained recovery than simply counting

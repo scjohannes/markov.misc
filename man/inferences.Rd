@@ -29,8 +29,9 @@ inferences(
 \itemize{
 \item \code{"simulation"} (default): Uses simulation engines that do not
 refit models. Works for both individual and averaged SOPs.
-\item \code{"bootstrap"}: Resamples patients with replacement, refits model.
-Only works for \code{markov_avg_sops} objects.
+\item \code{"bootstrap"}: Refits the model on resampled or weighted patient
+data. Standard resampling works for \code{markov_avg_sops}; fractional
+weighted bootstrap also works for individual \code{markov_sops}.
 }}
 
 \item{engine}{Character. Inference engine. For \code{method = "simulation"}:
@@ -42,8 +43,10 @@ or an \code{orm} model with \code{cluster}, and \code{avg_sops()} objects.
 }
 For \code{method = "bootstrap"}, use \code{"standard"} for ordinary patient
 resampling with replacement or \code{"fwb"} for fractional weighted bootstrap
-refits using exponential patient-level weights. The legacy default
-\code{"mvn"} maps to \code{"standard"} when \code{method = "bootstrap"}.}
+refits using exponential patient-level weights. \code{engine = "fwb"} is the
+only refit-bootstrap engine supported for individual \code{sops()} objects. The
+legacy default \code{"mvn"} maps to \code{"standard"} when
+\code{method = "bootstrap"}.}
 
 \item{score_weight_dist}{Character. Cluster weight distribution for
 \code{engine = "score_bootstrap"}. Currently only \code{"exponential"} is supported.}
@@ -135,10 +138,20 @@ exponential patient weights normalized to mean 1 (\code{engine = "fwb"})
 \item Refit model on bootstrap sample (handles missing states through releveling)
 \item Compute SOPs using G-computation
 \item Compute percentile-based confidence intervals
-Bootstrap requires the full longitudinal dataset (all time
-points) in the original \code{newdata} passed to \code{avg_sops()}, not just baseline
-data. This is because the model must be refit on each bootstrap sample.
+Bootstrap requires the full longitudinal dataset (all time points) either in
+the original \code{newdata}/\code{refit_data} passed to \code{sops()} or \code{avg_sops()}, or
+stored on the model by \code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}}.
+Standard bootstrap is intentionally limited to marginal \code{avg_sops()} objects
+because ordinary resampling can drop outcome-state support needed by fixed
+individual prediction rows. Fractional weighted bootstrap keeps every row in
+the refit data with positive patient-level weights, so it is available for
+individual \code{sops()} objects.
 }
+
+For marginal \code{avg_sops()} objects built from user-supplied \code{newdata}, the
+supplied rows are fixed standardization profiles. Score bootstrap and FWB use
+the original/refit data for coefficient or refit uncertainty, but set
+\code{baseline_weights = NULL} and average the fixed profiles equally.
 
 This design ensures consistency: the same vcov is used for both point
 estimates and inference, regardless of how \code{inferences()} is called.
@@ -146,50 +159,45 @@ estimates and inference, regardless of how \code{inferences()} is called.
 }
 \examples{
 \dontrun{
-# Step 1: Fit model and wrap with cluster-robust vcov
-fit <- vglm(y ~ time + tx + yprev, family = cumulative(reverse = TRUE,
-parallel = TRUE), data = data)
-fit_robust <- robcov_vglm(fit, cluster = data$id)
+# Step 1: Fit model with stored data and cluster-robust vcov
+fit_robust <- vglm_markov(
+  ordered(y) ~ time + tx + yprev,
+  family = cumulative(reverse = TRUE, parallel = TRUE),
+  data = data,
+  id_var = "id"
+)
 
-# Step 2a: Simulation inference (use baseline data only)
-baseline_data <- data |> filter(time == 1)
+# Step 2a: Simulation inference
 result_sim <- avg_sops(
   model = fit_robust,
-  newdata = baseline_data,  # Baseline only for simulation
   variables = list(tx = c(0, 1)),
   times = 1:60,
   ylevels = factor(1:6),
-  absorb = "6",
-  id_var = "id"
+  absorb = "6"
 ) |>
   inferences(method = "simulation", n_sim = 1000)
 
 # Step 2a-bis: Score bootstrap simulation (requires robcov_vglm)
 result_score <- avg_sops(
   model = fit_robust,
-  newdata = baseline_data,
   variables = list(tx = c(0, 1)),
   times = 1:60,
   ylevels = factor(1:6),
-  absorb = "6",
-  id_var = "id"
+  absorb = "6"
 ) |>
   inferences(method = "simulation", engine = "score_bootstrap", n_sim = 1000)
 
-# orm fits use rms::robcov() for full robust covariance matrices.
+# orm_markov() uses rms::robcov() for full robust covariance matrices.
 dd <- rms::datadist(data)
 options(datadist = "dd")
-fit_orm <- rms::orm(y ~ time + tx + yprev, data = data, x = TRUE, y = TRUE)
-fit_orm_robust <- rms::robcov(fit_orm, cluster = data$id)
+fit_orm <- orm_markov(y ~ time + tx + yprev, data = data, id_var = "id")
 
 avg_orm <- avg_sops(
-  model = fit_orm_robust,
-  newdata = baseline_data,
+  model = fit_orm,
   variables = list(tx = c(0, 1)),
   times = 1:60,
   ylevels = factor(1:6),
-  absorb = "6",
-  id_var = "id"
+  absorb = "6"
 )
 result_orm <- avg_orm |>
   inferences(method = "simulation", engine = "mvn", n_sim = 1000)
@@ -202,26 +210,31 @@ result_orm_score <- avg_orm |>
     n_sim = 1000
   )
 
-# Step 2b: Bootstrap inference (must use full data)
+# Step 2b: Bootstrap inference reuses stored full data
 result_boot <- avg_sops(
   model = fit_robust,
-  newdata = data,  # Full longitudinal data for bootstrap
   variables = list(tx = c(0, 1)),
   times = 1:60,
   ylevels = factor(1:6),
-  absorb = "6",
-  id_var = "id"
+  absorb = "6"
 ) |>
   inferences(method = "bootstrap", n_sim = 500)
 
 # Individual-level SOPs with simulation inference
 ind_result <- sops(
   model = fit_robust,
-  newdata = baseline_data,
   times = 1:60,
   ylevels = factor(1:6),
   absorb = "6") |>
   inferences(n_sim = 500)
+
+# Individual-level refit bootstrap uses FWB.
+ind_boot <- sops(
+  model = fit_robust,
+  times = 1:60,
+  ylevels = factor(1:6),
+  absorb = "6") |>
+  inferences(method = "bootstrap", engine = "fwb", n_sim = 500)
 
 # Extract draws for custom analyses
 get_draws(ind_result)

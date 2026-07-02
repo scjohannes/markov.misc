@@ -147,16 +147,16 @@ states_to_ttest <- function(data, target_state = 1) {
 
 #' Convert State Trajectory Data to Days Returned to Baseline (DRS) Format
 #'
-#' This function calculates "Days Returned to Baseline" (or "Days at Home") for
-#' each patient. This is defined as the number of days spent in the target state
-#' (typically Home) after the last discharge from a worse state. Patients who die
-#' receive a score of -1.
+#' This function calculates a DRS-style ordinal recovery score for each patient.
+#' Lower scores represent earlier sustained return to the target state
+#' (typically Home). Patients who ever reach `death_state` receive the worst
+#' score, `follow_up_time + 2`.
 #'
 #' @param data A data frame containing trajectory data, typically the output from
 #'   `sim_trajectories_markov()` or `sim_trajectories_brownian()`. Must contain
 #'   columns: `id`, `time`, `y` (state), and `tx` (treatment).
 #' @param follow_up_time Integer. Total follow-up time used in the simulation.
-#'   This is needed to calculate days at home from the last discharge.
+#'   This is needed to assign non-recovery and death sentinel scores.
 #' @param target_state Integer or integer vector. The state representing "home" or "baseline" (default: 1).
 #' @param death_state Integer. The state representing death (default: 6).
 #' @param covariates Character vector of additional covariate names to include in
@@ -166,15 +166,18 @@ states_to_ttest <- function(data, target_state = 1) {
 #' @return A data frame with columns:
 #'   - id: patient identifier
 #'   - tx: treatment assignment
-#'   - drs: days returned to baseline (or -1 if died)
+#'   - drs: ordinal recovery score
 #'   - any additional covariates specified
 #'
 #' @details
-#' The DRS (Days Returned to Baseline) outcome focuses on sustained recovery by
-#' counting only the days at home after the final discharge. The calculation:
+#' The DRS (Days Returned to Baseline) outcome focuses on sustained recovery.
+#' The current scoring is:
 #' - Find the last time point where the patient was NOT at home
-#' - Count the remaining days from that point to end of follow-up
-#' - If the patient died at any point, assign -1
+#' - Assign 0 if the patient was always in the target state
+#' - Otherwise assign the last non-target time point
+#' - If the patient was still not in the target state at final follow-up, assign
+#'   `follow_up_time + 1`
+#' - If the patient died at any point, assign `follow_up_time + 2`
 #'
 #' This outcome is more sensitive to sustained recovery than simply counting
 #' total days at home, as it emphasizes staying home rather than bouncing

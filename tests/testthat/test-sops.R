@@ -96,10 +96,11 @@ test_that("soprob_markov supports inline splines of numeric previous state", {
     factor_previous = FALSE
   )
   baseline <- data[data$time == 1, , drop = FALSE][seq_len(8), , drop = FALSE]
-  model <- vglm.markov(
+  fit_data <- data[, setdiff(names(data), "id"), drop = FALSE]
+  model <- vglm_markov(
     ordered(y) ~ rms::rcs(time, 4) + tx + rms::rcs(yprev, 6),
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
+    data = fit_data
   )
 
   slow <- soprob_markov(

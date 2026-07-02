@@ -135,7 +135,12 @@ select_posterior_draws <- function(model, n_draws = 100L, seed = NULL) {
   if (is.null(n_draws)) {
     n <- n_available
   } else {
-    if (!is.numeric(n_draws) || length(n_draws) != 1 || is.na(n_draws) || n_draws < 1) {
+    if (
+      !is.numeric(n_draws) ||
+        length(n_draws) != 1 ||
+        is.na(n_draws) ||
+        n_draws < 1
+    ) {
       stop("`n_draws` must be a positive integer or NULL.")
     }
     n <- min(as.integer(n_draws), n_available)
@@ -146,19 +151,28 @@ select_posterior_draws <- function(model, n_draws = 100L, seed = NULL) {
   }
 
   if (!is.null(seed)) {
-    old_seed_exists <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+    old_seed_exists <- exists(
+      ".Random.seed",
+      envir = .GlobalEnv,
+      inherits = FALSE
+    )
     old_seed <- if (old_seed_exists) {
       get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
     } else {
       NULL
     }
-    on.exit({
-      if (old_seed_exists) {
-        assign(".Random.seed", old_seed, envir = .GlobalEnv)
-      } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
-        rm(".Random.seed", envir = .GlobalEnv)
-      }
-    }, add = TRUE)
+    on.exit(
+      {
+        if (old_seed_exists) {
+          assign(".Random.seed", old_seed, envir = .GlobalEnv)
+        } else if (
+          exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+        ) {
+          rm(".Random.seed", envir = .GlobalEnv)
+        }
+      },
+      add = TRUE
+    )
     set.seed(seed)
   }
 
@@ -195,12 +209,15 @@ normalize_blrm_design_names <- function(model, X, second = FALSE) {
 }
 
 resolve_blrm_id_var <- function(model, newdata, id_var = NULL) {
+  id_var <- markov_model_id_var(model, id_var)
   if (!is.null(id_var)) {
     return(id_var)
   }
 
   cluster_name <- model$clusterInfo$name
-  if (!is.null(cluster_name) && length(cluster_name) == 1 && nzchar(cluster_name)) {
+  if (
+    !is.null(cluster_name) && length(cluster_name) == 1 && nzchar(cluster_name)
+  ) {
     return(cluster_name)
   }
 
@@ -322,8 +339,12 @@ resolve_blrm_cppo <- function(cppo, envir = parent.frame()) {
     return(cppo)
   }
 
-  if (!is.character(cppo) || length(cppo) != 1L || is.na(cppo) || !nzchar(cppo)) {
-    stop("Only constrained partial proportional odds `blrm` models are supported.")
+  if (
+    !is.character(cppo) || length(cppo) != 1L || is.na(cppo) || !nzchar(cppo)
+  ) {
+    stop(
+      "Only constrained partial proportional odds `blrm` models are supported."
+    )
   }
 
   is_syntactic_name <- make.names(cppo) == cppo && !grepl("^\\.[0-9]", cppo)
@@ -339,7 +360,9 @@ resolve_blrm_cppo <- function(cppo, envir = parent.frame()) {
     error = function(e) {
       stop(
         "String `cppo` values must name an available function. ",
-        "Could not find function `", cppo, "`.",
+        "Could not find function `",
+        cppo,
+        "`.",
         call. = FALSE
       )
     }
@@ -368,7 +391,11 @@ predict_blrm_response_markov <- function(
       K <- ns + 1L
       cn <- colnames(draws)
       tauinfo <- object$tauInfo
-      tau_names <- if (!is.null(tauinfo) && length(tauinfo$name)) tauinfo$name else character()
+      tau_names <- if (!is.null(tauinfo) && length(tauinfo$name)) {
+        tauinfo$name
+      } else {
+        character()
+      }
 
       intercept_draws <- draws[, seq_len(ns), drop = FALSE]
       beta_names <- setdiff(cn, c(cn[seq_len(ns)], tau_names))
@@ -433,15 +460,15 @@ predict_blrm_response_markov <- function(
         if (has_npo) {
           ep <- ep + cppos[k] * zt
         }
-        cum_probs[, , k] <- stats::plogis(ep)
+        cum_probs[,, k] <- stats::plogis(ep)
       }
 
-      out[, , 1] <- 1 - cum_probs[, , 1]
+      out[,, 1] <- 1 - cum_probs[,, 1]
       if (K > 2) {
-        out[, , 2:(K - 1)] <- cum_probs[, , 1:(K - 2), drop = FALSE] -
-          cum_probs[, , 2:(K - 1), drop = FALSE]
+        out[,, 2:(K - 1)] <- cum_probs[,, 1:(K - 2), drop = FALSE] -
+          cum_probs[,, 2:(K - 1), drop = FALSE]
       }
-      out[, , K] <- cum_probs[, , K - 1]
+      out[,, K] <- cum_probs[,, K - 1]
       out[out < 0] <- 0
 
       out
@@ -484,10 +511,13 @@ orm_model_matrix <- function(model, newdata, include_intercept = FALSE) {
     contrasts = c(factor = "contr.treatment", ordered = "contr.treatment"),
     Design.attr = design
   )
-  on.exit({
-    options(contrasts = oldopts$contrasts)
-    options(Design.attr = oldopts$Design.attr)
-  }, add = TRUE)
+  on.exit(
+    {
+      options(contrasts = oldopts$contrasts)
+      options(Design.attr = oldopts$Design.attr)
+    },
+    add = TRUE
+  )
 
   formulano <- add_rms_formula_helpers(model$sformula)
   Terms <- stats::terms(formulano, specials = "strat")
@@ -541,7 +571,10 @@ normalize_orm_prediction_data <- function(model, newdata) {
         "Values in `",
         nm,
         "` are not among fitted orm levels: ",
-        paste(utils::head(unique(as.character(values[bad])), 5), collapse = ", "),
+        paste(
+          utils::head(unique(as.character(values[bad])), 5),
+          collapse = ", "
+        ),
         if (length(unique(values[bad])) > 5) " ..." else ""
       )
     }
@@ -570,7 +603,8 @@ coerce_previous_state_values <- function(values, prototype, pvarname) {
     out <- suppressWarnings(as.integer(labels))
     if (anyNA(out) && any(!is.na(labels))) {
       stop(
-        "`ylevels` must be integer-compatible when `", pvarname,
+        "`ylevels` must be integer-compatible when `",
+        pvarname,
         "` is an integer previous-state variable."
       )
     }
@@ -581,7 +615,8 @@ coerce_previous_state_values <- function(values, prototype, pvarname) {
     out <- suppressWarnings(as.numeric(labels))
     if (anyNA(out) && any(!is.na(labels))) {
       stop(
-        "`ylevels` must be numeric-compatible when `", pvarname,
+        "`ylevels` must be numeric-compatible when `",
+        pvarname,
         "` is a numeric previous-state variable."
       )
     }
@@ -760,7 +795,9 @@ validate_factor_gap <- function(gap, t_covs, time_info) {
   ) {
     stop(
       "Factor visit time with `gap` requires numeric gap values in ",
-      "`t_covs[[\"", gap, "\"]]`; elapsed gaps are not inferred from ",
+      "`t_covs[[\"",
+      gap,
+      "\"]]`; elapsed gaps are not inferred from ",
       "factor visit labels."
     )
   }
@@ -774,7 +811,9 @@ assign_sop_gap <- function(data, gap, times, index, t_covs, time_info) {
   }
 
   validate_factor_gap(gap, t_covs, time_info)
-  if (!isTRUE(time_info$is_factor) && (is.null(t_covs) || !gap %in% names(t_covs))) {
+  if (
+    !isTRUE(time_info$is_factor) && (is.null(t_covs) || !gap %in% names(t_covs))
+  ) {
     data[[gap]] <- if (index == 1L) {
       times[index]
     } else {

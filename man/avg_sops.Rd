@@ -7,6 +7,7 @@
 avg_sops(
   model,
   newdata = NULL,
+  refit_data = NULL,
   variables = NULL,
   by = NULL,
   times = NULL,
@@ -25,10 +26,14 @@ avg_sops(
 \item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, or \code{blrm}). For
 \code{vglm} models, the family \strong{must} be \code{cumulative(reverse = TRUE, ...)}.}
 
-\item{newdata}{Data frame for prediction. For \strong{simulation inference}, pass
-baseline data only (one row per patient). For \strong{bootstrap inference}, you
-must pass the full longitudinal dataset (all time points) since the model
-needs to be refit on bootstrap samples. If NULL, extracts from model.}
+\item{newdata}{Optional data frame of standardization profiles. When
+supplied, every row is treated as a separate baseline profile and the
+internal \code{rowid} column is regenerated. If \code{NULL}, uses data stored by
+\code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}} and extracts one
+prediction row per \code{id_var}.}
+
+\item{refit_data}{Optional full longitudinal data used by bootstrap refit
+inference. Defaults to data stored on wrapper-fitted models.}
 
 \item{variables}{A named list specifying the variable(s) to standardize over.
 E.g., \code{list(tx = c(0, 1))} creates counterfactual datasets for treatment
@@ -44,8 +49,12 @@ factor time uses all fitted visit levels and numeric time is inferred from
 
 \item{id_var}{Name of the patient ID variable. Required for bootstrap
 inference and for \code{blrm} random-effect prediction. If \code{NULL}, defaults to
-\code{"id"}; for \code{blrm} models with \code{include_re = TRUE}, it is first inferred
-from \code{model$clusterInfo$name} when available.}
+\code{"id"}; for wrapper-fitted models, it is inferred from stored metadata.
+For user-supplied \code{newdata}, \code{id_var} is required only for \code{blrm} random
+effects. Refit bootstrap inference uses \code{id_var} from \code{refit_data} or
+wrapper-stored model data. For \code{blrm} models with \code{include_re = TRUE},
+\code{model$clusterInfo$name} is used before the final \code{"id"} fallback when
+wrapper metadata is absent.}
 
 \item{p2varname}{Optional second previous-state variable. \code{NULL} uses a
 first-order Markov recursion; a non-\code{NULL} column name uses a second-order
@@ -110,26 +119,30 @@ stored with \code{return_draws = TRUE} remain normalized within each draw.
 }
 \examples{
 \dontrun{
-# For simulation inference: use baseline data (one row per patient)
-baseline_data <- data |> filter(time == 1)
+fit <- vglm_markov(
+  ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
+  family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+  data = data,
+  id_var = "id"
+)
+
+# Wrapper-fitted models can use stored data and extract baseline rows.
 result <- avg_sops(
   model = fit,
-  newdata = baseline_data,
   variables = list(tx = c(0, 1)),
   times = 1:60,
   ylevels = 1:6,
   absorb = 6
 ) |> inferences(method = "simulation", n_sim = 500)
 
-# For bootstrap inference: must use full data (all time points)
+# Refit bootstrap can reuse the stored full longitudinal data.
 result_boot <- avg_sops(
   model = fit,
-  newdata = data,  # Full longitudinal data
   variables = list(tx = c(0, 1)),
   times = 1:60,
   ylevels = 1:6,
   absorb = 6
-) |> inferences(method = "bootstrap", n_sim = 500)
+) |> inferences(method = "bootstrap", engine = "fwb", n_sim = 500)
 }
 
 }

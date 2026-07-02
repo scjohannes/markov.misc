@@ -16,7 +16,8 @@ inferences_bootstrap(
 )
 }
 \arguments{
-\item{object}{A \code{markov_avg_sops} object.}
+\item{object}{A \code{markov_avg_sops} object, or a \code{markov_sops} object when
+\code{engine = "fwb"}.}
 
 \item{engine}{Bootstrap engine, \code{"standard"} or \code{"fwb"}.}
 
