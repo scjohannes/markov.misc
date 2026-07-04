@@ -7,12 +7,18 @@
 avg_sops(
   model,
   newdata = NULL,
-  refit_data = NULL,
   variables = NULL,
   by = NULL,
-  times = NULL,
+  times,
+  ylevels = NULL,
+  absorb = NULL,
+  refit_data = NULL,
   id_var = NULL,
+  tvarname = "time",
+  pvarname = "yprev",
   p2varname = NULL,
+  gap = NULL,
+  t_covs = NULL,
   include_re = FALSE,
   n_draws = 100L,
   seed = NULL,
@@ -32,9 +38,6 @@ internal \code{rowid} column is regenerated. If \code{NULL}, uses data stored by
 \code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}} and extracts one
 prediction row per \code{id_var}.}
 
-\item{refit_data}{Optional full longitudinal data used by bootstrap refit
-inference. Defaults to data stored on wrapper-fitted models.}
-
 \item{variables}{A named list specifying the variable(s) to standardize over.
 E.g., \code{list(tx = c(0, 1))} creates counterfactual datasets for treatment
 and control.}
@@ -42,10 +45,17 @@ and control.}
 \item{by}{Optional character vector of additional variables to group by,
 after standardization.}
 
-\item{times}{Visit-scale time points. Numeric time variables use numeric
-values; factor-valued visit indices use fitted visit levels. If \code{NULL},
-factor time uses all fitted visit levels and numeric time is inferred from
-\code{newdata}.}
+\item{times}{Required visit-scale time points. Numeric time variables use
+numeric values; factor-valued visit indices use fitted visit levels.}
+
+\item{ylevels}{A vector of state levels. If \code{NULL}, attempts to infer from
+model.}
+
+\item{absorb}{The absorbing state.}
+
+\item{refit_data}{Optional full longitudinal data used only by refit-bootstrap
+inference. It is not used for point estimates. Defaults to data stored on
+wrapper-fitted models.}
 
 \item{id_var}{Name of the patient ID variable. Required for bootstrap
 inference and for \code{blrm} random-effect prediction. If \code{NULL}, defaults to
@@ -56,9 +66,19 @@ wrapper-stored model data. For \code{blrm} models with \code{include_re = TRUE},
 \code{model$clusterInfo$name} is used before the final \code{"id"} fallback when
 wrapper metadata is absent.}
 
+\item{tvarname}{Name of the time variable in the model.}
+
+\item{pvarname}{Name of the previous state variable in the model.}
+
 \item{p2varname}{Optional second previous-state variable. \code{NULL} uses a
 first-order Markov recursion; a non-\code{NULL} column name uses a second-order
 recursion.}
+
+\item{gap}{Name of the time gap variable, if used.}
+
+\item{t_covs}{Optional time-varying covariate lookup table for explicit
+precomputed time-basis columns. Inline terms such as \code{rms::rcs(time, 4)}
+can be used without it.}
 
 \item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
 fitted random-effect draws in posterior predictions for known IDs.}
@@ -76,10 +96,7 @@ fitted random-effect draws in posterior predictions for known IDs.}
 \item{return_draws}{Logical. For \code{blrm}, store posterior SOP draws for
 extraction with \code{get_draws()}.}
 
-\item{...}{Additional arguments passed to \code{sops()} (e.g., \code{ylevels}, \code{absorb},
-\code{tvarname}, \code{pvarname}, \code{t_covs}). \code{t_covs} is only needed for explicit
-precomputed time-basis columns; inline terms such as \code{rms::rcs(time, 4)}
-can be used without it.}
+\item{...}{Additional arguments reserved for future extensions.}
 }
 \value{
 A data frame of class \code{markov_avg_sops} with columns:

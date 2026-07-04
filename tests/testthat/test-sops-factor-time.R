@@ -177,7 +177,7 @@ test_that("factor visit time works through SOP APIs and the fast path", {
   individual <- sops(
     fit,
     newdata = baseline,
-    times = NULL,
+    times = 1:4,
     ylevels = factor(1:4),
     pvarname = "yprev"
   )
@@ -187,7 +187,7 @@ test_that("factor visit time works through SOP APIs and the fast path", {
     fit,
     newdata = baseline,
     variables = list(tx = c(0, 1)),
-    times = NULL,
+    times = 1:4,
     ylevels = factor(1:4),
     pvarname = "yprev"
   )
@@ -262,7 +262,7 @@ test_that("factor visit simulation and bootstrap inference smoke-test", {
     fit,
     newdata = baseline,
     variables = list(tx = c(0, 1)),
-    times = NULL,
+    times = 1:4,
     ylevels = factor(1:4),
     pvarname = "yprev"
   )
@@ -274,7 +274,7 @@ test_that("factor visit simulation and bootstrap inference smoke-test", {
     fit,
     refit_data = data,
     variables = list(tx = c(0, 1)),
-    times = NULL,
+    times = 1:4,
     ylevels = factor(1:4),
     pvarname = "yprev"
   )
@@ -325,7 +325,7 @@ test_that("factor visit orm avg_sops requires absorbing state", {
     avg_sops(
       fit,
       variables = list(tx = c(0, 1)),
-      times = NULL,
+      times = names(case$visit_days),
       ylevels = fit$yunique
     ),
     "pass it via `absorb`"
@@ -368,7 +368,7 @@ test_that("factor visit orm SOP interpolation uses absorbing state", {
   sop_visit <- avg_sops(
     fit,
     variables = list(tx = c(0, 1)),
-    times = NULL,
+    times = names(case$visit_days),
     ylevels = fit$yunique,
     absorb = case$absorb
   )

@@ -7,18 +7,18 @@
 sops(
   model,
   newdata = NULL,
-  refit_data = NULL,
-  times = NULL,
+  times,
   ylevels = NULL,
   absorb = NULL,
+  by = NULL,
+  refit_data = NULL,
+  id_var = NULL,
   tvarname = "time",
   pvarname = "yprev",
   p2varname = NULL,
   gap = NULL,
   t_covs = NULL,
-  by = NULL,
   include_re = FALSE,
-  id_var = NULL,
   n_draws = 100L,
   seed = NULL,
   posterior_summary = c("mean", "median"),
@@ -37,17 +37,30 @@ every row is treated as a separate baseline profile and the internal
 \code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}} and extracts one
 prediction row per \code{id_var}.}
 
-\item{refit_data}{Optional full longitudinal data used by bootstrap refit
-inference. Defaults to data stored on wrapper-fitted models.}
-
-\item{times}{Visit-scale time points to estimate. For numeric time
+\item{times}{Required visit-scale time points to estimate. For numeric time
 variables this is usually a numeric vector. For factor-valued visit
-indices, values are matched to fitted visit levels; if \code{NULL}, all
-fitted visit levels are used.}
+indices, values are matched to fitted visit levels.}
 
 \item{ylevels}{A vector of state levels. If NULL, attempts to infer from model.}
 
 \item{absorb}{The absorbing state.}
+
+\item{by}{Optional character vector of variable names to stratify by. When
+provided, the function aggregates (averages) SOPs within each stratum
+defined by combinations of these variables. E.g., \code{by = "ecog"} aggregates
+within ECOG levels; \code{by = c("ecog", "age_group")} aggregates within each
+combination of ECOG and age group. NOTE: This is simple aggregation within
+observed strata, NOT G-computation standardization (use \code{avg_sops()} for that).}
+
+\item{refit_data}{Optional full longitudinal data used only by refit-bootstrap
+inference. It is not used for point estimates. Defaults to data stored on
+wrapper-fitted models.}
+
+\item{id_var}{Character ID column used when \code{include_re = TRUE}. For \code{blrm},
+\code{NULL} is inferred from wrapper metadata, then \code{model$clusterInfo$name}
+when available, otherwise \code{"id"}. For frequentist models, \code{id_var} is used
+for stored-data extraction and refit bootstrap metadata, not for ordinary
+user-supplied prediction rows.}
 
 \item{tvarname}{Name of the time variable in the model.}
 
@@ -63,21 +76,8 @@ recursion.}
 basis columns. Inline terms such as \code{rms::rcs(time, 4)} can be used without
 supplying \code{t_covs}.}
 
-\item{by}{Optional character vector of variable names to stratify by. When
-provided, the function aggregates (averages) SOPs within each stratum
-defined by combinations of these variables. E.g., \code{by = "ecog"} aggregates
-within ECOG levels; \code{by = c("ecog", "age_group")} aggregates within each
-combination of ECOG and age group. NOTE: This is simple aggregation within
-observed strata, NOT G-computation standardization (use \code{avg_sops()} for that).}
-
 \item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
 fitted random-effect draws in posterior predictions for known IDs.}
-
-\item{id_var}{Character ID column used when \code{include_re = TRUE}. For \code{blrm},
-\code{NULL} is inferred from wrapper metadata, then \code{model$clusterInfo$name}
-when available, otherwise \code{"id"}. For frequentist models, \code{id_var} is used
-for stored-data extraction and refit bootstrap metadata, not for ordinary
-user-supplied prediction rows.}
 
 \item{n_draws}{Integer number of posterior draws to sample for \code{blrm}, or
 \code{NULL} to use all stored draws. Defaults to 100.}

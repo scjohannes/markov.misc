@@ -100,11 +100,6 @@ sop_many <- avg_sops(
   pvarname = "yprev"
 ) |> 
   inferences(n_sim = 10)
-
-sop_many[
-  sop_many$time == FOLLOW_UP &
-    sop_many$state %in% c("5", "15", "25", "30"),
-]
 ```
 
 With many states, a stacked distribution is usually easier to read than one
@@ -122,4 +117,51 @@ plot_sops(
     x = "Week",
     y = "State occupancy probability"
   )
+```
+
+## Constrasts
+
+We can calcualte contrasts for time in state or weeks benefit.
+
+```{r}
+c <- avg_comparisons(
+  fit_many, 
+  times = seq_len(FOLLOW_UP),
+  variables = list(tx = c(0, 1)), 
+  metric = "time_in_state",
+  states = list(good = 1:10, average = 11:20, bad = 21:30), 
+) |> 
+  inferences(
+    n_sim = 10
+  )
+
+plot_comparisons(c)
+```
+
+```{r}
+tb <- avg_comparisons(
+  fit_many, 
+  times = seq_len(FOLLOW_UP),
+  variables = list(tx = c(0, 1)),
+  metric = "time_benefit"
+) |> 
+  inferences(
+    n_sim = 10
+  )
+
+plot_comparisons(tb)
+```
+
+```{r}
+sc <- avg_comparisons(
+  fit_many, 
+  times = seq_len(FOLLOW_UP),
+  variables = list(tx = c(0, 1)),
+  metric = "sop"
+) |> 
+  inferences(
+    n_sim = 10
+  )
+
+plot_comparisons(sc, facet_var = "state_set")
 ```

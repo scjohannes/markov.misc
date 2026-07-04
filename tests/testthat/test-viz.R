@@ -12,7 +12,10 @@ test_that("plot_sops creates bar plots with optional faceting", {
   expect_s3_class(plot, "ggplot")
   expect_equal(length(plot$layers), 1)
   expect_equal(unique(built$data[[1]]$PANEL), factor(c(1, 2)))
-  expect_equal(plot$labels$title, "Empirical State Occupancy Probabilities Over Time")
+  expect_equal(
+    plot$labels$title,
+    "Empirical State Occupancy Probabilities Over Time"
+  )
 })
 
 test_that("plot_sops creates line plots with and without linetype groups", {
@@ -134,12 +137,20 @@ test_that("plot_sops overlays a deterministic subset of avg_sops draws", {
 
   plot <- plot_sops(data, geom = "bar", facet_var = "tx", n_draws = 3)
   built <- ggplot2::ggplot_build(plot)
-  draw_layer_ids <- unname(vapply(plot$layers[-1], function(layer) {
-    unique(layer$data$draw_id)
-  }, numeric(1)))
-  layer_max_y <- vapply(built$data, function(layer_data) {
-    max(layer_data$y)
-  }, numeric(1))
+  draw_layer_ids <- unname(vapply(
+    plot$layers[-1],
+    function(layer) {
+      unique(layer$data$draw_id)
+    },
+    numeric(1)
+  ))
+  layer_max_y <- vapply(
+    built$data,
+    function(layer_data) {
+      max(layer_data$y)
+    },
+    numeric(1)
+  )
   draw_layer_nrows <- unname(vapply(
     plot$layers[-1],
     function(layer) nrow(layer$data),
@@ -207,6 +218,121 @@ test_that("plot_sops supports summary data frames and grid facets", {
   expect_equal(class(plot$facet)[1], "FacetGrid")
 })
 
+make_comparison_plot_data <- function(
+  comparison = "difference",
+  with_time = TRUE
+) {
+  if (isTRUE(with_time)) {
+    data <- expand.grid(
+      time = 1:2,
+      state_set = c("1", "2"),
+      contrast = c("1 - 0", "2 - 0"),
+      KEEP.OUT.ATTRS = FALSE
+    )
+    data$metric <- "sop"
+  } else {
+    data <- data.frame(
+      state_set = c("1", "2"),
+      contrast = c("1 / 0", "1 / 0"),
+      metric = "time_in_state"
+    )
+  }
+  data$variable <- "tx"
+  data$reference_level <- 0
+  data$comparison_level <- ifelse(data$contrast %in% c("2 - 0", "2 / 0"), 2, 1)
+  data$comparison <- comparison
+  data$estimate <- seq_len(nrow(data)) / 10
+  if (identical(comparison, "ratio")) {
+    data$estimate <- data$estimate + 0.8
+  }
+  data$conf.low <- data$estimate - 0.05
+  data$conf.high <- data$estimate + 0.05
+  class(data) <- c("markov_avg_comparisons", class(data))
+  data
+}
+
+test_that("plot_comparisons plots time-varying differences on contrast scale", {
+  data <- make_comparison_plot_data()
+
+  plot <- plot_comparisons(data)
+  built <- ggplot2::ggplot_build(plot)
+
+  expect_s3_class(plot, "ggplot")
+  expect_equal(length(plot$layers), 3)
+  expect_s3_class(plot$layers[[3]]$geom, "GeomLine")
+  expect_equal(unique(built$data[[1]]$yintercept), 0)
+  expect_equal(plot$labels$y, "Difference")
+  expect_equal(plot$labels$colour, "State set")
+  expect_equal(plot$labels$linetype, "Contrast")
+})
+
+test_that("plot_comparisons plots ratios with point intervals and ratio reference", {
+  data <- make_comparison_plot_data(comparison = "ratio", with_time = FALSE)
+
+  plot <- plot_comparisons(data)
+  built <- ggplot2::ggplot_build(plot)
+
+  expect_s3_class(plot, "ggplot")
+  expect_equal(length(plot$layers), 3)
+  expect_s3_class(plot$layers[[3]]$geom, "GeomPoint")
+  expect_equal(unique(built$data[[1]]$yintercept), 1)
+  expect_equal(plot$labels$x, "State set")
+  expect_equal(plot$labels$y, "Ratio")
+})
+
+test_that("plot_comparisons accepts custom grouping labels", {
+  data <- make_comparison_plot_data(comparison = "ratio", with_time = FALSE)
+  data$initial_y <- c("1", "2")
+
+  plot <- plot_comparisons(data, color_var = "initial_y")
+
+  expect_s3_class(plot, "ggplot")
+  expect_equal(plot$labels$colour, "initial_y")
+  expect_equal(plot$labels$fill, "initial_y")
+})
+
+test_that("plot_comparisons orders numeric state sets naturally", {
+  data <- data.frame(
+    state_set = c("1", "10", "11", "2", "3"),
+    contrast = "1 / 0",
+    metric = "time_in_state",
+    variable = "tx",
+    reference_level = 0,
+    comparison_level = 1,
+    comparison = "ratio",
+    estimate = c(1, 1.1, 1.2, 0.9, 0.8)
+  )
+  data$conf.low <- data$estimate - 0.05
+  data$conf.high <- data$estimate + 0.05
+  class(data) <- c("markov_avg_comparisons", class(data))
+  attr(data, "ylevels") <- as.character(1:11)
+
+  plot <- plot_comparisons(data)
+  built <- ggplot2::ggplot_build(plot)
+
+  expect_equal(
+    built$layout$panel_params[[1]]$x$get_labels(),
+    c("1", "2", "3", "10", "11")
+  )
+})
+
+test_that("plot_comparisons validates comparison data", {
+  expect_error(
+    plot_comparisons(data.frame(estimate = 1)),
+    "missing required comparison column",
+    fixed = TRUE
+  )
+
+  data <- make_comparison_plot_data()
+  data$comparison[1] <- "ratio"
+
+  expect_error(
+    plot_comparisons(data),
+    "requires one comparison scale",
+    fixed = TRUE
+  )
+})
+
 test_that("plot_results validates grouping and x variables", {
   data <- data.frame(
     analysis = c("a", "b"),
@@ -236,14 +362,26 @@ test_that("plot_results returns individual and combined plots", {
     coverage = c(0.9, 0.91, 0.92, 0.93)
   )
 
-  result <- plot_results(data, power, coverage, x = sample_size, group = analysis)
+  result <- plot_results(
+    data,
+    power,
+    coverage,
+    x = sample_size,
+    group = analysis
+  )
 
   expect_named(result, c("single_plots", "grid"))
   expect_length(result$single_plots, 2)
   expect_s3_class(result$single_plots[[1]], "ggplot")
   expect_s3_class(result$grid, "patchwork")
 
-  separate <- plot_results(data, power, x = sample_size, group = analysis, combine = FALSE)
+  separate <- plot_results(
+    data,
+    power,
+    x = sample_size,
+    group = analysis,
+    combine = FALSE
+  )
   expect_null(separate$grid)
 })
 

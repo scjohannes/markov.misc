@@ -7,7 +7,7 @@
 get_draws(object)
 }
 \arguments{
-\item{object}{An object returned by \code{inferences()} with \code{return_draws = TRUE}.}
+\item{object}{A SOP or average-comparison object returned with stored draws.}
 }
 \value{
 A data frame with columns:

@@ -50,7 +50,7 @@ test_that("sops() validates inputs and supports stratified aggregation", {
       )
       expect_error(
         sops(model, newdata = data.frame(id = 1), ylevels = 1:2),
-        "`times` must be specified",
+        "`times` must be supplied to `sops()`.",
         fixed = TRUE
       )
       expect_error(
@@ -78,16 +78,19 @@ test_that("sops() validates inputs and supports stratified aggregation", {
         by = "tx"
       )
 
-      inferred_times <- sops(
-        model,
-        newdata = newdata,
-        times = NULL,
-        ylevels = 1:2
+      expect_error(
+        sops(
+          model,
+          newdata = newdata,
+          times = NULL,
+          ylevels = 1:2
+        ),
+        "`times` must be supplied to `sops()`.",
+        fixed = TRUE
       )
     }
   )
 
-  expect_equal(sort(unique(inferred_times$time)), c(1, 2))
   expected <- aggregate(
     estimate ~ time + state + tx,
     data = data.frame(
@@ -188,10 +191,13 @@ test_that("avg_sops() validates inputs and preserves grouping metadata", {
     subgroup = c("a", "b"),
     yprev = c(1, 2)
   )
+  t_covs <- data.frame(visit = 1:2, spline = c(0, 1))
+  captured <- new.env(parent = emptyenv())
 
   with_mocked_bindings(
     validate_markov_model = function(object) NULL,
     sops = function(model, newdata, times, ...) {
+      captured$args <- list(...)
       out <- expand.grid(
         time = times,
         state = c(1, 2),
@@ -221,6 +227,11 @@ test_that("avg_sops() validates inputs and preserves grouping metadata", {
         "Provide newdata",
         fixed = TRUE
       )
+      expect_error(
+        avg_sops(model, newdata = newdata, variables = "tx"),
+        "`times` must be supplied to `avg_sops()`.",
+        fixed = TRUE
+      )
       expect_no_error(
         avg_sops(
           model,
@@ -245,13 +256,27 @@ test_that("avg_sops() validates inputs and preserves grouping metadata", {
         newdata = newdata,
         variables = "tx",
         by = "subgroup",
-        times = 1:2
+        times = 1:2,
+        ylevels = c(1, 2),
+        absorb = 2,
+        tvarname = "visit",
+        pvarname = "prev",
+        p2varname = "preprev",
+        gap = "gap",
+        t_covs = t_covs
       )
     }
   )
 
   expect_true("subgroup" %in% names(result))
   expect_equal(attr(result, "avg_args")$by, "subgroup")
+  expect_equal(captured$args$ylevels, c(1, 2))
+  expect_equal(captured$args$absorb, 2)
+  expect_equal(captured$args$tvarname, "visit")
+  expect_equal(captured$args$pvarname, "prev")
+  expect_equal(captured$args$p2varname, "preprev")
+  expect_equal(captured$args$gap, "gap")
+  expect_equal(captured$args$t_covs, t_covs)
 })
 
 test_that("avg_sops() reports missing grouping variables from individual SOPs", {

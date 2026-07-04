@@ -57,8 +57,10 @@ flowchart LR
 
   subgraph "Summaries and presentation"
     TIS["time_in_state()<br/>R/sops-time-in-state.R"]
+    COMP["avg_comparisons()<br/>R/sops-comparisons.R"]
     INT["interpolate_sops()<br/>R/sops-interpolate.R"]
     PLOT["plot_sops()<br/>R/viz.R"]
+    PLOT_COMP["plot_comparisons()<br/>R/viz.R"]
     OC["Operating characteristics<br/>R/power.R"]
   end
 
@@ -81,8 +83,11 @@ flowchart LR
   INF --> DRAWS
   API --> INT
   API --> TIS
+  API --> COMP
+  COMP --> INF
   INT --> TIS
   API --> PLOT
+  COMP --> PLOT_COMP
   ENDPOINT_IN --> OC
   API --> OC
 ```
@@ -101,9 +106,9 @@ The package is organized by workflow stage rather than by model class.
 | SOP engine | `R/sops-engine.R`, `R/sops-backends.R`, `R/sops-fast-path.R`, `R/sops-result-helpers.R` | Validate models, predict transition probabilities, run first- and second-order Markov recursions, reshape arrays to tidy objects. |
 | SOP inference | `R/sops-inference.R`, `R/sops-draws.R`, `R/sops-score-bootstrap.R`, `R/sops-bootstrap-inference.R` | Compute uncertainty intervals from MVN coefficient draws, posterior draws, score bootstrap draws, ordinary refit bootstrap samples, or fractional weighted refits. |
 | Bootstrap infrastructure | `R/bootstrap_helpers.R`, `R/bootstrap.R`, `R/bootstrap-tidy.R` | Memory-efficient group bootstrap sampling, fractional weighted bootstrap weights, just-in-time materialization, model refitting, bootstrap coefficient and SOP summaries. |
-| Endpoint summaries | `R/endpoint-summaries.R`, `R/endpoint-tte.R`, `R/competing-risks.R`, `R/sops-time-in-state.R`, `R/sops-interpolate.R` | Convert trajectories or SOPs to days-at-home, time-to-event, competing-risk, real-time interpolation, and time-in-state summaries. |
+| Endpoint summaries | `R/endpoint-summaries.R`, `R/endpoint-tte.R`, `R/competing-risks.R`, `R/sops-time-in-state.R`, `R/sops-interpolate.R`, `R/sops-comparisons.R` | Convert trajectories or SOPs to days-at-home, time-to-event, competing-risk, real-time interpolation, time-in-state summaries, and average counterfactual comparisons. |
 | Operating characteristics | `R/power.R` | Sample from Arrow superpopulations, run iteration-level analyses, summarize power, type I error, bias, coverage, and Monte Carlo error. |
-| Visualization | `R/viz.R` | Plot empirical or model-derived SOPs, bootstrap SOP bands, and operating-characteristic summaries. |
+| Visualization | `R/viz.R` | Plot empirical or model-derived SOPs, average comparisons, bootstrap SOP bands, and operating-characteristic summaries. |
 | Method reports | `doc/*.qmd` | Reproducible Quarto reports that exercise package workflows and document simulation-study findings without adding exported package APIs. |
 
 ## Core Data Contracts
@@ -153,7 +158,8 @@ labels. Higher-level functions convert these arrays into tidy outputs.
 
 `sops()` returns individual-level or grouped SOPs with class `markov_sops`.
 `avg_sops()` returns marginal G-computation summaries with class
-`markov_avg_sops`.
+`markov_avg_sops`. `avg_comparisons()` returns average counterfactual
+contrasts with class `markov_avg_comparisons`.
 
 Core columns are:
 
@@ -161,6 +167,7 @@ Core columns are:
 | --- | --- |
 | `markov_sops` | Baseline covariates, optional `rowid`, `time`, `state`, `estimate`. If `by` is supplied, rows are averaged over `time`, `state`, and `by`. |
 | `markov_avg_sops` | `time`, `state`, `estimate`, counterfactual variables such as `tx`, and optional `by` variables. |
+| `markov_avg_comparisons` | `metric`, `variable`, `reference_level`, `comparison_level`, `contrast`, `comparison`, `estimate`, optional `time`, `state_set`, `time_unit`, and optional `by` variables. |
 | Objects after `inferences()` | Original columns plus `conf.low`, `conf.high`, `std.error`, and inference metadata attributes. |
 
 Important attributes are set in `set_sops_attrs()`:
@@ -175,14 +182,21 @@ Important attributes are set in `set_sops_attrs()`:
 | `by` | Stratification variables for grouped individual SOPs. |
 | `newdata_orig` | Original source data supplied to the SOP call, or wrapper-stored model data when `newdata = NULL`. User-supplied rows are treated as fixed prediction profiles; wrapper-stored data may be full longitudinal data. |
 | `newdata_pred` | The fixed prediction data used by recursive SOP prediction, with `rowid` regenerated internally. For user-supplied `newdata`, every row is kept. For stored longitudinal source data, this is extracted as the earliest row per `id_var`. |
-| `refit_data` | Full longitudinal data used by refit-bootstrap inference. Wrapper-fitted models can provide this automatically. |
+| `refit_data` | Full longitudinal data used only by refit-bootstrap inference, not by point estimation. Wrapper-fitted models can provide this automatically. |
 | `id_var` | Patient or cluster ID variable propagated from wrappers or SOP arguments. It is used for stored-data extraction, refit resampling, and `blrm` random effects, not as the ordinary prediction-row key. |
 | `avg_args` | Extra marginalization instructions for `markov_avg_sops`: variables, grid, ID variable, and grouping. |
+| `comparison_args` | Extra comparison instructions for `markov_avg_comparisons`: metric, states, comparison function, real-time mapping, posterior settings, and original extra SOP arguments. |
 | `draws`, `simulation_draws`, `bootstrap_draws` | Optional stored draw-level outputs. |
 
 These attributes are part of the architecture. Downstream functions such as
-`inferences()`, `get_draws()`, `interpolate_sops()`, `time_in_state()`, and
-`plot_sops()` rely on them.
+`inferences()`, `get_draws()`, `interpolate_sops()`, `time_in_state()`,
+`avg_comparisons()`, and `plot_sops()` rely on them.
+
+The public SOP endpoints keep their argument order grouped by use: core
+estimand inputs first (`times`, `ylevels`, `absorb`, `by`, and comparison
+choices), advanced source-data controls next (`refit_data`, `id_var`), then
+Markov model-structure controls (`tvarname`, `pvarname`, `p2varname`, `gap`,
+`t_covs`), and finally posterior-specific knobs.
 
 ## Primary User Workflows
 
@@ -401,7 +415,8 @@ larger expanded state space and no fast-path inference.
 Time handling is centralized in backend helpers:
 
 - Numeric time can be generated from the requested `times` sequence.
-- Factor time can use fitted factor levels when `times = NULL`.
+- Factor time uses explicitly supplied visit labels, validated against fitted
+  factor levels.
 - `t_covs` supplies precomputed time-dependent covariates such as spline bases.
 - `gap` allows transition models to include the elapsed interval since the
   previous observation.
@@ -633,8 +648,9 @@ The package keeps endpoint transformations separate from the SOP engine.
 | `states_to_tte()` | Longitudinal states | Collapsed start-stop intervals for survival models. |
 | `format_competing_risks()` | `states_to_tte()` output | At-risk intervals or event rows with competing-risk status. |
 | `calc_time_in_state_diff()` | Simulated trajectories | True treatment contrasts in state-occupation time. |
-| `time_in_state()` | SOP arrays, tidy SOPs, or bootstrap SOP frames | Expected total time in target states, optionally on a real-time grid. |
 | `interpolate_sops()` | `markov_sops` / `markov_avg_sops` | Visit-scale SOPs mapped and linearly interpolated onto elapsed time. |
+| `time_in_state()` | SOP arrays, tidy SOPs, or bootstrap SOP frames | Expected total time in target states, optionally on a real-time grid. |
+| `avg_comparisons()` | Markov transition model plus counterfactual variable grid | Average contrasts for SOPs, time in state, or ordinal time benefit. |
 
 Endpoint summary helpers retain the first observed treatment value per patient
 without recoding it, so numeric and label-coded `tx` values remain consistent
@@ -646,6 +662,21 @@ from `newdata_orig`, interpolates draw-level outputs when available, and
 recomputes intervals from interpolated draws. `time_in_state()` then integrates
 probabilities by summing visit-scale probabilities or using trapezoidal AUC on
 real-time grids.
+
+`avg_comparisons()` is the comparison layer above SOP prediction. For linear
+metrics such as state-specific SOPs and time in state, it computes marginal
+SOPs once with `avg_sops()` and then reduces paired counterfactual levels,
+preserving draw IDs when `inferences()` replays uncertainty. The ordinal
+`time_benefit` metric is nonlinear in the two counterfactual state
+distributions, so it is computed from paired patient/profile-level SOPs before
+averaging over profiles or `by` strata.
+
+`plot_comparisons()` is the visualization layer for `markov_avg_comparisons`.
+It plots the estimate column on the contrast scale, using a 0 reference line for
+differences and a 1 reference line for ratios. Time-specific SOP contrasts are
+drawn as lines with optional confidence ribbons; collapsed comparison metrics
+such as time in state are drawn as point intervals. State-set axes are ordered
+from stored state levels when available, with numeric labels sorted naturally.
 
 ## Operating Characteristics
 
@@ -824,6 +855,8 @@ Useful regression themes include:
 - Equivalence between slow prediction and fast-path prediction for eligible
   models.
 - `avg_sops()` counterfactual grids, `by` strata, and stored attributes.
+- `avg_comparisons()` contrasts, state-set reductions, patient-level
+  `time_benefit`, and draw-wise paired inference.
 - MVN, score-bootstrap, posterior, standard refit-bootstrap, and FWB refit
   inference paths.
 - Draw extraction, interpolation, and time-in-state integration.
@@ -856,6 +889,8 @@ interfaces or examples change.
 | `R/sops-backends.R` | `validate_markov_model()`, `predict_*_response_markov()`, BLRM helpers, ORM matrix helpers, time/gap helpers | Model adapters and dynamic prediction-data construction. |
 | `R/sops-fast-path.R` | `markov_msm_build()`, `markov_msm_run()`, `lp_to_probs()`, `compute_Gamma()` | Optimized repeated prediction for eligible first-order models. |
 | `R/sops-result-helpers.R` | `set_sops_attrs()`, `restore_sops_attrs()`, `create_counterfactual_data()`, `marginalize_sops_array()`, `array_to_df_individual()` | Tidy SOP object construction and attribute preservation. |
+| `R/sops-comparisons.R` | `avg_comparisons()` and comparison reduction helpers | Average counterfactual comparisons for marginal SOP metrics and patient/profile-level ordinal time benefit. |
+| `R/viz.R` | `plot_sops()`, `plot_comparisons()`, `plot_results()`, `plot_bootstrap_sops()` | Visualization helpers for empirical/model-derived SOPs, average comparisons, bootstrap SOP bands, and operating-characteristic summaries. |
 | `R/sops-inference.R` | `inferences()`, `inferences_simulation()` | Main inference dispatcher and coefficient-draw replay. |
 | `R/sops-bootstrap-inference.R` | `inferences_bootstrap()` | Standard and fractional weighted refit-bootstrap inference for marginal SOPs, plus FWB refit inference for individual SOPs. |
 | `R/sops-score-bootstrap.R` | `generate_score_bootstrap_draws()`, `score_bootstrap_components()`, `compute_scores_orm()` | One-step score-bootstrap engine. |
@@ -869,7 +904,6 @@ interfaces or examples change.
 | `R/endpoint-tte.R` | `states_to_tte()`, `states_to_tte_v2()`, `calc_time_in_state_diff()` | Start-stop and true time-in-state transformations. |
 | `R/competing-risks.R` | `format_competing_risks()` | Competing-risk formatting from start-stop data. |
 | `R/power.R` | `sample_from_arrow()`, `tidy_po()`, `assess_operating_characteristics()`, `summarize_oc_results()` | Operating-characteristic simulation helpers. |
-| `R/viz.R` | `plot_sops()`, `plot_results()`, `plot_bootstrap_sops()` | SOP, bootstrap, and operating-characteristic plots. |
 | `R/globals.R` | `utils::globalVariables()` | CRAN/R CMD check global variable declarations. |
 | `tests/testthat/helper-simulation.R` | `make_test_data()`, `make_test_model()`, `make_time_covariates()`, `make_score_bootstrap_case()` | Deterministic fixtures for simulation, SOP, bootstrap, and inference tests. |
 | `tests/testthat/helper-expectations.R` | `expect_trajectory_contract()`, `expect_probability_array()`, `expect_inference_intervals()` | Domain-specific test expectations for package contracts. |

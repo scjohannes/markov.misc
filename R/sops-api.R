@@ -13,14 +13,25 @@
 #'   `rowid` column is regenerated. If `NULL`, uses the data stored by
 #'   [orm_markov()], [blrm_markov()], or [vglm_markov()] and extracts one
 #'   prediction row per `id_var`.
-#' @param refit_data Optional full longitudinal data used by bootstrap refit
-#'   inference. Defaults to data stored on wrapper-fitted models.
-#' @param times Visit-scale time points to estimate. For numeric time
+#' @param times Required visit-scale time points to estimate. For numeric time
 #'   variables this is usually a numeric vector. For factor-valued visit
-#'   indices, values are matched to fitted visit levels; if `NULL`, all
-#'   fitted visit levels are used.
+#'   indices, values are matched to fitted visit levels.
 #' @param ylevels A vector of state levels. If NULL, attempts to infer from model.
 #' @param absorb The absorbing state.
+#' @param by Optional character vector of variable names to stratify by. When
+#'   provided, the function aggregates (averages) SOPs within each stratum
+#'   defined by combinations of these variables. E.g., `by = "ecog"` aggregates
+#'   within ECOG levels; `by = c("ecog", "age_group")` aggregates within each
+#'   combination of ECOG and age group. NOTE: This is simple aggregation within
+#'   observed strata, NOT G-computation standardization (use `avg_sops()` for that).
+#' @param refit_data Optional full longitudinal data used only by refit-bootstrap
+#'   inference. It is not used for point estimates. Defaults to data stored on
+#'   wrapper-fitted models.
+#' @param id_var Character ID column used when `include_re = TRUE`. For `blrm`,
+#'   `NULL` is inferred from wrapper metadata, then `model$clusterInfo$name`
+#'   when available, otherwise `"id"`. For frequentist models, `id_var` is used
+#'   for stored-data extraction and refit bootstrap metadata, not for ordinary
+#'   user-supplied prediction rows.
 #' @param tvarname Name of the time variable in the model.
 #' @param pvarname Name of the previous state variable in the model.
 #' @param p2varname Optional second previous-state variable. `NULL` uses a
@@ -28,21 +39,10 @@
 #'   recursion.
 #' @param gap Name of the time gap variable (if used).
 #' @param t_covs Optional time-varying covariate lookup table for explicit
-#' basis columns. Inline terms such as `rms::rcs(time, 4)` can be used without
-#' supplying `t_covs`.
-#' @param by Optional character vector of variable names to stratify by. When
-#'   provided, the function aggregates (averages) SOPs within each stratum
-#'   defined by combinations of these variables. E.g., `by = "ecog"` aggregates
-#'   within ECOG levels; `by = c("ecog", "age_group")` aggregates within each
-#'   combination of ECOG and age group. NOTE: This is simple aggregation within
-#'   observed strata, NOT G-computation standardization (use `avg_sops()` for that).
+#'   basis columns. Inline terms such as `rms::rcs(time, 4)` can be used without
+#'   supplying `t_covs`.
 #' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
 #'   fitted random-effect draws in posterior predictions for known IDs.
-#' @param id_var Character ID column used when `include_re = TRUE`. For `blrm`,
-#'   `NULL` is inferred from wrapper metadata, then `model$clusterInfo$name`
-#'   when available, otherwise `"id"`. For frequentist models, `id_var` is used
-#'   for stored-data extraction and refit bootstrap metadata, not for ordinary
-#'   user-supplied prediction rows.
 #' @param n_draws Integer number of posterior draws to sample for `blrm`, or
 #'   `NULL` to use all stored draws. Defaults to 100.
 #' @param seed Optional random seed for reproducible random draw sampling.
@@ -122,18 +122,18 @@
 sops <- function(
   model,
   newdata = NULL,
-  refit_data = NULL,
-  times = NULL,
+  times,
   ylevels = NULL,
   absorb = NULL,
+  by = NULL,
+  refit_data = NULL,
+  id_var = NULL,
   tvarname = "time",
   pvarname = "yprev",
   p2varname = NULL,
   gap = NULL,
   t_covs = NULL,
-  by = NULL,
   include_re = FALSE,
-  id_var = NULL,
   n_draws = 100L,
   seed = NULL,
   posterior_summary = c("mean", "median"),
@@ -144,6 +144,9 @@ sops <- function(
   # --- 1. Setup & Defaults ---
   # Validate model compatibility
   validate_markov_model(model)
+  if (missing(times) || is.null(times)) {
+    stop("`times` must be supplied to `sops()`.")
+  }
 
   data_res <- resolve_markov_source_data(model, newdata, refit_data)
   newdata_orig <- data_res$source_data
@@ -173,8 +176,7 @@ sops <- function(
     validate_markov_id_var(id_var, newdata_orig, "stored model data")
   }
 
-  # Resolve default times from the full supplied/stored data before extracting
-  # one prediction row per ID.
+  # Validate and coerce supplied times before extracting one prediction row per ID.
   time_res <- resolve_sop_times(
     model,
     newdata_orig,
@@ -577,17 +579,19 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'   internal `rowid` column is regenerated. If `NULL`, uses data stored by
 #'   [orm_markov()], [blrm_markov()], or [vglm_markov()] and extracts one
 #'   prediction row per `id_var`.
-#' @param refit_data Optional full longitudinal data used by bootstrap refit
-#'   inference. Defaults to data stored on wrapper-fitted models.
 #' @param variables A named list specifying the variable(s) to standardize over.
 #'   E.g., `list(tx = c(0, 1))` creates counterfactual datasets for treatment
 #'   and control.
 #' @param by Optional character vector of additional variables to group by,
 #' after standardization.
-#' @param times Visit-scale time points. Numeric time variables use numeric
-#'   values; factor-valued visit indices use fitted visit levels. If `NULL`,
-#'   factor time uses all fitted visit levels and numeric time is inferred from
-#'   `newdata`.
+#' @param times Required visit-scale time points. Numeric time variables use
+#'   numeric values; factor-valued visit indices use fitted visit levels.
+#' @param ylevels A vector of state levels. If `NULL`, attempts to infer from
+#'   model.
+#' @param absorb The absorbing state.
+#' @param refit_data Optional full longitudinal data used only by refit-bootstrap
+#'   inference. It is not used for point estimates. Defaults to data stored on
+#'   wrapper-fitted models.
 #' @param id_var Name of the patient ID variable. Required for bootstrap
 #'   inference and for `blrm` random-effect prediction. If `NULL`, defaults to
 #'   `"id"`; for wrapper-fitted models, it is inferred from stored metadata.
@@ -596,9 +600,15 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'   wrapper-stored model data. For `blrm` models with `include_re = TRUE`,
 #'   `model$clusterInfo$name` is used before the final `"id"` fallback when
 #'   wrapper metadata is absent.
+#' @param tvarname Name of the time variable in the model.
+#' @param pvarname Name of the previous state variable in the model.
 #' @param p2varname Optional second previous-state variable. `NULL` uses a
 #'   first-order Markov recursion; a non-`NULL` column name uses a second-order
 #'   recursion.
+#' @param gap Name of the time gap variable, if used.
+#' @param t_covs Optional time-varying covariate lookup table for explicit
+#'   precomputed time-basis columns. Inline terms such as `rms::rcs(time, 4)`
+#'   can be used without it.
 #' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
 #'   fitted random-effect draws in posterior predictions for known IDs.
 #' @param n_draws Integer number of posterior draws to sample for `blrm`, or
@@ -609,10 +619,7 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #' @param conf_level Confidence level for `blrm` posterior intervals.
 #' @param return_draws Logical. For `blrm`, store posterior SOP draws for
 #'   extraction with `get_draws()`.
-#' @param ... Additional arguments passed to `sops()` (e.g., `ylevels`, `absorb`,
-#'   `tvarname`, `pvarname`, `t_covs`). `t_covs` is only needed for explicit
-#'   precomputed time-basis columns; inline terms such as `rms::rcs(time, 4)`
-#'   can be used without it.
+#' @param ... Additional arguments reserved for future extensions.
 #'
 #' @return A data frame of class `markov_avg_sops` with columns:
 #'   \item{time}{Time point}
@@ -679,12 +686,18 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 avg_sops <- function(
   model,
   newdata = NULL,
-  refit_data = NULL,
   variables = NULL,
   by = NULL,
-  times = NULL,
+  times,
+  ylevels = NULL,
+  absorb = NULL,
+  refit_data = NULL,
   id_var = NULL,
+  tvarname = "time",
+  pvarname = "yprev",
   p2varname = NULL,
+  gap = NULL,
+  t_covs = NULL,
   include_re = FALSE,
   n_draws = 100L,
   seed = NULL,
@@ -696,8 +709,9 @@ avg_sops <- function(
   # --- 1. Input Validation ---
   # Validate model compatibility
   validate_markov_model(model)
-  args <- list(...)
-  tvarname <- args$tvarname %||% "time"
+  if (missing(times) || is.null(times)) {
+    stop("`times` must be supplied to `avg_sops()`.")
+  }
 
   if (is.null(variables)) {
     stop(
@@ -772,8 +786,14 @@ avg_sops <- function(
       variables = var_list,
       by = by,
       times = times,
+      ylevels = ylevels,
+      absorb = absorb,
+      tvarname = tvarname,
+      pvarname = pvarname,
       id_var = id_var,
       p2varname = p2varname,
+      gap = gap,
+      t_covs = t_covs,
       include_re = include_re,
       n_draws = n_draws,
       seed = seed,
@@ -796,8 +816,14 @@ avg_sops <- function(
     newdata = newdata_expanded,
     refit_data = refit_data,
     times = times,
+    ylevels = ylevels,
+    absorb = absorb,
+    tvarname = tvarname,
+    pvarname = pvarname,
     id_var = id_var,
     p2varname = p2varname,
+    gap = gap,
+    t_covs = t_covs,
     ...
   )
   resolved_times <- attr(sops_ind, "call_args")$times
@@ -863,8 +889,14 @@ avg_sops_blrm <- function(
   variables,
   by,
   times,
+  ylevels,
+  absorb,
+  tvarname,
+  pvarname,
   id_var,
   p2varname,
+  gap,
+  t_covs,
   include_re,
   n_draws,
   seed,
@@ -873,13 +905,7 @@ avg_sops_blrm <- function(
   return_draws,
   ...
 ) {
-  args <- list(...)
-  ylevels <- args$ylevels %||% model$ylevels
-  absorb <- args$absorb %||% NULL
-  tvarname <- args$tvarname %||% "time"
-  pvarname <- args$pvarname %||% "yprev"
-  gap <- args$gap %||% NULL
-  t_covs <- args$t_covs %||% NULL
+  ylevels <- ylevels %||% model$ylevels
 
   time_res <- resolve_sop_times(
     model,
