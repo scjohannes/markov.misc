@@ -76,7 +76,7 @@ compute_ci_from_draws <- function(
 #' This function joins the draws back to the original point estimate object,
 #' preserving all covariates, grouping variables, and summary statistics.
 #'
-#' @param object An object returned by `inferences()` with `return_draws = TRUE`.
+#' @param object A SOP or average-comparison object returned with stored draws.
 #'
 #' @return A data frame with columns:
 #'   \itemize{
@@ -156,7 +156,12 @@ compute_ci_from_draws <- function(
 #'
 #' @export
 get_draws <- function(object) {
-  if (!inherits(object, c("markov_avg_sops", "markov_sops"))) {
+  if (
+    !inherits(
+      object,
+      c("markov_avg_sops", "markov_sops", "markov_avg_comparisons")
+    )
+  ) {
     stop(
       "get_draws() requires an object from inferences(). ",
       "Got: ",

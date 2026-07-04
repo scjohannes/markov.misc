@@ -81,8 +81,11 @@ extracting one prediction row per patient for the SOP target. The `by` argument
 asks for subgroup averages by initial observed state.
 
 ```{r avg-sops}
-s <- sops(
+# marginalize, but the average within each subgroup
+# weights from FWB are used when averaging
+s <- avg_sops(
   fit,
+  variables = "tx",
   by = "initial_y",
   times = seq_len(FOLLOW_UP),
   ylevels = fit$yunique,
@@ -115,6 +118,27 @@ sop_fwb <- inferences(
 ```{r compare}
 plot_sops(
   sop_fwb,
-  facet_var = "initial_y"
+  facet_var = "initial_y",
+  linetype_var = "tx"
 )
+```
+
+## Contrasts
+
+```{r}
+c <- avg_comparisons(
+  fit, 
+  times = seq_len(FOLLOW_UP),
+  variables = list(tx = c(0, 1)),
+  metric = "time_in_state",
+  absorb = ABSORB,
+  by = "initial_y"
+) |> 
+  inferences(method = "bootstrap",
+  engine = "fwb",
+  n_sim = N_BOOT,
+  workers = 1,
+  return_draws = TRUE)
+
+plot_comparisons(c, color_var = "initial_y")
 ```

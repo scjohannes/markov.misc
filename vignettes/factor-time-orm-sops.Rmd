@@ -85,8 +85,8 @@ head(model_data)
 
 ## Fit And Predict On The Visit Scale
 
-When `times = NULL`, `avg_sops()` obtains the factor levels from the fitted
-model. The returned SOPs are on the visit scale.
+For factor-valued visits, supply the visit labels explicitly with `times`.
+The returned SOPs are on the visit scale.
 
 ```{r fit-model}
 dd <- rms::datadist(model_data)
@@ -105,7 +105,7 @@ fit_visit <- orm_markov(
 sop_visit <- avg_sops(
   fit_visit,
   variables = list(tx = c(0, 1)),
-  times = NULL,
+  times = names(VISIT_DAYS),
   ylevels = fit_visit$yunique,
   absorb = as.character(ABSORB)
 ) |> 
@@ -132,11 +132,35 @@ plot_sops(
   sop_days,
   time_var = "time",
   geom = "line",
-  facet_var = "tx"
+  facet_var = NULL,
+  linetype_var = "tx"
 ) +
   scale_x_continuous(breaks = c(0, unname(VISIT_DAYS))) +
   labs(
     x = "Calendar day",
     y = "State occupancy probability"
   )
+```
+
+## Contrasts
+
+```{r}
+cmp_days <- avg_comparisons(
+  fit_visit,
+  variables = list(tx = c(0, 1)),
+  metric = "time_in_state",
+  states = NULL, 
+  comparison = "difference",
+  times = names(VISIT_DAYS),
+  ylevels = fit_visit$yunique,
+  absorb = as.character(ABSORB),
+  time_map = VISIT_DAYS,
+  xout = 0:max(VISIT_DAYS),
+  origin_time = 0,
+  time_unit = "days"
+) |>
+  inferences(n_sim = 100)
+
+plot_comparisons(cmp_days) +
+  labs(y = "Difference in time in state (days)")
 ```

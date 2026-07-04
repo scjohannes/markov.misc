@@ -8,8 +8,9 @@
 #' `sops()`/`avg_sops()`, so `inferences()` ignores `method` and returns the
 #' object unchanged.
 #'
-#' @param object A `markov_avg_sops` object from `avg_sops()` or a
-#'   `markov_sops` object from `sops()`.
+#' @param object A `markov_avg_sops` object from `avg_sops()`, a
+#'   `markov_sops` object from `sops()`, or a `markov_avg_comparisons` object
+#'   from [avg_comparisons()].
 #' @param method Character. Inference method:
 #'   \itemize{
 #'     \item `"simulation"` (default): Uses simulation engines that do not
@@ -247,9 +248,15 @@ inferences <- function(
   ...
 ) {
   # --- Input Validation ---
-  if (!inherits(object, c("markov_avg_sops", "markov_sops"))) {
+  if (
+    !inherits(
+      object,
+      c("markov_avg_sops", "markov_sops", "markov_avg_comparisons")
+    )
+  ) {
     stop(
-      "inferences() requires a 'markov_avg_sops' or 'markov_sops' object. ",
+      "inferences() requires a 'markov_avg_sops', 'markov_sops', or ",
+      "'markov_avg_comparisons' object. ",
       "Got: ",
       paste(class(object), collapse = ", ")
     )
@@ -277,6 +284,24 @@ inferences <- function(
       "`engine = \"score_bootstrap\"` is only used when ",
       "`method = \"simulation\"`."
     )
+  }
+
+  if (inherits(object, "markov_avg_comparisons")) {
+    return(inferences_avg_comparisons(
+      object = object,
+      method = method,
+      engine = engine,
+      score_weight_dist = score_weight_dist,
+      n_sim = n_sim,
+      vcov = vcov,
+      cluster = cluster,
+      workers = workers,
+      conf_level = conf_level,
+      conf_type = conf_type,
+      return_draws = return_draws,
+      update_datadist = update_datadist,
+      use_coefstart = use_coefstart
+    ))
   }
 
   # --- Dispatch to Method-Specific Implementation ---

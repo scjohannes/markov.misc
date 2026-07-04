@@ -22,8 +22,9 @@ inferences(
 )
 }
 \arguments{
-\item{object}{A \code{markov_avg_sops} object from \code{avg_sops()} or a
-\code{markov_sops} object from \code{sops()}.}
+\item{object}{A \code{markov_avg_sops} object from \code{avg_sops()}, a
+\code{markov_sops} object from \code{sops()}, or a \code{markov_avg_comparisons} object
+from \code{\link[=avg_comparisons]{avg_comparisons()}}.}
 
 \item{method}{Character. Inference method:
 \itemize{

@@ -1,6 +1,15 @@
 # markov.misc 0.1.0
 
 - Reworked the vignette set
+- `avg_comparisons()` now computes average SOP, time-in-state, and ordinal
+  time-benefit contrasts between counterfactual levels, with uncertainty added
+  through the existing `inferences()` workflow.
+- `plot_comparisons()` now plots `avg_comparisons()` output on the difference
+  or ratio scale, with uncertainty intervals when available.
+- `sops()`, `avg_sops()`, and `avg_comparisons()` now require an explicit
+  `times` argument instead of inferring a prediction grid, expose Markov
+  structure arguments directly, and reserve `refit_data` for refit-bootstrap
+  inference.
 - Documented `violet_baseline` provenance from `Hmisc::simlongord` and kept
   the package under `GPL (>= 2)` for GPL-compatible redistribution.
 - Removed stale `taooh*` archive exports and fixed several edge cases in
