@@ -235,6 +235,32 @@ describe("avg_sops() and inferences() pipeline", {
     )
   })
 
+  test_that("marginalize_sops_array() normalizes weights within by strata", {
+    sops_array <- array(c(0.2, 0.8, 0.1, 0.5), dim = c(4, 1, 1))
+    newdata <- data.frame(
+      id = 1:4,
+      tx = 0,
+      subgroup = c("a", "a", "b", "b")
+    )
+
+    out <- markov.misc:::marginalize_sops_array(
+      sops_array = sops_array,
+      grid = data.frame(tx = 0),
+      times = 1,
+      ylevels = 1,
+      variables = list(tx = 0),
+      n_cf = 1,
+      n_each = 4,
+      weights = c(1, 3, 2, 6),
+      by = "subgroup",
+      newdata = newdata
+    )
+    out <- out[order(out$subgroup), , drop = FALSE]
+
+    expect_equal(out$estimate, c(0.65, 0.4))
+    expect_equal(out$subgroup, c("a", "b"))
+  })
+
   test_that("array_to_df_individual() preserves row identity and optional strata", {
     sops_array <- array(seq_len(3 * 2 * 2) / 20, dim = c(3, 2, 2))
     newdata <- data.frame(
@@ -275,6 +301,61 @@ describe("avg_sops() and inferences() pipeline", {
     rownames(manual) <- NULL
 
     expect_equal(stratified, manual)
+  })
+
+  test_that("array_to_df_individual() supports draw weights", {
+    sops_array <- array(c(0.1, 0.5, 0.9), dim = c(3, 1, 1))
+    newdata <- data.frame(
+      id = 1:3,
+      rowid = 1:3,
+      subgroup = c("a", "a", "b")
+    )
+    weights <- c(1, 3, 100)
+
+    individual <- markov.misc:::array_to_df_individual(
+      sops_array = sops_array,
+      times = 1,
+      ylevels = 1,
+      newdata = newdata,
+      weights = weights,
+      weight_col = "fwb_weight"
+    )
+    expect_equal(individual$fwb_weight, weights)
+
+    stratified <- markov.misc:::array_to_df_individual(
+      sops_array = sops_array,
+      times = 1,
+      ylevels = 1,
+      newdata = newdata,
+      by = "subgroup",
+      weights = weights
+    )
+    stratified <- stratified[order(stratified$subgroup), , drop = FALSE]
+
+    expect_equal(stratified$estimate, c(0.4, 0.9))
+    expect_false("fwb_weight" %in% names(stratified))
+  })
+
+  test_that("array_to_df_individual() rejects draw weight column collisions", {
+    sops_array <- array(c(0.1, 0.5), dim = c(2, 1, 1))
+    newdata <- data.frame(
+      id = 1:2,
+      rowid = 1:2,
+      fwb_weight = c(10, 20)
+    )
+
+    expect_error(
+      markov.misc:::array_to_df_individual(
+        sops_array = sops_array,
+        times = 1,
+        ylevels = 1,
+        newdata = newdata,
+        weights = c(1, 3),
+        weight_col = "fwb_weight"
+      ),
+      "reserved for bootstrap draw weights",
+      fixed = TRUE
+    )
   })
 
   test_that("compute_ci_from_draws() computes percentile and wald intervals", {

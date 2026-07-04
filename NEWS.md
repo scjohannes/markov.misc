@@ -46,6 +46,11 @@
 - `inferences()` now supports fractional weighted bootstrap refits via
   `method = "bootstrap", engine = "fwb"`, using mean-one exponential
   patient-level weights for fitting and weighted SOP marginalization.
+- FWB and score-bootstrap inference now use draw-specific patient weights for
+  every empirical averaging step in `avg_sops()` and grouped `sops()`, with
+  weights normalized within `by` strata. Ungrouped stored-data `sops()` draws
+  expose `fwb_weight` or `score_weight` via `get_draws()` for manual summaries;
+  these column names are reserved when draw weights are attached.
 - `inferences()` now treats user-supplied `avg_sops(newdata = ...)`
   standardization profiles as fixed targets for score bootstrap and FWB
   inference: coefficient/refit uncertainty still comes from the original data,

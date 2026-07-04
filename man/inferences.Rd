@@ -39,7 +39,7 @@ weighted bootstrap also works for individual \code{markov_sops}.
 \item \code{"mvn"} (default): Draws coefficients from MVN(beta_hat, Sigma).
 \item \code{"score_bootstrap"}: Uses one-step score perturbation with
 cluster-level exponential multipliers. Requires a \code{robcov_vglm} model
-or an \code{orm} model with \code{cluster}, and \code{avg_sops()} objects.
+or an \code{orm} model with \code{cluster}.
 }
 For \code{method = "bootstrap"}, use \code{"standard"} for ordinary patient
 resampling with replacement or \code{"fwb"} for fractional weighted bootstrap
@@ -97,7 +97,9 @@ The input object with added columns:
 
 If \code{return_draws = TRUE}, the object also has a \code{"simulation_draws"} or
 \code{"bootstrap_draws"} attribute containing all individual draws. Extract
-with \code{get_draws()}.
+with \code{get_draws()}. For ungrouped \code{sops()} objects evaluated on the stored
+empirical prediction cohort, score-bootstrap and FWB draws include the
+draw-specific \code{score_weight} or \code{fwb_weight} column.
 }
 \description{
 Adds confidence intervals to SOP objects using simulation-based or bootstrap
@@ -124,8 +126,12 @@ cluster-level exponential multipliers.
 \itemize{
 \item Works for both individual-level (\code{sops()}) and averaged (\code{avg_sops()}) SOPs
 for \code{engine = "mvn"}
-\item \code{engine = "score_bootstrap"} supports \code{avg_sops()} with \code{robcov_vglm}
-models and with \code{orm} models when \code{cluster} is supplied.
+\item \code{engine = "score_bootstrap"} supports \code{avg_sops()} and \code{sops()} with
+\code{robcov_vglm} models and with \code{orm} models when \code{cluster} is supplied.
+When the prediction rows are the stored empirical cohort, the same
+cluster-level weights used for the score perturbation are used for every
+empirical averaging step. With \code{by}, weights are normalized within each
+subgroup; without \code{by}, they are normalized over the full empirical cohort.
 }
 }
 
@@ -145,13 +151,21 @@ Standard bootstrap is intentionally limited to marginal \code{avg_sops()} object
 because ordinary resampling can drop outcome-state support needed by fixed
 individual prediction rows. Fractional weighted bootstrap keeps every row in
 the refit data with positive patient-level weights, so it is available for
-individual \code{sops()} objects.
+individual \code{sops()} objects. For FWB, the same patient weights used for
+refitting are used for marginal or subgroup averaging. Ungrouped stored-data
+\code{sops()} draws expose the patient weight as \code{fwb_weight}; grouped \code{sops()} and
+\code{avg_sops()} use the weights internally and return already averaged draws.
+Prediction data for such ungrouped draw output must not already contain a
+column named \code{fwb_weight} or \code{score_weight}, because those names are reserved
+for bootstrap draw weights.
 }
 
 For marginal \code{avg_sops()} objects built from user-supplied \code{newdata}, the
-supplied rows are fixed standardization profiles. Score bootstrap and FWB use
-the original/refit data for coefficient or refit uncertainty, but set
-\code{baseline_weights = NULL} and average the fixed profiles equally.
+supplied rows are fixed standardization profiles. The same fixed-profile rule
+applies to \code{sops(newdata = ...)}. Score bootstrap and FWB use the
+original/refit data for coefficient or refit uncertainty, but do not attach or
+apply draw weights to the supplied prediction profiles because those rows
+cannot be assumed to align with the bootstrap clusters.
 
 This design ensures consistency: the same vcov is used for both point
 estimates and inference, regardless of how \code{inferences()} is called.

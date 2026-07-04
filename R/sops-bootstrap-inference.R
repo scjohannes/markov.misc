@@ -226,8 +226,23 @@ inferences_bootstrap <- function(
       variables = variables,
       n_cf = n_cf,
       n_each = n_each,
-      weights = baseline_weights
+      weights = baseline_weights,
+      by = by,
+      newdata = newdata_cf
     )
+
+    if (!is.null(by)) {
+      if (length(missing_states) > 0) {
+        boot_avg <- complete_bootstrap_sop_states(
+          boot_avg,
+          times = times,
+          ylevels = ylevels,
+          variables = variables,
+          by = by
+        )
+      }
+      return(boot_avg)
+    }
 
     avg_sops_list <- bootstrap_avg_df_to_matrices(
       boot_avg = boot_avg,
@@ -307,7 +322,9 @@ inferences_bootstrap <- function(
         "factor_cols",
         "use_coefstart",
         "engine",
-        "id_var"
+        "id_var",
+        "by",
+        "complete_bootstrap_sop_states"
       )
     )
   } else {
@@ -343,7 +360,9 @@ inferences_bootstrap <- function(
         "factor_cols",
         "use_coefstart",
         "engine",
-        "id_var"
+        "id_var",
+        "by",
+        "complete_bootstrap_sop_states"
       )
     )
   }
@@ -388,6 +407,9 @@ inferences_bootstrap <- function(
   if (engine == "fwb") {
     attr(final_result, "fwb_weight_type") <- "exponential"
     attr(final_result, "fwb_weight_scale") <- "cluster_mean_1"
+    attr(final_result, "draw_weights_attached") <- FALSE
+    attr(final_result, "draw_weight_col") <- NULL
+    attr(final_result, "draw_weight_omission_reason") <- "averaged_sops"
   }
 
   # Store full bootstrap draws if requested
@@ -410,6 +432,7 @@ inferences_bootstrap_sops_fwb <- function(
   model <- attr(object, "model")
   prediction_data <- attr(object, "newdata_pred") %||%
     attr(object, "newdata_orig")
+  newdata_supplied <- isTRUE(attr(object, "newdata_supplied"))
   refit_data <- attr(object, "refit_data") %||% markov_model_data(model)
   call_args <- attr(object, "call_args")
 
@@ -446,6 +469,27 @@ inferences_bootstrap_sops_fwb <- function(
   validate_markov_id_var(id_var, refit_data, "refit_data")
 
   prediction_data <- ensure_markov_rowid(prediction_data)
+  if (!newdata_supplied) {
+    validate_prediction_weight_ids(prediction_data, id_var)
+  } else if (!is.null(by)) {
+    warn_fixed_profile_bootstrap_weights("FWB")
+  } else if (isTRUE(return_draws)) {
+    warn_fixed_profile_draw_weights("FWB")
+  }
+
+  draw_weight_col <- if (!newdata_supplied && is.null(by)) "fwb_weight" else NULL
+  validate_draw_weight_column_available(prediction_data, draw_weight_col)
+  draw_weights_attached <- !is.null(draw_weight_col) && isTRUE(return_draws)
+  draw_weight_omission_reason <- if (draw_weights_attached) {
+    NULL
+  } else if (newdata_supplied) {
+    "user_supplied_newdata"
+  } else if (!is.null(by)) {
+    "grouped_sops"
+  } else {
+    NULL
+  }
+
   factor_cols <- c("y", pvarname, p2varname)
   factor_cols <- intersect(factor_cols, names(refit_data))
 
@@ -504,12 +548,24 @@ inferences_bootstrap_sops_fwb <- function(
       return(NULL)
     }
 
+    prediction_weights <- if (newdata_supplied) {
+      NULL
+    } else {
+      fwb_baseline_weights(
+        fwb_weights = fwb_weights,
+        baseline_data = prediction_data,
+        id_var = id_var
+      )
+    }
+
     array_to_df_individual(
       sops_array,
       times,
       factor(boot_ylevels),
       prediction_data,
-      by = by
+      by = by,
+      weights = prediction_weights,
+      weight_col = draw_weight_col
     )
   }
 
@@ -542,7 +598,9 @@ inferences_bootstrap_sops_fwb <- function(
       "factor_cols",
       "use_coefstart",
       "id_var",
-      "by"
+      "by",
+      "newdata_supplied",
+      "draw_weight_col"
     )
   )
 
@@ -579,6 +637,12 @@ inferences_bootstrap_sops_fwb <- function(
   attr(final_result, "engine") <- "fwb"
   attr(final_result, "fwb_weight_type") <- "exponential"
   attr(final_result, "fwb_weight_scale") <- "cluster_mean_1"
+  attr(final_result, "draw_weights_attached") <- draw_weights_attached
+  attr(final_result, "draw_weight_col") <- draw_weight_col
+  if (!is.null(draw_weight_omission_reason)) {
+    attr(final_result, "draw_weight_omission_reason") <-
+      draw_weight_omission_reason
+  }
 
   if (return_draws) {
     attr(final_result, "bootstrap_draws") <- boot_df
@@ -617,5 +681,36 @@ bootstrap_avg_df_to_matrices <- function(
     out[[cf_i]] <- mat
   }
 
+  out
+}
+
+complete_bootstrap_sop_states <- function(
+  boot_avg,
+  times,
+  ylevels,
+  variables,
+  by = NULL
+) {
+  group_cols <- unique(c(names(variables), by))
+  group_values <- unique(boot_avg[, group_cols, drop = FALSE])
+  base <- expand.grid(
+    time = times,
+    state = ylevels,
+    KEEP.OUT.ATTRS = FALSE
+  )
+
+  pieces <- vector("list", nrow(group_values))
+  for (i in seq_len(nrow(group_values))) {
+    piece <- base
+    for (col in group_cols) {
+      piece[[col]] <- group_values[[col]][i]
+    }
+    pieces[[i]] <- piece
+  }
+
+  full <- bind_rows_fill(pieces)
+  keys <- unique(c("time", "state", group_cols))
+  out <- merge(full, boot_avg, by = keys, all.x = TRUE, sort = FALSE)
+  out$estimate[is.na(out$estimate)] <- 0
   out
 }

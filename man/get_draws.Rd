@@ -18,6 +18,8 @@ A data frame with columns:
 \item draw: Draw-specific estimate of state occupation probability
 \item estimate: The original point estimate from the model
 \item conf.low, conf.high, std.error: Summary statistics from the point estimate object
+\item fwb_weight or score_weight: Optional draw-specific patient weight
+for eligible ungrouped stored-data \code{sops()} draws
 \item Additional columns from the original object (covariates, etc.)
 }
 Each row represents one draw for a specific time-state combination.
@@ -33,6 +35,14 @@ This function retrieves the draws from objects created by \code{inferences()}.
 It performs a join between the draws and the point estimate object to ensure
 that all metadata is preserved. To avoid conflict, the \code{estimate} column from
 the draws is renamed to \code{draw}.
+
+Draw-specific patient weights are included only when they are meaningful for
+manual downstream averaging: ungrouped \code{sops()} output from FWB or score
+bootstrap on the stored empirical prediction cohort. They are not included for
+\code{avg_sops()} or grouped \code{sops()} because those draws are already averaged, and
+they are not included when the original SOP object used user-supplied
+prediction profiles. The column names \code{fwb_weight} and \code{score_weight} are
+reserved for these draw weights when they are attached.
 }
 \examples{
 \dontrun{

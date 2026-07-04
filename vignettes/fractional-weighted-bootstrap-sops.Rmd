@@ -19,15 +19,16 @@ knitr::opts_chunk$set(
 )
 ```
 
-This vignette shows the fractional weighted bootstrap (FWB) engine for marginal
+This vignette shows the fractional weighted bootstrap (FWB) engine for grouped
 state occupancy probabilities.
 
 The ordinary refit bootstrap samples patients with replacement, refits the
 transition model, and recomputes SOPs. The FWB keeps every patient in every
 bootstrap replicate, draws one positive exponential weight per patient, refits
 the model with those row-expanded weights, and uses the same patient weights
-when marginalizing SOPs. This can be useful when ordinary bootstrap resamples
-occasionally create sparse or degenerate refit samples.
+when averaging SOPs. With `by`, the weights are normalized within each subgroup.
+This can be useful when ordinary bootstrap resamples occasionally create sparse
+or degenerate refit samples.
 
 The number of bootstrap replicates is deliberately tiny for vignette runtime.
 
@@ -72,14 +73,15 @@ fit <- orm_markov(
 )
 ```
 
-## Define Marginal SOPs
+## Define Grouped SOPs
 
 Because `fit` was created with `orm_markov(id_var = "id")`, `sops()` can
 use the stored longitudinal transition data for refits while automatically
-extracting one prediction row per patient for the SOP target.
+extracting one prediction row per patient for the SOP target. The `by` argument
+asks for subgroup averages by initial observed state.
 
 ```{r avg-sops}
-avg <- sops(
+s <- sops(
   fit,
   by = "initial_y",
   times = seq_len(FOLLOW_UP),
@@ -87,17 +89,19 @@ avg <- sops(
   absorb = ABSORB
 )
 
-head(avg)
+head(s)
 ```
 
 ## Fractional Bootstrap
 
-Use `engine = "fwb"`for fractional weighted refits.
+Use `engine = "fwb"` for fractional weighted refits. In this grouped `sops()`
+example, each draw's `initial_y` subgroup average uses the corresponding
+patient-level FWB weights internally.
 
 ```{r run-bootstrap}
 set.seed(SEED)
 sop_fwb <- inferences(
-  avg,
+  s,
   method = "bootstrap",
   engine = "fwb",
   n_sim = N_BOOT,

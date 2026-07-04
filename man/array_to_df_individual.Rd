@@ -4,7 +4,15 @@
 \alias{array_to_df_individual}
 \title{Convert SOPs Array to Individual-Level Data Frame}
 \usage{
-array_to_df_individual(sops_array, times, ylevels, newdata, by = NULL)
+array_to_df_individual(
+  sops_array,
+  times,
+  ylevels,
+  newdata,
+  by = NULL,
+  weights = NULL,
+  weight_col = NULL
+)
 }
 \arguments{
 \item{sops_array}{Array of dimensions (n_pat x n_times x n_states).}
@@ -16,6 +24,10 @@ array_to_df_individual(sops_array, times, ylevels, newdata, by = NULL)
 \item{newdata}{Original data with rowid.}
 
 \item{by}{Optional character vector of variables to aggregate by.}
+
+\item{weights}{Optional patient-level weights aligned to \code{newdata}.}
+
+\item{weight_col}{Optional output column name for draw-specific weights.}
 }
 \value{
 Data frame with individual SOPs (or aggregated if by is specified).
