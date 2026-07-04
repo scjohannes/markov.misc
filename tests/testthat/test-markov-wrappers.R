@@ -218,13 +218,17 @@ test_that("sops treats supplied newdata rows as fixed prediction profiles", {
   expect_equal(nrow(attr(out, "refit_data")), nrow(data))
 
   withr::local_seed(10081)
-  inferred <- inferences(
-    out,
-    method = "bootstrap",
-    engine = "fwb",
-    n_sim = 1,
-    return_draws = TRUE,
-    use_coefstart = FALSE
+  expect_warning(
+    inferred <- inferences(
+      out,
+      method = "bootstrap",
+      engine = "fwb",
+      n_sim = 1,
+      return_draws = TRUE,
+      use_coefstart = FALSE
+    ),
+    "fixed prediction profiles",
+    fixed = TRUE
   )
   draws <- get_draws(inferred)
 

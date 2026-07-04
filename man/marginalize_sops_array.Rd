@@ -12,7 +12,9 @@ marginalize_sops_array(
   variables,
   n_cf,
   n_each,
-  weights = NULL
+  weights = NULL,
+  by = NULL,
+  newdata = NULL
 )
 }
 \arguments{
@@ -29,6 +31,12 @@ marginalize_sops_array(
 \item{n_cf}{Number of counterfactual scenarios.}
 
 \item{n_each}{Number of patients per scenario.}
+
+\item{weights}{Optional patient-level weights for one empirical cohort.}
+
+\item{by}{Optional character vector of variables to aggregate by.}
+
+\item{newdata}{Counterfactual prediction data, required when \code{by} is used.}
 }
 \value{
 Data frame with marginalized SOPs.

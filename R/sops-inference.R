@@ -23,7 +23,7 @@
 #'     \item `"mvn"` (default): Draws coefficients from MVN(beta_hat, Sigma).
 #'     \item `"score_bootstrap"`: Uses one-step score perturbation with
 #'       cluster-level exponential multipliers. Requires a `robcov_vglm` model
-#'       or an `orm` model with `cluster`, and `avg_sops()` objects.
+#'       or an `orm` model with `cluster`.
 #'   }
 #'   For `method = "bootstrap"`, use `"standard"` for ordinary patient
 #'   resampling with replacement or `"fwb"` for fractional weighted bootstrap
@@ -69,7 +69,9 @@
 #'
 #'   If `return_draws = TRUE`, the object also has a `"simulation_draws"` or
 #'   `"bootstrap_draws"` attribute containing all individual draws. Extract
-#'   with `get_draws()`.
+#'   with `get_draws()`. For ungrouped `sops()` objects evaluated on the stored
+#'   empirical prediction cohort, score-bootstrap and FWB draws include the
+#'   draw-specific `score_weight` or `fwb_weight` column.
 #'
 #' @details
 #' ## Simulation Method
@@ -87,8 +89,12 @@
 #'
 #' - Works for both individual-level (`sops()`) and averaged (`avg_sops()`) SOPs
 #'   for `engine = "mvn"`
-#' - `engine = "score_bootstrap"` supports `avg_sops()` with `robcov_vglm`
-#'   models and with `orm` models when `cluster` is supplied.
+#' - `engine = "score_bootstrap"` supports `avg_sops()` and `sops()` with
+#'   `robcov_vglm` models and with `orm` models when `cluster` is supplied.
+#'   When the prediction rows are the stored empirical cohort, the same
+#'   cluster-level weights used for the score perturbation are used for every
+#'   empirical averaging step. With `by`, weights are normalized within each
+#'   subgroup; without `by`, they are normalized over the full empirical cohort.
 #'
 #' ## Bootstrap Method
 #'
@@ -105,12 +111,20 @@
 #' because ordinary resampling can drop outcome-state support needed by fixed
 #' individual prediction rows. Fractional weighted bootstrap keeps every row in
 #' the refit data with positive patient-level weights, so it is available for
-#' individual `sops()` objects.
+#' individual `sops()` objects. For FWB, the same patient weights used for
+#' refitting are used for marginal or subgroup averaging. Ungrouped stored-data
+#' `sops()` draws expose the patient weight as `fwb_weight`; grouped `sops()` and
+#' `avg_sops()` use the weights internally and return already averaged draws.
+#' Prediction data for such ungrouped draw output must not already contain a
+#' column named `fwb_weight` or `score_weight`, because those names are reserved
+#' for bootstrap draw weights.
 #'
 #' For marginal `avg_sops()` objects built from user-supplied `newdata`, the
-#' supplied rows are fixed standardization profiles. Score bootstrap and FWB use
-#' the original/refit data for coefficient or refit uncertainty, but set
-#' `baseline_weights = NULL` and average the fixed profiles equally.
+#' supplied rows are fixed standardization profiles. The same fixed-profile rule
+#' applies to `sops(newdata = ...)`. Score bootstrap and FWB use the
+#' original/refit data for coefficient or refit uncertainty, but do not attach or
+#' apply draw weights to the supplied prediction profiles because those rows
+#' cannot be assumed to align with the bootstrap clusters.
 #'
 #'
 #' This design ensures consistency: the same vcov is used for both point
@@ -360,7 +374,7 @@ inferences_simulation <- function(
     times <- call_args$times
     variables <- NULL
     by <- call_args$by %||% attr(object, "by")
-    id_var <- NULL
+    id_var <- attr(object, "id_var") %||% markov_model_id_var(model)
   }
 
   if (is.null(model)) {
@@ -394,10 +408,14 @@ inferences_simulation <- function(
     grid <- NULL
     n_cf <- 1
     n_each <- nrow(newdata_pred)
+    baseline_data <- if (newdata_supplied) NULL else newdata_pred
   }
 
   # --- 3. Generate Coefficient Draws ---
   baseline_weights_draws <- NULL
+  draw_weight_col <- NULL
+  draw_weights_attached <- FALSE
+  draw_weight_omission_reason <- NULL
   if (engine == "mvn") {
     # Check for mvtnorm package
     if (!requireNamespace("mvtnorm", quietly = TRUE)) {
@@ -423,12 +441,6 @@ inferences_simulation <- function(
 
     beta_draws <- mvtnorm::rmvnorm(n_sim, mean = beta_hat, sigma = Sigma)
   } else if (engine == "score_bootstrap") {
-    if (!is_avg) {
-      stop(
-        "`engine = \"score_bootstrap\"` currently supports only ",
-        "'markov_avg_sops' objects."
-      )
-    }
     if (!is.null(vcov)) {
       stop(
         "`vcov` cannot be supplied when `engine = \"score_bootstrap\"` because ",
@@ -436,21 +448,42 @@ inferences_simulation <- function(
       )
     }
 
+    return_baseline_weights <- !newdata_supplied
+    if (return_baseline_weights) {
+      validate_prediction_weight_ids(baseline_data, id_var)
+    }
+
     score_draws <- generate_score_bootstrap_draws(
       model = model,
-      baseline_data = if (newdata_supplied) NULL else baseline_data,
+      baseline_data = if (return_baseline_weights) baseline_data else NULL,
       id_var = id_var,
       n_sim = n_sim,
       score_weight_dist = score_weight_dist,
       cluster = cluster,
-      return_baseline_weights = !newdata_supplied
+      return_baseline_weights = return_baseline_weights
     )
     beta_draws <- score_draws$beta_draws
-    baseline_weights_draws <- if (newdata_supplied) {
-      warn_fixed_profile_bootstrap_weights("score-bootstrap")
-      NULL
-    } else {
+    baseline_weights_draws <- if (return_baseline_weights) {
       score_draws$baseline_weights
+    } else {
+      if (is_avg || !is.null(by)) {
+        warn_fixed_profile_bootstrap_weights("score-bootstrap")
+      } else if (isTRUE(return_draws)) {
+        warn_fixed_profile_draw_weights("score-bootstrap")
+      }
+      draw_weight_omission_reason <- "user_supplied_newdata"
+      NULL
+    }
+
+    if (!is_avg && is.null(by) && !is.null(baseline_weights_draws)) {
+      draw_weight_col <- "score_weight"
+      validate_draw_weight_column_available(newdata_pred, draw_weight_col)
+      draw_weights_attached <- isTRUE(return_draws)
+    } else if (!is_avg && !is.null(by)) {
+      draw_weight_omission_reason <- "grouped_sops"
+    }
+    if (is_avg && is.null(draw_weight_omission_reason)) {
+      draw_weight_omission_reason <- "averaged_sops"
     }
   } else {
     stop("Unknown simulation engine: ", engine)
@@ -492,7 +525,7 @@ inferences_simulation <- function(
       # Define fast analysis function
       analysis_fn <- function(i) {
         baseline_weights <- NULL
-        if (is_avg && !is.null(baseline_weights_draws)) {
+        if (!is.null(baseline_weights_draws)) {
           baseline_weights <- baseline_weights_draws[i, ]
         }
 
@@ -522,7 +555,9 @@ inferences_simulation <- function(
             variables = variables,
             n_cf = n_cf,
             n_each = n_each,
-            weights = baseline_weights
+            weights = baseline_weights,
+            by = by,
+            newdata = newdata_pred
           )
         } else {
           # Individual-level: convert array to data frame
@@ -531,7 +566,9 @@ inferences_simulation <- function(
             times,
             ylevels,
             newdata_pred,
-            by = by
+            by = by,
+            weights = baseline_weights,
+            weight_col = draw_weight_col
           )
         }
 
@@ -547,7 +584,7 @@ inferences_simulation <- function(
     # --- SLOW PATH: Use soprob_markov with coefficient replacement ---
     analysis_fn <- function(i) {
       baseline_weights <- NULL
-      if (is_avg && !is.null(baseline_weights_draws)) {
+      if (!is.null(baseline_weights_draws)) {
         baseline_weights <- baseline_weights_draws[i, ]
       }
 
@@ -588,7 +625,9 @@ inferences_simulation <- function(
           variables = variables,
           n_cf = n_cf,
           n_each = n_each,
-          weights = baseline_weights
+          weights = baseline_weights,
+          by = by,
+          newdata = newdata_pred
         )
       } else {
         # Individual-level: convert array to data frame
@@ -597,7 +636,9 @@ inferences_simulation <- function(
           times,
           ylevels,
           newdata_pred,
-          by = by
+          by = by,
+          weights = baseline_weights,
+          weight_col = draw_weight_col
         )
       }
 
@@ -637,6 +678,7 @@ inferences_simulation <- function(
       "n_cf",
       "n_each",
       "baseline_weights_draws",
+      "draw_weight_col",
       "use_fast_path",
       "by"
     )
@@ -706,6 +748,12 @@ inferences_simulation <- function(
   attr(final_result, "engine") <- engine
   if (engine == "score_bootstrap") {
     attr(final_result, "score_weight_dist") <- score_weight_dist
+    attr(final_result, "draw_weights_attached") <- draw_weights_attached
+    attr(final_result, "draw_weight_col") <- draw_weight_col
+    if (!is.null(draw_weight_omission_reason)) {
+      attr(final_result, "draw_weight_omission_reason") <-
+        draw_weight_omission_reason
+    }
   }
 
   if (return_draws) {
@@ -721,6 +769,16 @@ warn_fixed_profile_bootstrap_weights <- function(engine) {
     engine,
     " baseline weights have been set to NULL and profiles will be averaged ",
     "equally.",
+    call. = FALSE
+  )
+}
+
+warn_fixed_profile_draw_weights <- function(engine) {
+  warning(
+    "User-supplied `newdata` is treated as fixed prediction profiles; ",
+    engine,
+    " draw weights were not attached because prediction rows cannot be ",
+    "assumed to align with bootstrap clusters.",
     call. = FALSE
   )
 }

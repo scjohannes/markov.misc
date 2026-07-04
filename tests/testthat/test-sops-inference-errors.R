@@ -324,6 +324,169 @@ test_that("inferences_simulation() applies score-bootstrap slow-path weights", {
   expect_equal(attr(out, "n_successful"), 2L)
 })
 
+test_that("inferences_simulation() applies score-bootstrap by weights", {
+  model <- structure(list(coefficients = c(a = 0)), class = "mock_model")
+  newdata <- data.frame(
+    id = 1:4,
+    time = 1,
+    yprev = 1,
+    tx = 0,
+    grp = c("a", "a", "b", "b")
+  )
+  object <- expand.grid(
+    time = 1,
+    state = 1,
+    tx = 0,
+    grp = c("a", "b"),
+    KEEP.OUT.ATTRS = FALSE
+  )
+  object$estimate <- 0.5
+  class(object) <- c("markov_avg_sops", class(object))
+  attr(object, "model") <- model
+  attr(object, "newdata_orig") <- newdata
+  attr(object, "call_args") <- list(times = 1)
+  attr(object, "avg_args") <- list(
+    variables = list(tx = 0),
+    by = "grp",
+    times = 1,
+    id_var = "id"
+  )
+  attr(object, "tvarname") <- "time"
+  attr(object, "pvarname") <- "yprev"
+  attr(object, "ylevels") <- 1
+  attr(object, "absorb") <- NULL
+  attr(object, "t_covs") <- NULL
+
+  with_mocked_bindings(
+    generate_score_bootstrap_draws = function(...) {
+      list(
+        beta_draws = matrix(0, nrow = 1, ncol = 1),
+        baseline_weights = matrix(c(1, 3, 2, 6), nrow = 1)
+      )
+    },
+    set_coef = function(model, new_coefs) model,
+    soprob_markov = function(...) {
+      array(c(0.2, 0.8, 0.1, 0.5), dim = c(4, 1, 1))
+    },
+    {
+      out <- markov.misc:::inferences_simulation(
+        object,
+        engine = "score_bootstrap",
+        score_weight_dist = "exponential",
+        n_sim = 1,
+        vcov = NULL,
+        cluster = NULL,
+        conf_level = 0.8,
+        conf_type = "perc",
+        workers = NULL,
+        return_draws = TRUE
+      )
+    }
+  )
+
+  draws <- attr(out, "simulation_draws")
+  draws <- draws[order(draws$grp), , drop = FALSE]
+
+  expect_equal(draws$estimate, c(0.65, 0.4))
+  expect_false("score_weight" %in% names(draws))
+  expect_equal(attr(out, "draw_weight_omission_reason"), "averaged_sops")
+})
+
+test_that("inferences_simulation() supports score-bootstrap individual sops", {
+  model <- structure(list(coefficients = c(a = 0, b = 0)), class = "robcov_vglm")
+  newdata <- data.frame(id = 1:2, yprev = c(1, 2), time = 1)
+  object <- make_individual_sops_object(model, newdata)
+  attr(object, "id_var") <- "id"
+  attr(object, "newdata_supplied") <- FALSE
+
+  with_mocked_bindings(
+    generate_score_bootstrap_draws = function(...) {
+      list(
+        beta_draws = matrix(c(0, 0, 0, 0), nrow = 2, byrow = TRUE),
+        baseline_weights = matrix(c(0.7, 0.3, 0.4, 0.6), nrow = 2, byrow = TRUE)
+      )
+    },
+    set_coef = function(model, new_coefs) model,
+    soprob_markov = function(...) {
+      array(
+        c(
+          0.8, 0.7, 0.2, 0.3,
+          0.6, 0.5, 0.4, 0.5
+        ),
+        dim = c(2, 2, 2)
+      )
+    },
+    {
+      out <- markov.misc:::inferences_simulation(
+        object,
+        engine = "score_bootstrap",
+        score_weight_dist = "exponential",
+        n_sim = 2,
+        vcov = NULL,
+        cluster = NULL,
+        conf_level = 0.8,
+        conf_type = "perc",
+        workers = NULL,
+        return_draws = TRUE
+      )
+    }
+  )
+
+  draws <- attr(out, "simulation_draws")
+  public_draws <- markov.misc::get_draws(out)
+
+  expect_s3_class(out, "markov_sops")
+  expect_equal(attr(out, "engine"), "score_bootstrap")
+  expect_equal(attr(out, "draw_weights_attached"), TRUE)
+  expect_equal(attr(out, "draw_weight_col"), "score_weight")
+  expect_equal(sort(unique(draws$score_weight)), c(0.3, 0.4, 0.6, 0.7))
+  expect_equal(
+    sort(unique(public_draws$score_weight)),
+    c(0.3, 0.4, 0.6, 0.7)
+  )
+  expect_equal(public_draws$estimate, rep(0.5, nrow(public_draws)))
+})
+
+test_that("inferences_simulation() rejects reserved score weight columns", {
+  model <- structure(list(coefficients = c(a = 0, b = 0)), class = "robcov_vglm")
+  newdata <- data.frame(
+    id = 1:2,
+    yprev = c(1, 2),
+    time = 1,
+    score_weight = c(10, 20)
+  )
+  object <- make_individual_sops_object(model, newdata)
+  attr(object, "id_var") <- "id"
+  attr(object, "newdata_supplied") <- FALSE
+
+  with_mocked_bindings(
+    generate_score_bootstrap_draws = function(...) {
+      list(
+        beta_draws = matrix(c(0, 0), nrow = 1),
+        baseline_weights = matrix(c(0.7, 0.3), nrow = 1)
+      )
+    },
+    {
+      expect_error(
+        markov.misc:::inferences_simulation(
+          object,
+          engine = "score_bootstrap",
+          score_weight_dist = "exponential",
+          n_sim = 1,
+          vcov = NULL,
+          cluster = NULL,
+          conf_level = 0.8,
+          conf_type = "perc",
+          workers = NULL,
+          return_draws = TRUE
+        ),
+        "reserved for bootstrap draw weights",
+        fixed = TRUE
+      )
+    }
+  )
+})
+
 test_that("inferences_simulation() reports slow-path SOP failures", {
   model <- structure(list(coefficients = c(a = 0, b = 0)), class = "mock_model")
   newdata <- data.frame(id = 1:2, tx = c(0, 1), yprev = c(1, 2), time = 1)
@@ -693,4 +856,209 @@ test_that("inferences_bootstrap() supports fractional weighted refits", {
   expect_equal(attr(out, "fwb_weight_type"), "exponential")
   expect_equal(attr(out, "fwb_weight_scale"), "cluster_mean_1")
   expect_s3_class(attr(out, "bootstrap_draws"), "data.frame")
+})
+
+test_that("inferences_bootstrap() applies FWB by weights", {
+  model <- structure(list(coefficients = c(a = 0)), class = "mock_model")
+  refit_data <- data.frame(
+    id = rep(1:4, each = 2),
+    time = rep(1:2, times = 4),
+    y = factor(rep(c(1, 2), times = 4), levels = 1:2),
+    yprev = factor(1, levels = 1:2),
+    tx = 0,
+    grp = rep(c("a", "a", "b", "b"), each = 2)
+  )
+  object <- expand.grid(
+    time = 1,
+    state = 1,
+    tx = 0,
+    grp = c("a", "b"),
+    KEEP.OUT.ATTRS = FALSE
+  )
+  object$estimate <- 0.5
+  class(object) <- c("markov_avg_sops", class(object))
+  attr(object, "model") <- model
+  attr(object, "newdata_orig") <- refit_data
+  attr(object, "avg_args") <- list(
+    variables = list(tx = 0),
+    by = "grp",
+    times = 1,
+    id_var = "id"
+  )
+  attr(object, "call_args") <- list(times = 1)
+  attr(object, "tvarname") <- "time"
+  attr(object, "pvarname") <- "yprev"
+  attr(object, "ylevels") <- 1
+  attr(object, "absorb") <- NULL
+  attr(object, "t_covs") <- NULL
+
+  with_mocked_bindings(
+    generate_fwb_bootstrap_weights = function(data, id_var, n_boot) {
+      list(data.frame(
+        original_id = 1:4,
+        fwb_weight = c(1, 3, 2, 6),
+        boot_id = 1
+      ))
+    },
+    apply_to_fwb_bootstrap = function(
+      fwb_samples,
+      analysis_fn,
+      data,
+      id_var,
+      workers,
+      packages,
+      globals
+    ) {
+      list(analysis_fn(data, fwb_samples[[1]]))
+    },
+    bootstrap_analysis_wrapper = function(
+      boot_data,
+      model,
+      factor_cols,
+      original_data,
+      ylevels,
+      absorb,
+      update_datadist,
+      use_coefstart,
+      fit_weights
+    ) {
+      list(
+        model = model,
+        data = boot_data,
+        ylevels = 1,
+        absorb = NULL,
+        missing_states = character(0)
+      )
+    },
+    soprob_markov = function(...) {
+      array(c(0.2, 0.8, 0.1, 0.5), dim = c(4, 1, 1))
+    },
+    {
+      out <- markov.misc:::inferences_bootstrap(
+        object,
+        engine = "fwb",
+        n_boot = 1,
+        workers = NULL,
+        conf_level = 0.95,
+        return_draws = TRUE,
+        update_datadist = FALSE,
+        use_coefstart = FALSE
+      )
+    }
+  )
+
+  draws <- attr(out, "bootstrap_draws")
+  draws <- draws[order(draws$grp), , drop = FALSE]
+
+  expect_equal(draws$estimate, c(0.65, 0.4))
+  expect_false("fwb_weight" %in% names(draws))
+})
+
+test_that("inferences_bootstrap_sops_fwb() attaches stored-data draw weights", {
+  model <- structure(list(coefficients = c(a = 0)), class = "mock_model")
+  prediction_data <- data.frame(id = 1:2, time = 1, yprev = 1)
+  refit_data <- data.frame(
+    id = rep(1:2, each = 2),
+    time = rep(1:2, times = 2),
+    y = factor(c(1, 2, 1, 2), levels = 1:2),
+    yprev = factor(c(1, 1, 1, 1), levels = 1:2)
+  )
+  object <- make_individual_sops_object(model, prediction_data)
+  attr(object, "newdata_pred") <- prediction_data
+  attr(object, "refit_data") <- refit_data
+  attr(object, "id_var") <- "id"
+  attr(object, "newdata_supplied") <- FALSE
+
+  with_mocked_bindings(
+    generate_fwb_bootstrap_weights = function(data, id_var, n_boot) {
+      list(data.frame(
+        original_id = c(1, 2),
+        fwb_weight = c(0.5, 1.5),
+        boot_id = 1
+      ))
+    },
+    bootstrap_analysis_wrapper = function(
+      boot_data,
+      model,
+      factor_cols,
+      original_data,
+      ylevels,
+      absorb,
+      update_datadist,
+      use_coefstart,
+      fit_weights
+    ) {
+      list(
+        model = model,
+        data = boot_data,
+        ylevels = 1:2,
+        absorb = NULL,
+        missing_states = character(0)
+      )
+    },
+    soprob_markov = function(...) {
+      array(
+        c(
+          0.8, 0.7, 0.2, 0.3,
+          0.6, 0.5, 0.4, 0.5
+        ),
+        dim = c(2, 2, 2)
+      )
+    },
+    {
+      out <- markov.misc:::inferences_bootstrap_sops_fwb(
+        object,
+        n_boot = 1,
+        workers = NULL,
+        conf_level = 0.95,
+        return_draws = TRUE,
+        update_datadist = FALSE,
+        use_coefstart = FALSE
+      )
+    }
+  )
+
+  draws <- attr(out, "bootstrap_draws")
+  public_draws <- markov.misc::get_draws(out)
+
+  expect_equal(attr(out, "draw_weights_attached"), TRUE)
+  expect_equal(attr(out, "draw_weight_col"), "fwb_weight")
+  expect_equal(draws$fwb_weight[1:2], c(0.5, 1.5))
+  expect_equal(sort(unique(public_draws$fwb_weight)), c(0.5, 1.5))
+  expect_equal(public_draws$estimate, rep(0.5, nrow(public_draws)))
+})
+
+test_that("inferences_bootstrap_sops_fwb() rejects reserved draw weight columns", {
+  model <- structure(list(coefficients = c(a = 0)), class = "mock_model")
+  prediction_data <- data.frame(
+    id = 1:2,
+    time = 1,
+    yprev = 1,
+    fwb_weight = c(10, 20)
+  )
+  refit_data <- data.frame(
+    id = rep(1:2, each = 2),
+    time = rep(1:2, times = 2),
+    y = factor(c(1, 2, 1, 2), levels = 1:2),
+    yprev = factor(c(1, 1, 1, 1), levels = 1:2)
+  )
+  object <- make_individual_sops_object(model, prediction_data)
+  attr(object, "newdata_pred") <- prediction_data
+  attr(object, "refit_data") <- refit_data
+  attr(object, "id_var") <- "id"
+  attr(object, "newdata_supplied") <- FALSE
+
+  expect_error(
+    markov.misc:::inferences_bootstrap_sops_fwb(
+      object,
+      n_boot = 1,
+      workers = NULL,
+      conf_level = 0.95,
+      return_draws = TRUE,
+      update_datadist = FALSE,
+      use_coefstart = FALSE
+    ),
+    "reserved for bootstrap draw weights",
+    fixed = TRUE
+  )
 })

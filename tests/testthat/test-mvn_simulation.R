@@ -625,7 +625,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
         "requires a 'robcov_vglm' model"
       )
 
-      # Error: score bootstrap requires avg_sops objects
+      # Error: score bootstrap requires a supported model backend
       sops_result <- sops(
         model = m_vglm,
         newdata = data[data$time == 1, ],
@@ -640,7 +640,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
           engine = "score_bootstrap",
           n_sim = 20
         ),
-        "currently supports only 'markov_avg_sops'"
+        "requires a 'robcov_vglm' model"
       )
     })
 

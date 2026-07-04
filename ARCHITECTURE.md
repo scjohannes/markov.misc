@@ -334,13 +334,15 @@ The inference methods are intentionally separate:
   covariance objects are coerced to base matrices before validation and
   simulation.
 - Score bootstrap uses row-level model scores and cluster multipliers to make
-  one-step coefficient draws without full refits.
+  one-step coefficient draws without full refits. When the stored empirical
+  cohort is the prediction population, the same draw weights are also used for
+  empirical averaging.
 - Standard refit bootstrap resamples patients by ID, materializes each bootstrap
   sample, refits the model, and recomputes `avg_sops()`.
 - Fractional weighted bootstrap draws one exponential weight per patient ID,
   normalizes those weights to mean 1 for model fitting, refits the model with
-  row-expanded weights, and uses the same patient weights for marginal SOP
-  averaging.
+  row-expanded weights, and uses the same patient weights for marginal and
+  subgroup SOP averaging.
 
 For refit bootstrap inference with user-supplied prediction profiles, the
 transition model is refit on `refit_data` or wrapper-stored longitudinal data,
@@ -568,14 +570,18 @@ SOP bootstrap inference has two public targets:
 
 For `method = "bootstrap", engine = "fwb"`, weights are drawn at the patient ID
 level, normalized to mean 1 over patients for model fitting, expanded to rows,
-and then separately normalized to sum 1 by `marginalize_sops_array()` when
-averaging empirical counterfactual SOPs. When `avg_sops()` was built from
-user-supplied `newdata`, those rows are fixed standardization profiles:
-`baseline_weights` is set to `NULL`, a warning is emitted, and the supplied
-profiles are averaged equally. For individual SOPs, each FWB refit predicts on
-the fixed `newdata_pred` rows stored on the original `markov_sops` object. This
-mirrors the default exponential weighting behavior of the external `fwb`
-package without adding it as a dependency.
+and then separately normalized to sum 1 by `marginalize_sops_array()` or
+`array_to_df_individual()` when averaging empirical SOPs. With `by`, weights are
+renormalized inside each subgroup because the row is a subgroup mean; the
+population mean remains the no-`by` estimand. When `avg_sops()` or `sops()` was
+built from user-supplied `newdata`, those rows are fixed standardization or
+prediction profiles: draw weights are not applied, a warning is emitted, and the
+supplied profiles are averaged equally where averaging is requested. For
+ungrouped stored-data `sops()`, each FWB refit predicts on the original empirical
+prediction rows and draw output includes `fwb_weight` for manual downstream
+averaging. Prediction data cannot already contain `fwb_weight` when this draw
+column is attached. This mirrors the default exponential weighting behavior of
+the external `fwb` package without adding it as a dependency.
 
 Follow-up TODO:
 
@@ -598,19 +604,23 @@ For each draw it:
 4. Applies a one-step update to the coefficient vector using the model
    covariance/bread information.
 5. Replays SOP prediction with the updated coefficients.
-6. For marginal SOPs, passes normalized baseline weights into marginalization
+6. Passes normalized baseline weights into marginal or grouped SOP averaging
    only when the prediction population is the empirical stored/refit cohort.
+   Ungrouped stored-data `sops()` draw output exposes those weights as
+   `score_weight` so users can reproduce custom weighted summaries. Prediction
+   data cannot already contain `score_weight` when this draw column is attached.
 
 This engine is especially useful when refit bootstrap is expensive but cluster
 resampling is needed.
 
 Score-bootstrap coefficient perturbations are always based on the fitted model's
 score contributions and original cluster IDs, not on the prediction data. If
-`avg_sops()` was built from user-supplied `newdata`, the score-bootstrap engine
-generates coefficient draws from the original scores, sets `baseline_weights` to
-`NULL`, warns, and averages the fixed profiles equally. If `newdata = NULL`,
-the empirical prediction rows and the score-bootstrap patient weights are
-coupled so the score-bootstrap approximation mirrors the FWB target.
+`avg_sops()` or `sops()` was built from user-supplied `newdata`, the
+score-bootstrap engine generates coefficient draws from the original scores,
+does not attach draw weights, warns when weights would otherwise be used for
+averaging, and averages fixed profiles equally where averaging is requested. If
+`newdata = NULL`, the empirical prediction rows and the score-bootstrap patient
+weights are coupled so the score-bootstrap approximation mirrors the FWB target.
 
 ## Endpoint and Summary Layer
 
