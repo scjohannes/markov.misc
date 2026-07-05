@@ -7,7 +7,14 @@
 #' counterfactual levels of one variable over time. The plot is conditional on
 #' the supplied profile and faceted by previous state.
 #'
-#' @param model A fitted `orm`, `vglm`, or `robcov_vglm` Markov model.
+#' @details
+#' `plot_lp_difference()` is model-based only. At minimum, supply `model`, a
+#' one-row `profile`, `variables`, and `times`. The profile should contain the
+#' model covariates for the patient or scenario being plotted; `times` and
+#' `previous_states` define the plotting grid.
+#'
+#' @param model A fitted `orm`, `blrm`, `vglm`, `vgam`, or `robcov_vglm` Markov
+#'   model.
 #' @param profile One-row data frame containing the covariate profile.
 #' @param variables Named list with one variable and at least two values. The
 #'   first value is the reference.
@@ -53,11 +60,11 @@ plot_lp_difference <- function(
   t_covs = NULL,
   line_width = 0.7
 ) {
-  if (inherits(model, "blrm")) {
-    stop("`plot_lp_difference()` does not yet support `blrm` models.")
-  }
-  if (!inherits(model, c("orm", "vglm", "vgam", "robcov_vglm"))) {
-    stop("`model` must be an `orm`, `vglm`, `vgam`, or `robcov_vglm` object.")
+  if (!inherits(model, c("orm", "blrm", "vglm", "vgam", "robcov_vglm"))) {
+    stop(
+      "`model` must be an `orm`, `blrm`, `vglm`, `vgam`, or ",
+      "`robcov_vglm` object."
+    )
   }
   validate_markov_model(model)
   if (!is.data.frame(profile) || nrow(profile) != 1L) {
@@ -213,6 +220,9 @@ markov_linear_predictor_matrix <- function(model, newdata) {
   if (inherits(model, "vglm") || inherits(model, "vgam")) {
     return(markov_vglm_link_matrix(model, newdata))
   }
+  if (inherits(model, "blrm")) {
+    return(plot_blrm_lp_median_matrix(model, newdata))
+  }
   if (inherits(model, "orm")) {
     gamma <- get_effective_coefs(model)
     x <- orm_model_matrix(model, newdata, include_intercept = TRUE)
@@ -223,6 +233,41 @@ markov_linear_predictor_matrix <- function(model, newdata) {
   }
 
   stop("Unsupported model class.")
+}
+
+plot_blrm_lp_median_matrix <- function(model, newdata) {
+  ylevels <- markov_model_ylevels(model)
+  n_thresholds <- length(ylevels) - 1L
+  if (n_thresholds < 1L) {
+    stop("`blrm` linear predictor plots require at least two state levels.")
+  }
+
+  out <- vapply(
+    seq_len(n_thresholds),
+    function(kint) {
+      as.numeric(plot_blrm_predict(
+        model,
+        newdata = newdata,
+        type = "lp",
+        kint = kint,
+        posterior.summary = "median",
+        cint = FALSE
+      ))
+    },
+    numeric(nrow(newdata))
+  )
+  out <- as.matrix(out)
+  colnames(out) <- paste0("eta", seq_len(ncol(out)))
+  rownames(out) <- rownames(newdata)
+  out
+}
+
+plot_blrm_predict <- function(model, newdata, type, ...) {
+  if (!requireNamespace("rmsb", quietly = TRUE)) {
+    stop("Package 'rmsb' is required for `blrm` plotting.")
+  }
+
+  stats::predict(model, newdata = newdata, type = type, ...)
 }
 
 markov_vglm_link_matrix <- function(model, newdata) {

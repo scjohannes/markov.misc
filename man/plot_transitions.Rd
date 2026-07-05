@@ -21,9 +21,7 @@ plot_transitions(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  include_re = FALSE,
   n_rep = 20L,
-  n_draws = 100L,
   seed = NULL,
   show_values = TRUE,
   digits = NULL,
@@ -64,7 +62,7 @@ counterfactual differences in transition proportions.}
 \item{p2varname}{Optional second previous-state column for model simulation.}
 
 \item{id_var}{Optional ID column used to extract one stored prediction row per
-patient and to include fitted random effects for \code{blrm} models.}
+patient.}
 
 \item{facet_var}{Optional observed grouping variable. The plot always facets
 by time; \code{facet_var} adds grouping to the time panels.}
@@ -74,14 +72,8 @@ by time; \code{facet_var} adds grouping to the time panels.}
 \item{t_covs}{Optional time-varying covariate lookup table used by the fitted
 model.}
 
-\item{include_re}{Logical. For \code{blrm} fits with \code{cluster()}, include fitted
-random effects for known IDs.}
-
 \item{n_rep}{Number of simulated paths per patient profile for model-based
 plots.}
-
-\item{n_draws}{Number of posterior draws to average over for \code{blrm} model
-predictions.}
 
 \item{seed}{Optional random seed for model-based trajectory simulation.}
 
@@ -103,6 +95,15 @@ Markov model. Model-based plots are population averaged over the supplied or
 stored patient profiles. When \code{comparison = "difference"}, counterfactual
 trajectories are simulated for the levels in \code{variables}, and the heatmap
 shows the difference in transition proportions relative to the first level.
+}
+\details{
+Minimum inputs depend on the object type. For trajectory data, \code{object} must
+contain the current time, current state, and previous-state columns named by
+\code{time_var}, \code{y_var}, and \code{pvarname}. For model-based plots, pass a fitted
+Markov model and \code{times}; use \code{newdata} for explicit prediction profiles and
+pass \code{ylevels} or \code{absorb} when they are not inferable or absorbing-state
+behavior matters. Difference plots also require
+\code{comparison = "difference"} and \code{variables = list(var = c(reference, comparison))}.
 }
 \examples{
 \dontrun{

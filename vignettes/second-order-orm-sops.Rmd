@@ -163,7 +163,7 @@ dd <- rms::datadist(model_data)
 options(datadist = "dd")
 
 fit_second <- orm_markov(
-  y ~ tx + rms::rcs(time, 4) + yprev + ypprev,
+  y ~ tx + rms::rcs(time, 4) + yprev + ypprev + time%ia%yprev + time%ia%ypprev,
   data = model_data,
   id_var = "id",
   opt_method = "LM",
@@ -192,12 +192,90 @@ head(sop_second)
 plot_sops(
   sop_second,
   geom = "line",
-  facet_var = "tx"
+  facet_var = NULL,
+  linetype_var = "tx"
 ) +
   labs(
     x = "Day",
     y = "State occupancy probability"
   )
+```
+
+## Model Diagnostics
+
+These diagnostics compare empirical trajectory features with the corresponding
+features from paths simulated under the second-order transition model. The
+model-based plots pass `p2varname = "ypprev"` so the simulated paths use both
+previous states.
+
+```{r diagnostics-transitions-observed}
+diagnostic_times <- c(1, 3, 5, 7, 11, 13)
+
+plot_transitions(
+  raw_data,
+  times = diagnostic_times,
+  ylevels = STATE_LEVELS,
+  show_values = FALSE
+) +
+  labs(title = "Observed transition proportions")
+```
+
+```{r diagnostics-transitions-model}
+plot_transitions(
+  fit_second,
+  times = diagnostic_times,
+  ylevels = fit_second$yunique,
+  absorb = ABSORB,
+  p2varname = "ypprev",
+  n_rep = 100,
+  seed = SEED,
+  show_values = FALSE
+) +
+  labs(title = "Model-based transition proportions")
+```
+
+```{r diagnostics-correlation-observed}
+plot_correlation(
+  raw_data,
+  times = seq_len(FOLLOW_UP),
+  show_values = FALSE
+) +
+  labs(title = "Observed state correlations")
+```
+
+```{r diagnostics-correlation-model}
+plot_correlation(
+  fit_second,
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_second$yunique,
+  absorb = ABSORB,
+  p2varname = "ypprev",
+  n_rep = 10,
+  seed = SEED,
+  show_values = FALSE
+) +
+  labs(title = "Model-based state correlations")
+```
+
+```{r diagnostics-variogram-observed}
+plot_variogram(
+  raw_data,
+  times = seq_len(FOLLOW_UP)
+) +
+  labs(title = "Observed correlation variogram")
+```
+
+```{r diagnostics-variogram-model}
+plot_variogram(
+  fit_second,
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_second$yunique,
+  absorb = ABSORB,
+  p2varname = "ypprev",
+  n_rep = 100,
+  seed = SEED
+) +
+  labs(title = "Model-based correlation variogram")
 ```
 
 ## Contrast

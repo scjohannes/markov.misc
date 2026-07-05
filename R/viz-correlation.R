@@ -7,6 +7,14 @@
 #' simulated from the model for each patient in their observed group and the
 #' correlations are computed from those simulated paths.
 #'
+#' @details
+#' Minimum inputs depend on the object type. For trajectory data, `object` must
+#' contain the ID, time, and state columns named by `id_var`, `time_var`, and
+#' `y_var`. For model-based plots, pass a fitted Markov model and `times`; use
+#' `newdata` for explicit prediction profiles and pass `ylevels` or `absorb`
+#' when needed. Model-based correlations are computed from simulated paths, so
+#' `n_rep` controls simulation precision and `seed` controls reproducibility.
+#'
 #' @param object A trajectory data frame or a fitted Markov model.
 #' @param newdata Optional data frame of prediction profiles for model-based
 #'   plots. If `NULL`, wrapper-fitted models use their stored data and extract
@@ -28,12 +36,8 @@
 #' @param gap Optional time-gap variable used by the fitted model.
 #' @param t_covs Optional time-varying covariate lookup table used by the fitted
 #'   model.
-#' @param include_re Logical. For `blrm` fits with `cluster()`, include fitted
-#'   random effects for known IDs.
 #' @param n_rep Number of simulated paths per patient profile for model-based
 #'   plots.
-#' @param n_draws Number of posterior draws to average over for `blrm` model
-#'   predictions.
 #' @param seed Optional random seed for model-based trajectory simulation.
 #' @param method Correlation method passed to [stats::cor()].
 #' @param use Missing-data handling passed to [stats::cor()].
@@ -66,9 +70,7 @@ plot_correlation <- function(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  include_re = FALSE,
   n_rep = 20L,
-  n_draws = 100L,
   seed = NULL,
   method = "spearman",
   use = "pairwise.complete.obs",
@@ -99,9 +101,7 @@ plot_correlation <- function(
     p2varname = p2varname,
     gap = gap,
     t_covs = t_covs,
-    include_re = include_re,
     n_rep = n_rep,
-    n_draws = n_draws,
     seed = seed
   )
 
@@ -128,6 +128,7 @@ plot_correlation <- function(
 #'
 #' `plot_variogram()` summarizes the same time-by-time correlation matrix used
 #' by [plot_correlation()] as correlations against absolute time differences.
+#' Its minimum input requirements are the same as [plot_correlation()].
 #'
 #' @inheritParams plot_correlation
 #' @param smooth Logical. If `TRUE`, add a loess smooth.
@@ -154,9 +155,7 @@ plot_variogram <- function(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  include_re = FALSE,
   n_rep = 20L,
-  n_draws = 100L,
   seed = NULL,
   method = "spearman",
   use = "pairwise.complete.obs",
@@ -180,9 +179,7 @@ plot_variogram <- function(
     p2varname = p2varname,
     gap = gap,
     t_covs = t_covs,
-    include_re = include_re,
     n_rep = n_rep,
-    n_draws = n_draws,
     seed = seed
   )
 
@@ -205,6 +202,7 @@ plot_variogram <- function(
       x = "Absolute Time Difference",
       y = "Correlation"
     ) +
+    ggplot2::scale_y_continuous(limits = c(0, 1)) +
     ggplot2::theme_bw()
 
   if (smooth) {
@@ -236,9 +234,7 @@ plot_correlation_input_data <- function(
   p2varname,
   gap,
   t_covs,
-  include_re,
   n_rep,
-  n_draws,
   seed
 ) {
   if (markov_supported_model(object)) {
@@ -256,9 +252,7 @@ plot_correlation_input_data <- function(
       id_var = id_var,
       gap = gap,
       t_covs = t_covs,
-      include_re = include_re,
       n_rep = n_rep,
-      n_draws = n_draws,
       seed = seed
     )
     return(list(data = sim, id_var = ".sim_id", y_var = "y"))

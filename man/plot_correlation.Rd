@@ -19,9 +19,7 @@ plot_correlation(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  include_re = FALSE,
   n_rep = 20L,
-  n_draws = 100L,
   seed = NULL,
   method = "spearman",
   use = "pairwise.complete.obs",
@@ -67,14 +65,8 @@ separately within each observed stratum.}
 \item{t_covs}{Optional time-varying covariate lookup table used by the fitted
 model.}
 
-\item{include_re}{Logical. For \code{blrm} fits with \code{cluster()}, include fitted
-random effects for known IDs.}
-
 \item{n_rep}{Number of simulated paths per patient profile for model-based
 plots.}
-
-\item{n_draws}{Number of posterior draws to average over for \code{blrm} model
-predictions.}
 
 \item{seed}{Optional random seed for model-based trajectory simulation.}
 
@@ -99,6 +91,14 @@ A ggplot object.
 at pairs of follow-up times. With a fitted Markov model, trajectories are
 simulated from the model for each patient in their observed group and the
 correlations are computed from those simulated paths.
+}
+\details{
+Minimum inputs depend on the object type. For trajectory data, \code{object} must
+contain the ID, time, and state columns named by \code{id_var}, \code{time_var}, and
+\code{y_var}. For model-based plots, pass a fitted Markov model and \code{times}; use
+\code{newdata} for explicit prediction profiles and pass \code{ylevels} or \code{absorb}
+when needed. Model-based correlations are computed from simulated paths, so
+\code{n_rep} controls simulation precision and \code{seed} controls reproducibility.
 }
 \examples{
 \dontrun{

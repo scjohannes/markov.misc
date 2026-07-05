@@ -9,6 +9,16 @@
 #' trajectories are simulated for the levels in `variables`, and the heatmap
 #' shows the difference in transition proportions relative to the first level.
 #'
+#' @details
+#' Minimum inputs depend on the object type. For trajectory data, `object` must
+#' contain the current time, current state, and previous-state columns named by
+#' `time_var`, `y_var`, and `pvarname`. For model-based plots, pass a fitted
+#' Markov model and `times`; use `newdata` for explicit prediction profiles and
+#' pass `ylevels` or `absorb` when they are not inferable or absorbing-state
+#' behavior matters. Difference plots also require
+#' `comparison = "difference"` and `variables = list(var = c(reference,
+#' comparison))`.
+#'
 #' @param object A trajectory data frame or a fitted Markov model.
 #' @param newdata Optional data frame of prediction profiles for model-based
 #'   plots. If `NULL`, wrapper-fitted models use their stored data and extract
@@ -30,18 +40,14 @@
 #' @param pvarname Character name of the previous-state column.
 #' @param p2varname Optional second previous-state column for model simulation.
 #' @param id_var Optional ID column used to extract one stored prediction row per
-#'   patient and to include fitted random effects for `blrm` models.
+#'   patient.
 #' @param facet_var Optional observed grouping variable. The plot always facets
 #'   by time; `facet_var` adds grouping to the time panels.
 #' @param gap Optional time-gap variable used by the fitted model.
 #' @param t_covs Optional time-varying covariate lookup table used by the fitted
 #'   model.
-#' @param include_re Logical. For `blrm` fits with `cluster()`, include fitted
-#'   random effects for known IDs.
 #' @param n_rep Number of simulated paths per patient profile for model-based
 #'   plots.
-#' @param n_draws Number of posterior draws to average over for `blrm` model
-#'   predictions.
 #' @param seed Optional random seed for model-based trajectory simulation.
 #' @param show_values Logical. If `TRUE`, print rounded values in each tile.
 #' @param digits Number of digits used for tile labels. Defaults to 2 for
@@ -82,9 +88,7 @@ plot_transitions <- function(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  include_re = FALSE,
   n_rep = 20L,
-  n_draws = 100L,
   seed = NULL,
   show_values = TRUE,
   digits = NULL,
@@ -121,9 +125,7 @@ plot_transitions <- function(
       facet_var = facet_var,
       gap = gap,
       t_covs = t_covs,
-      include_re = include_re,
       n_rep = n_rep,
-      n_draws = n_draws,
       seed = seed
     )
   } else {
@@ -201,9 +203,7 @@ plot_transitions_model_data <- function(
   facet_var,
   gap,
   t_covs,
-  include_re,
   n_rep,
-  n_draws,
   seed
 ) {
   variables <- validate_plot_counterfactual_variables(
@@ -228,9 +228,7 @@ plot_transitions_model_data <- function(
     id_var = id_var,
     gap = gap,
     t_covs = t_covs,
-    include_re = include_re,
     n_rep = n_rep,
-    n_draws = n_draws,
     seed = seed
   )
 
@@ -326,8 +324,13 @@ plot_transition_summary <- function(
 
   out$previous_state <- factor(out$previous_state, levels = state_levels)
   out$state <- factor(out$state, levels = state_levels)
+  panel_levels <- plot_transition_panel_levels(
+    data = input,
+    time_keys = time_keys,
+    facet_var = facet_var
+  )
   out$.panel <- plot_transition_panel(out, facet_var)
-  out$.panel <- factor(out$.panel, levels = unique(out$.panel))
+  out$.panel <- factor(out$.panel, levels = panel_levels)
   attr(out, "state_levels") <- state_levels
   out
 }
@@ -391,8 +394,14 @@ plot_transition_difference <- function(summary, variable, values, facet_var) {
   }
 
   out <- bind_rows_fill(out)
+  time_keys <- as.character(plot_ordered_values(out$.time_key))
+  panel_levels <- plot_transition_panel_levels(
+    data = out,
+    time_keys = time_keys,
+    facet_var = c(facet_var, "contrast")
+  )
   out$.panel <- plot_transition_panel(out, c(facet_var, "contrast"))
-  out$.panel <- factor(out$.panel, levels = unique(out$.panel))
+  out$.panel <- factor(out$.panel, levels = panel_levels)
   attr(out, "state_levels") <- attr(summary, "state_levels")
   out
 }
@@ -456,6 +465,30 @@ plot_transition_panel <- function(data, facet_var) {
     )
   )
   paste(label, facet_label, sep = " | ")
+}
+
+plot_transition_panel_levels <- function(data, time_keys, facet_var) {
+  facet_var <- facet_var[!is.na(facet_var)]
+  facet_var <- setdiff(facet_var, character())
+  facet_var <- facet_var[facet_var %in% names(data)]
+  if (length(facet_var) == 0L) {
+    return(paste0("Time ", time_keys))
+  }
+
+  facet_grid <- unique(data[facet_var])
+  out <- vector("list", nrow(facet_grid))
+  for (i in seq_len(nrow(facet_grid))) {
+    panel_data <- data.frame(
+      .time_key = time_keys,
+      stringsAsFactors = FALSE
+    )
+    for (var in facet_var) {
+      panel_data[[var]] <- as.character(facet_grid[[var]][i])
+    }
+    out[[i]] <- panel_data
+  }
+
+  plot_transition_panel(do.call(rbind, out), facet_var)
 }
 
 plot_transition_label <- function(x, digits) {

@@ -223,6 +223,36 @@ markov_simulation_seed_scope <- function(seed) {
   }
 }
 
+complete_plot_simulation_times <- function(times, time_info) {
+  if (isTRUE(time_info$is_factor)) {
+    labels <- as.character(times)
+    idx <- match(labels, time_info$levels)
+    if (anyNA(idx)) {
+      stop("Could not align plot times with fitted visit levels.")
+    }
+    return(factor(
+      time_info$levels[seq_len(max(idx))],
+      levels = time_info$levels,
+      ordered = isTRUE(time_info$ordered)
+    ))
+  }
+
+  if (is.numeric(times) || is.integer(times)) {
+    numeric_times <- as.numeric(times)
+    whole_number_times <- all(
+      is.finite(numeric_times) &
+        abs(numeric_times - round(numeric_times)) < sqrt(.Machine$double.eps)
+    )
+    if (whole_number_times) {
+      start <- min(c(1, numeric_times), na.rm = TRUE)
+      end <- max(numeric_times, na.rm = TRUE)
+      return(seq.int(start, end))
+    }
+  }
+
+  sort(unique(times))
+}
+
 markov_simulate_fitted_paths <- function(
   model,
   newdata = NULL,
@@ -319,11 +349,23 @@ markov_simulate_fitted_paths <- function(
     baseline_data,
     times,
     tvarname,
-    t_covs = t_covs,
+    t_covs = NULL,
     default = "unique"
   )
-  times <- time_res$times
+  plot_times <- time_res$times
   time_info <- time_res$time_info
+  times <- complete_plot_simulation_times(plot_times, time_info)
+  if (!is.null(t_covs) && nrow(t_covs) != length(times)) {
+    stop(
+      "`t_covs` must have one row per simulated time point for model-based ",
+      "plots. Sparse plot times are expanded to the full simulation grid; ",
+      "expected ",
+      length(times),
+      " rows but got ",
+      nrow(t_covs),
+      "."
+    )
+  }
   validate_factor_gap(gap, t_covs, time_info)
 
   ylevels <- markov_model_ylevels(model, ylevels)
@@ -415,8 +457,12 @@ markov_simulate_fitted_paths <- function(
     )
   }
 
+  plot_indices <- match(as.character(plot_times), as.character(times))
+  output <- output[plot_indices]
   out <- do.call(rbind, output)
   rownames(out) <- NULL
   attr(out, "ylevels") <- ylevel_names
+  attr(out, "sim_times") <- times
+  attr(out, "plot_times") <- plot_times
   out
 }

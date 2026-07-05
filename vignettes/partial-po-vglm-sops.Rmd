@@ -127,12 +127,86 @@ sop_ppo <- avg_sops(
 plot_sops(
   sop_ppo,
   geom = "line",
-  facet_var = "tx"
+  facet_var = NULL,
+  linetype_var = "tx"
 ) +
   labs(
     x = "Day",
     y = "State occupancy probability"
   )
+```
+
+## Model Diagnostics
+
+These diagnostics compare empirical trajectory features with the corresponding
+features from paths simulated under the partial proportional-odds transition
+model.
+
+```{r diagnostics-transitions-observed}
+diagnostic_times <- 1:FOLLOW_UP
+
+plot_transitions(
+  raw_data,
+  times = diagnostic_times,
+  ylevels = STATE_LEVELS,
+  show_values = FALSE
+) +
+  labs(title = "Observed transition proportions")
+```
+
+```{r diagnostics-transitions-model}
+plot_transitions(
+  fit_ppo,
+  times = diagnostic_times,
+  ylevels = STATE_LEVELS,
+  absorb = ABSORB,
+  n_rep = 100,
+  seed = SEED,
+  show_values = FALSE
+) +
+  labs(title = "Model-based transition proportions")
+```
+
+```{r diagnostics-correlation-observed}
+plot_correlation(
+  raw_data,
+  times = seq_len(FOLLOW_UP),
+  show_values = FALSE
+) +
+  labs(title = "Observed state correlations")
+```
+
+```{r diagnostics-correlation-model}
+plot_correlation(
+  fit_ppo,
+  times = seq_len(FOLLOW_UP),
+  ylevels = STATE_LEVELS,
+  absorb = ABSORB,
+  n_rep = 100,
+  seed = SEED,
+  show_values = FALSE
+) +
+  labs(title = "Model-based state correlations")
+```
+
+```{r diagnostics-variogram-observed}
+plot_variogram(
+  raw_data,
+  times = seq_len(FOLLOW_UP)
+) +
+  labs(title = "Observed correlation variogram")
+```
+
+```{r diagnostics-variogram-model}
+plot_variogram(
+  fit_ppo,
+  times = seq_len(FOLLOW_UP),
+  ylevels = STATE_LEVELS,
+  absorb = ABSORB,
+  n_rep = 100,
+  seed = SEED
+) +
+  labs(title = "Model-based correlation variogram")
 ```
 
 ## Contrast

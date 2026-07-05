@@ -19,9 +19,7 @@ plot_variogram(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  include_re = FALSE,
   n_rep = 20L,
-  n_draws = 100L,
   seed = NULL,
   method = "spearman",
   use = "pairwise.complete.obs",
@@ -64,14 +62,8 @@ separately within each observed stratum.}
 \item{t_covs}{Optional time-varying covariate lookup table used by the fitted
 model.}
 
-\item{include_re}{Logical. For \code{blrm} fits with \code{cluster()}, include fitted
-random effects for known IDs.}
-
 \item{n_rep}{Number of simulated paths per patient profile for model-based
 plots.}
-
-\item{n_draws}{Number of posterior draws to average over for \code{blrm} model
-predictions.}
 
 \item{seed}{Optional random seed for model-based trajectory simulation.}
 
@@ -87,6 +79,7 @@ A ggplot object.
 \description{
 \code{plot_variogram()} summarizes the same time-by-time correlation matrix used
 by \code{\link[=plot_correlation]{plot_correlation()}} as correlations against absolute time differences.
+Its minimum input requirements are the same as \code{\link[=plot_correlation]{plot_correlation()}}.
 }
 \examples{
 \dontrun{

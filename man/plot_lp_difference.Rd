@@ -20,7 +20,8 @@ plot_lp_difference(
 )
 }
 \arguments{
-\item{model}{A fitted \code{orm}, \code{vglm}, or \code{robcov_vglm} Markov model.}
+\item{model}{A fitted \code{orm}, \code{blrm}, \code{vglm}, \code{vgam}, or \code{robcov_vglm} Markov
+model.}
 
 \item{profile}{One-row data frame containing the covariate profile.}
 
@@ -57,6 +58,12 @@ A ggplot object.
 profile and plots differences in the model linear predictor between
 counterfactual levels of one variable over time. The plot is conditional on
 the supplied profile and faceted by previous state.
+}
+\details{
+\code{plot_lp_difference()} is model-based only. At minimum, supply \code{model}, a
+one-row \code{profile}, \code{variables}, and \code{times}. The profile should contain the
+model covariates for the patient or scenario being plotted; \code{times} and
+\code{previous_states} define the plotting grid.
 }
 \examples{
 \dontrun{

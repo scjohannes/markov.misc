@@ -738,10 +738,19 @@ plots do not depend on each other's implementation files. `plot_results()` in
 panels with `patchwork`.
 
 `plot_transitions()` in `R/viz-transitions.R` summarizes observed or
-model-simulated trajectories into joint population transition proportions.
+model-based trajectories into joint population transition proportions.
 Its time-order helper is also used by `plot_correlation()` and
 `plot_variogram()` in `R/viz-correlation.R`; numeric-looking time labels are
 ordered by numeric value before plot panels or state-time matrices are built.
+Model-based diagnostic plots treat requested `times` as plot times: sparse
+numeric or factor visit requests are expanded to the full intermediate
+simulation grid and filtered back to the requested times after path simulation.
+When `t_covs` is supplied, it must cover this expanded simulation grid.
+For `rmsb::blrm()` plotting, simulated trajectories use the existing manual
+`predict_blrm_response_markov()` backend and average posterior-draw probability
+arrays before sampling paths; fitted random effects are omitted.
+`plot_lp_difference()` uses `rmsb::predict()` posterior medians for BLRM
+linear-predictor contrasts.
 
 ## Validation Boundaries
 
