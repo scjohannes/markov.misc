@@ -294,7 +294,11 @@ marginalize_sops_array <- function(
       weight_col = weight_col
     )
     group_cols <- unique(c("time", "state", names(variables), by))
-    return(aggregate_sops_estimates(result, group_cols, weight_col = weight_col))
+    return(aggregate_sops_estimates(
+      result,
+      group_cols,
+      weight_col = weight_col
+    ))
   }
 
   # Average within each counterfactual group

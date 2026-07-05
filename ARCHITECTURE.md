@@ -51,6 +51,7 @@ flowchart LR
     INF["inferences()<br/>R/sops-inference.R"]
     MVN["MVN coefficient draws<br/>R/mvn_helpers.R"]
     SCORE["Score bootstrap<br/>R/sops-score-bootstrap.R"]
+    SIM_DRAWS["Shared simulation draws<br/>R/sops-inference-draws.R"]
     REFIT["Refit bootstrap<br/>R/sops-bootstrap-inference.R<br/>R/bootstrap*.R"]
     DRAWS["Draw extraction and CIs<br/>R/sops-draws.R"]
   end
@@ -59,8 +60,8 @@ flowchart LR
     TIS["time_in_state()<br/>R/sops-time-in-state.R"]
     COMP["avg_comparisons()<br/>R/sops-comparisons.R"]
     INT["interpolate_sops()<br/>R/sops-interpolate.R"]
-    PLOT["plot_sops()<br/>R/viz.R"]
-    PLOT_COMP["plot_comparisons()<br/>R/viz.R"]
+    PLOT["plot_sops()<br/>R/viz-sops.R"]
+    PLOT_COMP["plot_comparisons()<br/>R/viz-comparisons.R"]
     OC["Operating characteristics<br/>R/power.R"]
   end
 
@@ -77,6 +78,7 @@ flowchart LR
   ENGINE --> BACKENDS
   ENGINE --> FAST
   API --> INF
+  INF --> SIM_DRAWS
   INF --> MVN
   INF --> SCORE
   INF --> REFIT
@@ -98,17 +100,17 @@ The package is organized by workflow stage rather than by model class.
 
 | Area | Files | Main responsibilities |
 | --- | --- | --- |
-| Shared utilities | `R/helper.R`, `R/globals.R`, `R/misc.R` | Lightweight base-R helpers, Arrow expression helpers, offset detection, NSE global registrations. |
+| Shared utilities | `R/utils.R`, `R/globals.R` | Lightweight base-R helpers, Arrow expression helpers, offset detection, NSE global registrations. |
 | Data contracts | `R/markov-data.R`, `R/data.R` | Convert raw trajectories to Markov modeling data, preserve factor/numeric previous-state semantics, document built-in datasets. |
-| Simulation | `R/simulate_trajectories.R`, `R/simulate-markov.R`, `R/simulate-brownian.R`, `R/simulate-brownian-gap.R`, `R/simulate-deterministic.R`, `R/simulate-recurrent-event.R`, `R/simulate-tte.R`, `R/lp_violet.R` | Generate synthetic longitudinal ordinal trajectories from several data-generating mechanisms. |
+| Simulation | `R/simulate-markov.R`, `R/simulate-brownian.R`, `R/simulate-brownian-gap.R`, `R/simulate-deterministic.R`, `R/simulate-recurrent-event.R`, `R/simulate-tte.R`, `R/lp_violet.R` | Generate synthetic longitudinal ordinal trajectories from several data-generating mechanisms. |
 | Model fitting helpers | `R/vglm_helpers.R`, `R/vgam_helpers.R`, `R/robcov_vglm.R`, `R/mvn_helpers.R` | Fit package-aware VGAM Markov models, compute effective coefficients, compute robust covariance, mutate coefficients for simulation draws. |
-| SOP API | `R/sops.R`, `R/sops-api.R`, `R/sops-standardize.R` | Public user entrypoints for individual SOPs, standardized/marginal SOPs, and legacy standardization. |
+| SOP API | `R/sops-api.R`, `R/sops-standardize.R` | Public user entrypoints for individual SOPs, standardized/marginal SOPs, and legacy standardization. |
 | SOP engine | `R/sops-engine.R`, `R/sops-backends.R`, `R/sops-fast-path.R`, `R/sops-result-helpers.R` | Validate models, predict transition probabilities, run first- and second-order Markov recursions, reshape arrays to tidy objects. |
-| SOP inference | `R/sops-inference.R`, `R/sops-draws.R`, `R/sops-score-bootstrap.R`, `R/sops-bootstrap-inference.R` | Compute uncertainty intervals from MVN coefficient draws, posterior draws, score bootstrap draws, ordinary refit bootstrap samples, or fractional weighted refits. |
-| Bootstrap infrastructure | `R/bootstrap_helpers.R`, `R/bootstrap.R`, `R/bootstrap-tidy.R` | Memory-efficient group bootstrap sampling, fractional weighted bootstrap weights, just-in-time materialization, model refitting, bootstrap coefficient and SOP summaries. |
-| Endpoint summaries | `R/endpoint-summaries.R`, `R/endpoint-tte.R`, `R/competing-risks.R`, `R/sops-time-in-state.R`, `R/sops-interpolate.R`, `R/sops-comparisons.R` | Convert trajectories or SOPs to days-at-home, time-to-event, competing-risk, real-time interpolation, time-in-state summaries, and average counterfactual comparisons. |
+| SOP inference | `R/sops-inference.R`, `R/sops-inference-draws.R`, `R/sops-draws.R`, `R/sops-score-bootstrap.R`, `R/sops-bootstrap-inference.R`, `R/sops-comparisons-inference.R` | Compute uncertainty intervals from MVN coefficient draws, posterior draws, score bootstrap draws, ordinary refit bootstrap samples, or fractional weighted refits. |
+| Bootstrap infrastructure | `R/bootstrap_helpers.R`, `R/bootstrap-coefs.R`, `R/bootstrap-tidy.R` | Memory-efficient group bootstrap sampling, fractional weighted bootstrap weights, just-in-time materialization, model refitting, and bootstrap coefficient summaries. |
+| Endpoint summaries | `R/endpoint-summaries.R`, `R/endpoint-tte.R`, `R/competing-risks.R`, `R/sops-time-in-state.R`, `R/sops-interpolate.R`, `R/sops-comparisons.R`, `R/sops-comparisons-setup.R`, `R/sops-comparisons-reduce.R` | Convert trajectories or SOPs to days-at-home, time-to-event, competing-risk, real-time interpolation, time-in-state summaries, and average counterfactual comparisons. |
 | Operating characteristics | `R/power.R` | Sample from Arrow superpopulations, run iteration-level analyses, summarize power, type I error, bias, coverage, and Monte Carlo error. |
-| Visualization | `R/viz.R` | Plot empirical or model-derived SOPs, average comparisons, bootstrap SOP bands, and operating-characteristic summaries. |
+| Visualization | `R/viz-sops.R`, `R/viz-comparisons.R`, `R/viz-results.R`, `R/viz-helpers.R` | Plot empirical or model-derived SOPs, average comparisons, and operating-characteristic summaries. |
 | Method reports | `doc/*.qmd` | Reproducible Quarto reports that exercise package workflows and document simulation-study findings without adding exported package APIs. |
 
 ## Core Data Contracts
@@ -344,9 +346,9 @@ The inference methods are intentionally separate:
 - Bayesian `blrm` outputs already represent posterior prediction draws. The
   package summarizes those draws rather than simulating new coefficients.
 - MVN simulation draws coefficients from `coef(model)` and a covariance matrix
-  from `stats::vcov()`, `rms::robcov()`, or `robcov_vglm()`. Matrix-package
-  covariance objects are coerced to base matrices before validation and
-  simulation.
+  from `stats::vcov()`, `rms::robcov()`, or `robcov_vglm()`. Any non-null user
+  `vcov` is validated directly; Matrix-package covariance objects are coerced to
+  base matrices before dimension/name validation and simulation.
 - Score bootstrap uses row-level model scores and cluster multipliers to make
   one-step coefficient draws without full refits. When the stored empirical
   cohort is the prediction population, the same draw weights are also used for
@@ -367,6 +369,13 @@ the prediction profiles from each bootstrap refit sample.
 For first-order frequentist `orm` and `vglm` models, simulation inference can use
 the optimized fast path. Second-order Markov models fall back to replaying the
 full engine with `set_coef()`.
+
+For `markov_avg_comparisons`, linear metrics replay through `avg_sops()` and then
+reduce draw-level SOPs. The nonlinear `time_benefit` metric replays paired
+patient/profile-level SOP arrays. When `time_map` or `origin_time` is stored on
+the comparison object, each draw is converted through the same tidy SOP
+interpolation path as the point estimate before trapezoidal real-time AUC is
+computed.
 
 ## SOP Engine Internals
 
@@ -550,8 +559,8 @@ flowchart TD
   RELEVEL --> REFIT["stats::update(model, data = boot_data, weights = optional)"]
   REFIT --> ANALYSIS{"Analysis target"}
   ANALYSIS -- "coefficients" --> COEF["bootstrap_model_coefs()"]
-  ANALYSIS -- "standardized SOPs" --> SOP["bootstrap_standardized_sops()"]
   ANALYSIS -- "avg_sops inference" --> INF["inferences_bootstrap()"]
+  ANALYSIS -- "comparison inference" --> COMP_INF["inferences_avg_comparisons()"]
 ```
 
 The key design choice is just-in-time materialization. `fast_group_bootstrap()`
@@ -669,7 +678,8 @@ SOPs once with `avg_sops()` and then reduces paired counterfactual levels,
 preserving draw IDs when `inferences()` replays uncertainty. The ordinal
 `time_benefit` metric is nonlinear in the two counterfactual state
 distributions, so it is computed from paired patient/profile-level SOPs before
-averaging over profiles or `by` strata.
+averaging over profiles or `by` strata. Its point and draw-level inference paths
+share the same real-time interpolation semantics when `time_map` is supplied.
 
 `plot_comparisons()` is the visualization layer for `markov_avg_comparisons`.
 It plots the estimate column on the contrast scale, using a 0 reference line for
@@ -687,8 +697,9 @@ The design separates data sampling from analysis-specific inference:
    treatment arm without collecting the entire data set. The sampler honors the
    configured `id_var` and `tx_var` names, plus configurable `control_value`
    and `treatment_value` labels for numeric or string-coded treatment arms. With
-   `replace = TRUE`, it uses `fast_group_bootstrap()` to resample IDs up to the
-   observed arm sizes and materializes duplicate clusters with synthetic IDs.
+   `replace = TRUE`, it samples the requested arm sizes with replacement and
+   materializes duplicate clusters with synthetic IDs; without replacement, it
+   errors when requested arm sizes exceed observed IDs.
 2. `assess_operating_characteristics()` samples once per iteration and analysis
    data source using those column names, optionally rerandomizes treatment, and
    calls user-supplied fitting functions.
@@ -705,7 +716,7 @@ function.
 
 ## Visualization
 
-`plot_sops()` in `R/viz.R` handles two data families:
+`plot_sops()` in `R/viz-sops.R` handles two data families:
 
 - Empirical trajectory data, where probabilities are computed from observed
   state counts.
@@ -720,9 +731,11 @@ overplotting of multiple scenarios. Model-derived SOP plots use the stored
 `ylevels` attribute for discrete state scale order so character state labels
 keep model/state-support order rather than lexicographic order.
 
-`plot_bootstrap_sops()` supports the older wide bootstrap SOP format from
-`bootstrap_standardized_sops()`. `plot_results()` visualizes operating
-characteristic summaries and can combine panels with `patchwork`.
+`plot_comparisons()` lives in `R/viz-comparisons.R`. Shared ggplot validation,
+faceting, and scale helpers live in `R/viz-helpers.R`, so SOP and comparison
+plots do not depend on each other's implementation files. `plot_results()` in
+`R/viz-results.R` visualizes operating-characteristic summaries and can combine
+panels with `patchwork`.
 
 ## Validation Boundaries
 
@@ -740,7 +753,12 @@ Important validation checks include:
   from raw `times`.
 - `validate_coef_vcov()` coerces Matrix-package covariance objects to base
   matrices, then requires coefficient vectors and covariance matrices to have
-  matching dimensions and names.
+  matching dimensions and names. Non-null user-supplied `vcov` objects are never
+  ignored; invalid objects fail at this boundary.
+- `validate_conf_level()` enforces scalar finite confidence levels strictly
+  between 0 and 1 before interval quantiles are computed.
+- Operating-characteristic sampling validates `sample_size`, `allocation_ratio`,
+  and `replace` before touching Arrow data.
 - `get_vcov_robust()` prefers an explicit `data` argument over evaluating a
   model call's stored `data` symbol when resolving formula-based clusters,
   avoiding environment-dependent cluster alignment.
@@ -824,9 +842,10 @@ New inference engines should preserve the existing object lifecycle:
 3. Produce a draw-level data frame with `draw_id`, `time`, `state`, and
    `estimate` whenever possible.
 4. Summarize with `compute_ci_from_draws()`.
-5. Attach draw attributes only when requested or when storing draws is inherent
+5. Merge interval summaries back without changing the original row order.
+6. Attach draw attributes only when requested or when storing draws is inherent
    to the model family.
-6. Restore original SOP attributes and class with `restore_sops_attrs()`.
+7. Restore original SOP attributes and class with `restore_sops_attrs()`.
 
 ### Add a New Endpoint
 
@@ -856,7 +875,7 @@ Useful regression themes include:
   models.
 - `avg_sops()` counterfactual grids, `by` strata, and stored attributes.
 - `avg_comparisons()` contrasts, state-set reductions, patient-level
-  `time_benefit`, and draw-wise paired inference.
+  `time_benefit`, real-time `time_benefit`, and draw-wise paired inference.
 - MVN, score-bootstrap, posterior, standard refit-bootstrap, and FWB refit
   inference paths.
 - Draw extraction, interpolation, and time-in-state integration.
@@ -869,7 +888,7 @@ interfaces or examples change.
 
 | File | Key symbols | Notes |
 | --- | --- | --- |
-| `R/helper.R` | `%||%`, `bind_rows_fill()`, `left_join_preserve_order()`, `matrix_to_long()`, `named_list_to_wide()`, `pivot_state_columns_long()`, Arrow helpers, offset helpers | Shared low-level helpers. Keep generic but scoped; these are not intended as full tidyverse replacements. |
+| `R/utils.R` | `%||%`, `bind_rows_fill()`, `left_join_preserve_order()`, `matrix_to_long()`, `named_list_to_wide()`, `pivot_state_columns_long()`, Arrow helpers, offset helpers | Shared low-level helpers. Keep generic but scoped; these are not intended as full tidyverse replacements. |
 | `R/markov-data.R` | `prepare_markov_data()`, `relevel_factors_consecutive()` | Converts trajectories to modeling data and handles missing bootstrap states. |
 | `R/simulate-markov.R` | `sim_trajectories_markov()` | Proportional-odds transition simulator. |
 | `R/simulate-brownian.R` | `sim_trajectories_brownian()` | Latent Brownian severity simulator. |
@@ -889,14 +908,21 @@ interfaces or examples change.
 | `R/sops-backends.R` | `validate_markov_model()`, `predict_*_response_markov()`, BLRM helpers, ORM matrix helpers, time/gap helpers | Model adapters and dynamic prediction-data construction. |
 | `R/sops-fast-path.R` | `markov_msm_build()`, `markov_msm_run()`, `lp_to_probs()`, `compute_Gamma()` | Optimized repeated prediction for eligible first-order models. |
 | `R/sops-result-helpers.R` | `set_sops_attrs()`, `restore_sops_attrs()`, `create_counterfactual_data()`, `marginalize_sops_array()`, `array_to_df_individual()` | Tidy SOP object construction and attribute preservation. |
-| `R/sops-comparisons.R` | `avg_comparisons()` and comparison reduction helpers | Average counterfactual comparisons for marginal SOP metrics and patient/profile-level ordinal time benefit. |
-| `R/viz.R` | `plot_sops()`, `plot_comparisons()`, `plot_results()`, `plot_bootstrap_sops()` | Visualization helpers for empirical/model-derived SOPs, average comparisons, bootstrap SOP bands, and operating-characteristic summaries. |
+| `R/sops-comparisons.R` | `avg_comparisons()` | Public average-comparison API. |
+| `R/sops-comparisons-setup.R` | comparison setup and attribute helpers | Counterfactual-grid construction, replay setup, and comparison object attributes. |
+| `R/sops-comparisons-reduce.R` | comparison reduction helpers | SOP, time-in-state, and patient/profile-level ordinal time-benefit reductions. |
+| `R/sops-comparisons-inference.R` | `inferences_avg_comparisons()` and helpers | Draw and refit inference for average comparisons, including nonlinear time-benefit replay. |
+| `R/viz-sops.R` | `plot_sops()` and SOP plot helpers | Empirical and model-derived SOP plots. |
+| `R/viz-comparisons.R` | `plot_comparisons()` and helpers | Average-comparison plots. |
+| `R/viz-results.R` | `plot_results()` | Operating-characteristic summary plots. |
+| `R/viz-helpers.R` | shared ggplot helpers | Common plotting validation, faceting, and default discrete scales. |
 | `R/sops-inference.R` | `inferences()`, `inferences_simulation()` | Main inference dispatcher and coefficient-draw replay. |
+| `R/sops-inference-draws.R` | `generate_sop_coefficient_draws()`, `apply_sop_simulation_draws()` | Shared coefficient-draw generation and optional parallel draw application for SOP and comparison inference. |
 | `R/sops-bootstrap-inference.R` | `inferences_bootstrap()` | Standard and fractional weighted refit-bootstrap inference for marginal SOPs, plus FWB refit inference for individual SOPs. |
 | `R/sops-score-bootstrap.R` | `generate_score_bootstrap_draws()`, `score_bootstrap_components()`, `compute_scores_orm()` | One-step score-bootstrap engine. |
 | `R/sops-draws.R` | `compute_ci_from_draws()`, `get_draws()` | Interval summaries and draw extraction. |
 | `R/bootstrap_helpers.R` | `fast_group_bootstrap()`, `generate_fwb_bootstrap_weights()`, `materialize_bootstrap_sample()`, `materialize_fwb_bootstrap_sample()`, `apply_to_bootstrap()`, `apply_to_fwb_bootstrap()`, `bootstrap_analysis_wrapper()` | Memory-efficient standard and fractional weighted bootstrap utilities. |
-| `R/bootstrap.R` | `bootstrap_model_coefs()`, `bootstrap_standardized_sops()` | Exported bootstrap summaries. |
+| `R/bootstrap-coefs.R` | `bootstrap_model_coefs()` | Exported bootstrap coefficient summaries. |
 | `R/bootstrap-tidy.R` | `tidy_bootstrap_coefs()` | Quantile summaries for bootstrap coefficients. |
 | `R/sops-interpolate.R` | `interpolate_sops()` and helpers | Visit-to-real-time SOP interpolation and draw-aware interval recomputation. |
 | `R/sops-time-in-state.R` | `time_in_state()` and helpers | Expected time in target states for arrays, tidy SOPs, and bootstrap frames. |

@@ -65,6 +65,36 @@ sample_from_arrow <- function(
   control_value = 0,
   treatment_value = 1
 ) {
+  if (
+    !is.numeric(sample_size) ||
+      length(sample_size) != 1L ||
+      is.na(sample_size) ||
+      !is.finite(sample_size) ||
+      sample_size < 1 ||
+      sample_size != as.integer(sample_size)
+  ) {
+    stop("`sample_size` must be a single positive integer.", call. = FALSE)
+  }
+  sample_size <- as.integer(sample_size)
+
+  if (
+    !is.numeric(allocation_ratio) ||
+      length(allocation_ratio) != 1L ||
+      is.na(allocation_ratio) ||
+      !is.finite(allocation_ratio) ||
+      allocation_ratio < 0 ||
+      allocation_ratio > 1
+  ) {
+    stop(
+      "`allocation_ratio` must be a single number between 0 and 1.",
+      call. = FALSE
+    )
+  }
+
+  if (!is.logical(replace) || length(replace) != 1L || is.na(replace)) {
+    stop("`replace` must be `TRUE` or `FALSE`.", call. = FALSE)
+  }
+
   if (!is.null(seed)) {
     set.seed(seed)
   }
@@ -103,7 +133,10 @@ sample_from_arrow <- function(
   tx_ids <- collect_ids_for_value(treatment_value, "treatment_value")
   soc_ids <- collect_ids_for_value(control_value, "control_value")
 
-  if (length(tx_ids) == 0) {
+  # Sample IDs based on allocation ratio
+  n_tx <- round(allocation_ratio * sample_size)
+  n_soc <- sample_size - n_tx
+  if (n_tx > 0L && length(tx_ids) == 0L) {
     stop(
       "No patients found with tx_var '",
       tx_var,
@@ -113,7 +146,7 @@ sample_from_arrow <- function(
     )
   }
 
-  if (length(soc_ids) == 0) {
+  if (n_soc > 0L && length(soc_ids) == 0L) {
     stop(
       "No patients found with tx_var '",
       tx_var,
@@ -123,10 +156,7 @@ sample_from_arrow <- function(
     )
   }
 
-  # Sample IDs based on allocation ratio
-  n_tx <- round(allocation_ratio * sample_size)
-  n_soc <- sample_size - n_tx
-  if (n_tx > length(tx_ids)) {
+  if (!replace && n_tx > length(tx_ids)) {
     stop(
       "Requested ",
       n_tx,
@@ -136,7 +166,7 @@ sample_from_arrow <- function(
       call. = FALSE
     )
   }
-  if (n_soc > length(soc_ids)) {
+  if (!replace && n_soc > length(soc_ids)) {
     stop(
       "Requested ",
       n_soc,
@@ -148,47 +178,42 @@ sample_from_arrow <- function(
   }
 
   if (replace) {
-    tx_id_data <- as.data.frame(tx_ids)
-    names(tx_id_data)[1] <- id_var
+    sample_arm <- function(ids, n) {
+      if (n == 0L) {
+        return(NULL)
+      }
 
-    tx_boot_ids <- fast_group_bootstrap(
-      tx_id_data,
-      id_var = id_var,
-      n_boot = 1
-    )[[1]][seq_len(n_tx), ]
+      sampled_ids <- sample(ids, size = n, replace = TRUE)
+      boot_ids <- data.frame(original_id = sampled_ids)
+      boot_ids$occurrence <- stats::ave(
+        boot_ids$original_id,
+        boot_ids$original_id,
+        FUN = seq_along
+      )
+      boot_ids$new_id <- paste(
+        boot_ids$original_id,
+        boot_ids$occurrence,
+        sep = "_"
+      )
+      boot_ids$boot_id <- 1L
+      boot_ids$occurrence <- NULL
 
-    tx_data <- arrow_collect_dataset(
-      ds,
-      filter = arrow_in_expr(id_var, tx_boot_ids$original_id)
-    )
+      arm_data <- arrow_collect_dataset(
+        ds,
+        filter = arrow_in_expr(id_var, boot_ids$original_id)
+      )
 
-    tx_data <- materialize_bootstrap_sample(
-      tx_boot_ids,
-      tx_data,
-      id_var = id_var
-    )
+      materialize_bootstrap_sample(
+        boot_ids,
+        arm_data,
+        id_var = id_var
+      )
+    }
 
-    soc_id_data <- as.data.frame(soc_ids)
-    names(soc_id_data)[1] <- id_var
-
-    soc_boot_ids <- fast_group_bootstrap(
-      soc_id_data,
-      id_var = id_var,
-      n_boot = 1
-    )[[1]][seq_len(n_soc), ]
-
-    soc_data <- arrow_collect_dataset(
-      ds,
-      filter = arrow_in_expr(id_var, soc_boot_ids$original_id)
-    )
-
-    soc_data <- materialize_bootstrap_sample(
-      soc_boot_ids,
-      soc_data,
-      id_var = id_var
-    )
-
-    result <- rbind(tx_data, soc_data)
+    result <- bind_rows_fill(list(
+      sample_arm(tx_ids, n_tx),
+      sample_arm(soc_ids, n_soc)
+    ))
     result[[id_var]] <- result$new_id
     result$new_id <- NULL
     result$boot_id <- NULL
@@ -277,6 +302,7 @@ tidy_po <- function(
   conf_level = 0.95
 ) {
   alternative <- match.arg(alternative)
+  conf_level <- validate_conf_level(conf_level)
   alpha <- 1 - conf_level
 
   # Calculate critical value based on alternative

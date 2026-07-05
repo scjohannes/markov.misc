@@ -4,7 +4,11 @@ test_that("soprob_markov matches Hmisc::soprobMarkovOrdm for a proportional-odds
   skip_if_not_installed("rms")
 
   follow_up <- 18L
-  data <- make_test_data(n_patients = 60, seed = 1234, follow_up_time = follow_up)
+  data <- make_test_data(
+    n_patients = 60,
+    seed = 1234,
+    follow_up_time = follow_up
+  )
   model <- VGAM::vglm(
     ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
@@ -35,12 +39,22 @@ test_that("soprob_markov gives the same predictions for inline and precomputed s
   skip_if_not_installed("rms")
 
   follow_up <- 16L
-  data <- make_test_data(n_patients = 60, seed = 234, follow_up_time = follow_up)
+  data <- make_test_data(
+    n_patients = 60,
+    seed = 234,
+    follow_up_time = follow_up
+  )
   time_spline <- rms::rcs(data$time, 4)
   data$time_lin <- as.vector(time_spline[, 1])
   data$time_nlin_1 <- as.vector(time_spline[, 2])
   data$time_nlin_2 <- as.vector(time_spline[, 3])
-  t_covs <- make_time_covariates(data, "time", "time_lin", "time_nlin_1", "time_nlin_2")
+  t_covs <- make_time_covariates(
+    data,
+    "time",
+    "time_lin",
+    "time_nlin_1",
+    "time_nlin_2"
+  )
 
   inline_model <- VGAM::vglm(
     ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
@@ -71,7 +85,10 @@ test_that("soprob_markov gives the same predictions for inline and precomputed s
   )
 
   expect_probability_array(inline_sops, expected_dim = c(6L, follow_up, 6L))
-  expect_probability_array(precomputed_sops, expected_dim = c(6L, follow_up, 6L))
+  expect_probability_array(
+    precomputed_sops,
+    expected_dim = c(6L, follow_up, 6L)
+  )
   expect_equal(inline_sops, precomputed_sops, tolerance = 1e-10)
 })
 
@@ -140,12 +157,22 @@ test_that("soprob_markov handles partial proportional-odds constraints", {
   skip_if_not_installed("rms")
 
   follow_up <- 18L
-  data <- make_test_data(n_patients = 70, seed = 456, follow_up_time = follow_up)
+  data <- make_test_data(
+    n_patients = 70,
+    seed = 456,
+    follow_up_time = follow_up
+  )
   time_spline <- rms::rcs(data$time, 4)
   data$time_lin <- as.vector(time_spline[, 1])
   data$time_nlin_1 <- as.vector(time_spline[, 2])
   data$time_nlin_2 <- as.vector(time_spline[, 3])
-  t_covs <- make_time_covariates(data, "time", "time_lin", "time_nlin_1", "time_nlin_2")
+  t_covs <- make_time_covariates(
+    data,
+    "time",
+    "time_lin",
+    "time_nlin_1",
+    "time_nlin_2"
+  )
 
   n_thresholds <- 5L
   constraints <- list(
@@ -185,12 +212,22 @@ test_that("soprob_markov incorporates treatment interactions into predictions", 
   skip_if_not_installed("rms")
 
   follow_up <- 18L
-  data <- make_test_data(n_patients = 70, seed = 789, follow_up_time = follow_up)
+  data <- make_test_data(
+    n_patients = 70,
+    seed = 789,
+    follow_up_time = follow_up
+  )
   time_spline <- rms::rcs(data$time, 4)
   data$time_lin <- as.vector(time_spline[, 1])
   data$time_nlin_1 <- as.vector(time_spline[, 2])
   data$time_nlin_2 <- as.vector(time_spline[, 3])
-  t_covs <- make_time_covariates(data, "time", "time_lin", "time_nlin_1", "time_nlin_2")
+  t_covs <- make_time_covariates(
+    data,
+    "time",
+    "time_lin",
+    "time_nlin_1",
+    "time_nlin_2"
+  )
 
   n_thresholds <- 5L
   constraints <- list(
@@ -209,7 +246,10 @@ test_that("soprob_markov incorporates treatment interactions into predictions", 
     "time_lin:yprev" = cbind(PO_effect = 1)
   )
   model <- VGAM::vglm(
-    ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + yprev + yprev:time_lin,
+    ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) *
+      tx +
+      yprev +
+      yprev:time_lin,
     family = VGAM::cumulative(reverse = TRUE, parallel = FALSE ~ time_lin),
     data = data,
     constraints = constraints
@@ -249,7 +289,11 @@ test_that("soprob_markov carries absorbing-state mass forward", {
   skip_if_not_installed("rms")
 
   follow_up <- 12L
-  data <- make_test_data(n_patients = 40, seed = 999, follow_up_time = follow_up)
+  data <- make_test_data(
+    n_patients = 40,
+    seed = 999,
+    follow_up_time = follow_up
+  )
   model <- VGAM::vglm(
     ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
@@ -306,7 +350,11 @@ test_that("avg_sops() equals manual G-computation over individual SOPs", {
   skip_if_not_installed("rms")
 
   follow_up <- 6L
-  data <- make_test_data(n_patients = 40, follow_up_time = follow_up, seed = 123)
+  data <- make_test_data(
+    n_patients = 40,
+    follow_up_time = follow_up,
+    seed = 123
+  )
   t_covs <- make_time_covariates(data, "time", "time_lin", "time_nlin_1")
   model <- VGAM::vglm(
     ordered(y) ~ (time_lin + time_nlin_1) * tx + yprev,
@@ -327,7 +375,11 @@ test_that("avg_sops() equals manual G-computation over individual SOPs", {
     id_var = "id",
     t_covs = t_covs
   )
-  manual_tx1 <- aggregate(estimate ~ time + state, data = manual_tx1, FUN = mean)
+  manual_tx1 <- aggregate(
+    estimate ~ time + state,
+    data = manual_tx1,
+    FUN = mean
+  )
   manual_tx1$tx <- 1
 
   baseline_tx0 <- baseline
@@ -341,7 +393,11 @@ test_that("avg_sops() equals manual G-computation over individual SOPs", {
     id_var = "id",
     t_covs = t_covs
   )
-  manual_tx0 <- aggregate(estimate ~ time + state, data = manual_tx0, FUN = mean)
+  manual_tx0 <- aggregate(
+    estimate ~ time + state,
+    data = manual_tx0,
+    FUN = mean
+  )
   manual_tx0$tx <- 0
 
   manual <- rbind(manual_tx0, manual_tx1)

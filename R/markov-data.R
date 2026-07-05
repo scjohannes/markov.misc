@@ -227,7 +227,9 @@ relevel_factors_consecutive <- function(
   # previous-state predictors that are intentionally numeric, e.g. rcs(yprev, 6).
   for (col in factor_cols) {
     if (col %in% names(data)) {
-      prototype <- if (!is.null(original_data) && col %in% names(original_data)) {
+      prototype <- if (
+        !is.null(original_data) && col %in% names(original_data)
+      ) {
         original_data[[col]]
       } else {
         data[[col]]

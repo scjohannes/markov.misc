@@ -189,7 +189,10 @@ test_that("state conversion helpers validate required columns", {
     "data must contain columns"
   )
   expect_error(states_to_tte(data.frame(id = 1)), "data must contain columns")
-  expect_error(states_to_tte_v2(data.frame(id = 1)), "data must contain columns")
+  expect_error(
+    states_to_tte_v2(data.frame(id = 1)),
+    "data must contain columns"
+  )
   expect_error(
     format_competing_risks(data.frame(id = 1)),
     "data must contain columns"

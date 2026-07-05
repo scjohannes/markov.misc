@@ -18,7 +18,44 @@ compute_ci_from_draws <- function(
   conf_level = 0.95,
   conf_type = "perc"
 ) {
+  conf_level <- validate_conf_level(conf_level)
+  if (
+    !is.character(conf_type) ||
+      length(conf_type) != 1L ||
+      is.na(conf_type) ||
+      !conf_type %in% c("perc", "wald")
+  ) {
+    stop("conf_type must be 'perc' or 'wald'")
+  }
   alpha <- 1 - conf_level
+
+  summarize_values <- function(x) {
+    if (conf_type == "perc") {
+      return(c(
+        conf.low = unname(stats::quantile(x, alpha / 2, na.rm = TRUE)),
+        conf.high = unname(stats::quantile(x, 1 - alpha / 2, na.rm = TRUE)),
+        std.error = stats::sd(x, na.rm = TRUE)
+      ))
+    }
+
+    se <- stats::sd(x, na.rm = TRUE)
+    critical <- abs(stats::qnorm(alpha / 2))
+    mean_est <- mean(x, na.rm = TRUE)
+    c(
+      conf.low = mean_est - critical * se,
+      conf.high = mean_est + critical * se,
+      std.error = se
+    )
+  }
+
+  if (length(group_cols) == 0L) {
+    stats <- summarize_values(draws_df$estimate)
+    return(data.frame(
+      conf.low = stats[["conf.low"]],
+      conf.high = stats[["conf.high"]],
+      std.error = stats[["std.error"]]
+    ))
+  }
 
   # Aggregate to get summary statistics
   agg_formula <- stats::as.formula(
@@ -31,11 +68,7 @@ compute_ci_from_draws <- function(
       agg_formula,
       data = draws_df,
       FUN = function(x) {
-        c(
-          conf.low = stats::quantile(x, alpha / 2, na.rm = TRUE),
-          conf.high = stats::quantile(x, 1 - alpha / 2, na.rm = TRUE),
-          std.error = stats::sd(x, na.rm = TRUE)
-        )
+        summarize_values(x)
       }
     )
   } else if (conf_type == "wald") {
@@ -44,14 +77,7 @@ compute_ci_from_draws <- function(
       agg_formula,
       data = draws_df,
       FUN = function(x) {
-        se <- stats::sd(x, na.rm = TRUE)
-        critical <- abs(stats::qnorm(alpha / 2))
-        mean_est <- mean(x, na.rm = TRUE)
-        c(
-          conf.low = mean_est - critical * se,
-          conf.high = mean_est + critical * se,
-          std.error = se
-        )
+        summarize_values(x)
       }
     )
   } else {

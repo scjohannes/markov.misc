@@ -134,3 +134,19 @@ plot_sops(
     y = "State occupancy probability"
   )
 ```
+
+## Contrast
+
+
+```{r}
+c <- avg_comparisons(
+  fit_ppo,
+  metric = "time_in_state",
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  ylevels = factor(STATE_LEVELS, levels = STATE_LEVELS),
+  absorb = ABSORB) |> 
+  inferences(n_sim = 100)
+
+plot_comparisons(c)
+```

@@ -162,7 +162,10 @@ test_that("get_effective_coefs() reports unsupported and mismatched coefficients
   )
   expect_equal(ncol(gamma), length(VGAM::constraints(fit)))
 
-  orm <- structure(list(coefficients = c("y>=2" = 0, x = 1), non.slopes = NULL), class = "orm")
+  orm <- structure(
+    list(coefficients = c("y>=2" = 0, x = 1), non.slopes = NULL),
+    class = "orm"
+  )
   expect_error(
     markov.misc:::get_effective_coefs_orm(orm),
     "Cannot determine",
@@ -183,7 +186,12 @@ test_that("get_effective_coefs() reports unsupported and mismatched coefficients
 
 test_that("plot validation branches are covered", {
   expect_error(
-    plot_results(data.frame(x = 1, g = "a"), y = x, x = x, group = missing_group),
+    plot_results(
+      data.frame(x = 1, g = "a"),
+      y = x,
+      x = x,
+      group = missing_group
+    ),
     "not found in data",
     fixed = TRUE
   )
@@ -306,7 +314,12 @@ test_that("orm prediction helpers validate metadata and categorical levels", {
   strat_env$strat <- function(x) x
   strat_fit <- structure(
     list(
-      Design = list(name = character(0), assume.code = integer(0), parms = list(), colnames = "x"),
+      Design = list(
+        name = character(0),
+        assume.code = integer(0),
+        parms = list(),
+        colnames = "x"
+      ),
       sformula = stats::as.formula("y ~ x + strat(z)", env = strat_env)
     ),
     class = "orm"
@@ -334,7 +347,10 @@ test_that("orm score-bootstrap helpers cover validation and alignment branches",
     fixed = TRUE
   )
   expect_error(
-    markov.misc:::compute_scores_orm(structure(list(x = NULL, y = NULL), class = "orm")),
+    markov.misc:::compute_scores_orm(structure(
+      list(x = NULL, y = NULL),
+      class = "orm"
+    )),
     "x = TRUE, y = TRUE",
     fixed = TRUE
   )
@@ -367,12 +383,19 @@ test_that("orm score-bootstrap helpers cover validation and alignment branches",
     "row-level vector",
     fixed = TRUE
   )
-  expect_equal(markov.misc:::align_cluster_orm(fit, seq_len(nrow(scores)), nrow(scores)), seq_len(nrow(scores)))
+  expect_equal(
+    markov.misc:::align_cluster_orm(fit, seq_len(nrow(scores)), nrow(scores)),
+    seq_len(nrow(scores))
+  )
 
   na_fit <- fit
   na_fit$na.action <- c(2L, 4L)
   expect_equal(
-    markov.misc:::align_cluster_orm(na_fit, letters[1:(nrow(scores) + 2)], nrow(scores)),
+    markov.misc:::align_cluster_orm(
+      na_fit,
+      letters[1:(nrow(scores) + 2)],
+      nrow(scores)
+    ),
     letters[-c(2, 4)][1:nrow(scores)]
   )
   expect_error(
@@ -397,7 +420,12 @@ test_that("score bootstrap draw helper reports malformed robust components", {
   )
 
   expect_error(
-    markov.misc:::generate_score_bootstrap_draws(robust, baseline, "missing", 1),
+    markov.misc:::generate_score_bootstrap_draws(
+      robust,
+      baseline,
+      "missing",
+      1
+    ),
     "ID variable",
     fixed = TRUE
   )
@@ -421,7 +449,12 @@ test_that("score bootstrap draw helper reports malformed robust components", {
   bad_cluster <- robust
   bad_cluster$cluster <- "a"
   expect_error(
-    markov.misc:::generate_score_bootstrap_draws(bad_cluster, baseline, "id", 1),
+    markov.misc:::generate_score_bootstrap_draws(
+      bad_cluster,
+      baseline,
+      "id",
+      1
+    ),
     "does not match",
     fixed = TRUE
   )
@@ -435,7 +468,12 @@ test_that("score bootstrap draw helper reports malformed robust components", {
   )
 
   expect_error(
-    markov.misc:::generate_score_bootstrap_draws(robust, baseline[0, , drop = FALSE], "id", 1),
+    markov.misc:::generate_score_bootstrap_draws(
+      robust,
+      baseline[0, , drop = FALSE],
+      "id",
+      1
+    ),
     "Invalid baseline weights",
     fixed = TRUE
   )
@@ -566,7 +604,10 @@ test_that("get_vcov_robust validates clusters before dispatching by model class"
   assign("dd", dd, envir = globalenv())
   withr::defer(rm("dd", envir = globalenv()))
   orm_fit <- rms::orm(y ~ x, data = data, x = TRUE, y = TRUE)
-  expect_true(is.matrix(markov.misc:::get_vcov_robust(orm_fit, cluster = data$id)))
+  expect_true(is.matrix(markov.misc:::get_vcov_robust(
+    orm_fit,
+    cluster = data$id
+  )))
 })
 
 test_that("standardize_sops and inferences validate dispatch-only branches", {
@@ -574,7 +615,10 @@ test_that("standardize_sops and inferences validate dispatch-only branches", {
     validate_markov_model = function(model) NULL,
     {
       expect_error(
-        standardize_sops(structure(list(), class = "not_supported"), data = data.frame()),
+        standardize_sops(
+          structure(list(), class = "not_supported"),
+          data = data.frame()
+        ),
         "model must be an orm",
         fixed = TRUE
       )
@@ -620,14 +664,29 @@ test_that("markov_msm_build validates model classes and design alignment", {
   calls <- 0
   with_mocked_bindings(
     get_effective_coefs = function(model, beta = NULL) {
-      matrix(0, nrow = 1, ncol = 2, dimnames = list(NULL, c("(Intercept)", "x")))
+      matrix(
+        0,
+        nrow = 1,
+        ncol = 2,
+        dimnames = list(NULL, c("(Intercept)", "x"))
+      )
     },
     orm_model_matrix = function(model, newdata, include_intercept = TRUE) {
       calls <<- calls + 1
       if (calls == 1) {
-        matrix(1, nrow = nrow(newdata), ncol = 2, dimnames = list(NULL, c("(Intercept)", "x")))
+        matrix(
+          1,
+          nrow = nrow(newdata),
+          ncol = 2,
+          dimnames = list(NULL, c("(Intercept)", "x"))
+        )
       } else {
-        matrix(1, nrow = nrow(newdata), ncol = 1, dimnames = list(NULL, "(Intercept)"))
+        matrix(
+          1,
+          nrow = nrow(newdata),
+          ncol = 1,
+          dimnames = list(NULL, "(Intercept)")
+        )
       }
     },
     {

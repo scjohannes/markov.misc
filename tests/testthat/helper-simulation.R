@@ -68,7 +68,11 @@ make_test_model <- function(data, robust = FALSE, cluster = NULL) {
   m
 }
 
-make_score_bootstrap_case <- function(seed, n_patients = 60, follow_up_time = 10) {
+make_score_bootstrap_case <- function(
+  seed,
+  n_patients = 60,
+  follow_up_time = 10
+) {
   data <- make_test_data(
     n_patients = n_patients,
     seed = seed,

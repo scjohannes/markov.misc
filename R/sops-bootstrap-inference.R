@@ -82,31 +82,10 @@ inferences_bootstrap <- function(
     stop("Full refit data not stored. Cannot perform bootstrap.")
   }
 
-  if (!id_var %in% names(refit_data)) {
-    stop("ID variable '", id_var, "' not found in data.")
-  }
+  validate_refit_bootstrap_data(refit_data, id_var, tvarname)
 
   if (newdata_supplied && engine == "fwb") {
     warn_fixed_profile_bootstrap_weights("FWB")
-  }
-
-  # --- 2. Validate Data is Longitudinal (Not Just Baseline) ---
-  # Check if tvarname exists and has multiple time points per patient
-  if (tvarname %in% names(refit_data)) {
-    rows_per_patient <- tabulate(match(
-      refit_data[[id_var]],
-      unique(refit_data[[id_var]])
-    ))
-
-    if (all(rows_per_patient == 1)) {
-      stop(
-        "Bootstrap inference requires full longitudinal data (all time points), ",
-        "but the data passed to avg_sops() appears to be baseline only ",
-        "(one row per patient).\\n\\n",
-        "For bootstrap: avg_sops(model, newdata = data, ...)\\n",
-        "For simulation: avg_sops(model, newdata = data |> filter(time == 1), ...)"
-      )
-    }
   }
 
   # Dimensions for result expansion
@@ -394,7 +373,17 @@ inferences_bootstrap <- function(
   )
 
   # Merge with original object
-  final_result <- merge(object, summary_stats, by = group_cols, all.x = TRUE)
+  object$.sop_order <- seq_len(nrow(object))
+  final_result <- merge(
+    object,
+    summary_stats,
+    by = group_cols,
+    all.x = TRUE,
+    sort = FALSE
+  )
+  final_result <- final_result[order(final_result$.sop_order), , drop = FALSE]
+  final_result$.sop_order <- NULL
+  rownames(final_result) <- NULL
 
   final_result <- restore_sops_attrs(final_result, object)
 
@@ -466,7 +455,7 @@ inferences_bootstrap_sops_fwb <- function(
       "`id_var` to `sops()`."
     )
   }
-  validate_markov_id_var(id_var, refit_data, "refit_data")
+  validate_refit_bootstrap_data(refit_data, id_var, tvarname)
 
   prediction_data <- ensure_markov_rowid(prediction_data)
   if (!newdata_supplied) {
@@ -477,7 +466,11 @@ inferences_bootstrap_sops_fwb <- function(
     warn_fixed_profile_draw_weights("FWB")
   }
 
-  draw_weight_col <- if (!newdata_supplied && is.null(by)) "fwb_weight" else NULL
+  draw_weight_col <- if (!newdata_supplied && is.null(by)) {
+    "fwb_weight"
+  } else {
+    NULL
+  }
   validate_draw_weight_column_available(prediction_data, draw_weight_col)
   draw_weights_attached <- !is.null(draw_weight_col) && isTRUE(return_draws)
   draw_weight_omission_reason <- if (draw_weights_attached) {
@@ -627,7 +620,17 @@ inferences_bootstrap_sops_fwb <- function(
     conf_type = "perc"
   )
 
-  final_result <- merge(object, summary_stats, by = group_cols, all.x = TRUE)
+  object$.sop_order <- seq_len(nrow(object))
+  final_result <- merge(
+    object,
+    summary_stats,
+    by = group_cols,
+    all.x = TRUE,
+    sort = FALSE
+  )
+  final_result <- final_result[order(final_result$.sop_order), , drop = FALSE]
+  final_result$.sop_order <- NULL
+  rownames(final_result) <- NULL
   final_result <- restore_sops_attrs(final_result, object)
 
   attr(final_result, "n_boot") <- n_boot
@@ -655,6 +658,37 @@ inferences_bootstrap_sops_fwb <- function(
 # =============================================================================
 # HELPER FUNCTIONS FOR INFERENCE
 # =============================================================================
+
+validate_refit_bootstrap_data <- function(
+  refit_data,
+  id_var,
+  tvarname,
+  data_arg = "refit_data"
+) {
+  validate_markov_id_var(id_var, refit_data, data_arg)
+
+  if (!is.null(tvarname) && tvarname %in% names(refit_data)) {
+    rows_per_patient <- tabulate(match(
+      refit_data[[id_var]],
+      unique(refit_data[[id_var]])
+    ))
+
+    if (all(rows_per_patient == 1)) {
+      stop(
+        "Bootstrap inference requires full longitudinal data (all time points), ",
+        "but `",
+        data_arg,
+        "` appears to be baseline only (one row per patient).\n\n",
+        "For bootstrap: pass the full longitudinal data as `newdata` or ",
+        "`refit_data`.\n",
+        "For simulation: baseline-only prediction profiles are supported.",
+        call. = FALSE
+      )
+    }
+  }
+
+  invisible(NULL)
+}
 
 bootstrap_avg_df_to_matrices <- function(
   boot_avg,

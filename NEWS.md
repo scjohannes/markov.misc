@@ -4,6 +4,20 @@
 - `avg_comparisons()` now computes average SOP, time-in-state, and ordinal
   time-benefit contrasts between counterfactual levels, with uncertainty added
   through the existing `inferences()` workflow.
+- `avg_comparisons(metric = "time_benefit")` inference now reuses the shared
+  SOP simulation draw engine, honors `workers` for simulation draws, and applies
+  the same longitudinal-data validation used by other refit bootstrap paths.
+- `avg_comparisons(metric = "time_benefit")` inference now applies stored
+  `time_map`/`origin_time` settings to draw-level SOPs before computing
+  real-time AUC intervals.
+- `bootstrap_standardized_sops()` and `plot_bootstrap_sops()` have been moved
+  to `archive/`; use `avg_sops()` with `inferences(method = "bootstrap")` and
+  `plot_sops()` for active bootstrap SOP workflows.
+- `inferences()` now validates non-null user-supplied `vcov` objects directly,
+  so invalid covariance inputs error instead of silently falling back to the
+  model covariance.
+- `inferences()` now preserves the original SOP row order when attaching
+  simulation or bootstrap interval summaries.
 - `plot_comparisons()` now plots `avg_comparisons()` output on the difference
   or ratio scale, with uncertainty intervals when available.
 - `sops()`, `avg_sops()`, and `avg_comparisons()` now require an explicit
@@ -16,6 +30,12 @@
   `soprob_markov()`, `states_to_tte()`, `sim_trajectories_markov()`,
   `sim_trajectories_tte()`, `predict_blrm_response_markov()`,
   `apply_to_bootstrap()`, `vglm_markov()`, and `lp_violet()`.
+- `sample_from_arrow()` now validates sampling controls up front and correctly
+  supports `replace = TRUE` samples larger than the observed arm-specific ID
+  counts by materializing duplicate patients with synthetic IDs.
+- SOP prediction now renormalizes clipped category probabilities from
+  cumulative-logit conversions so each finite positive patient/time
+  distribution sums to one.
 - Breaking change: the old dotted VGAM wrapper name `vglm.markov()` has been
   removed. Use `vglm_markov()` instead.
 - `soprob_markov()`, `sops()`, and `avg_sops()` now support second-order

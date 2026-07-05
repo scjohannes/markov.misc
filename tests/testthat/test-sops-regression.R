@@ -19,9 +19,17 @@ describe("SOP regression baselines", {
   }
 
   get_time_covariates <- function(data) {
-    t_covs <- unique(data[, c("time", "time_lin", "time_nlin_1", "time_nlin_2")])
+    t_covs <- unique(data[, c(
+      "time",
+      "time_lin",
+      "time_nlin_1",
+      "time_nlin_2"
+    )])
     t_covs <- t_covs[order(t_covs$time), , drop = FALSE]
-    as.data.frame(t_covs[, c("time_lin", "time_nlin_1", "time_nlin_2"), drop = FALSE])
+    as.data.frame(t_covs[,
+      c("time_lin", "time_nlin_1", "time_nlin_2"),
+      drop = FALSE
+    ])
   }
 
   fit_explicit_spline_model <- function(data) {
@@ -75,7 +83,10 @@ describe("SOP regression baselines", {
     state_idx = c(1, 3, max(as.integer(as.character(result$state))))
   ) {
     out <- subset(result, time %in% time_idx & state %in% state_idx)
-    out <- out[order(out$tx, out$time, out$state), c("tx", "time", "state", "estimate")]
+    out <- out[
+      order(out$tx, out$time, out$state),
+      c("tx", "time", "state", "estimate")
+    ]
     out$state <- as.integer(as.character(out$state))
     out$estimate <- round(out$estimate, 8)
     rownames(out) <- NULL
@@ -92,7 +103,10 @@ describe("SOP regression baselines", {
       draws,
       draw_id == !!draw_id & time %in% time_idx & state %in% state_idx
     )
-    out <- out[order(out$tx, out$time, out$state), c("draw_id", "tx", "time", "state", "draw")]
+    out <- out[
+      order(out$tx, out$time, out$state),
+      c("draw_id", "tx", "time", "state", "draw")
+    ]
     out$state <- as.integer(as.character(out$state))
     out$draw <- round(out$draw, 8)
     rownames(out) <- NULL
@@ -146,7 +160,10 @@ describe("SOP regression baselines", {
   }
 
   build_markov_case <- function() {
-    baseline <- markov.misc::violet_baseline[1:80, c("id", "yprev", "tx", "age", "sofa")]
+    baseline <- markov.misc::violet_baseline[
+      1:80,
+      c("id", "yprev", "tx", "age", "sofa")
+    ]
 
     raw_data <- markov.misc::sim_trajectories_markov(
       baseline_data = baseline,

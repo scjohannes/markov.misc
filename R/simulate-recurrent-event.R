@@ -98,7 +98,11 @@ recurr_event <- function(
       }
 
       if (length(unique(rates)) == 1) {
-        p <- stats::pgamma(follow_up, shape = length(rates), rate = unique(rates))
+        p <- stats::pgamma(
+          follow_up,
+          shape = length(rates),
+          rate = unique(rates)
+        )
       } else {
         p <- phypoexp(follow_up, rate = rates)
       }
