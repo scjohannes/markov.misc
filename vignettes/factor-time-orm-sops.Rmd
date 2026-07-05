@@ -40,7 +40,7 @@ ABSORB <- 8L
 
 raw_data <- sim_actt2_brownian(
   n_patients = N_PATIENTS,
-  mu_treatment_effect = -0.03,
+  mu_treatment_effect = -0.5,
   seed = SEED
 )
 
