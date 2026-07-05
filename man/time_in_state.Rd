@@ -17,7 +17,8 @@ time_in_state(
 \item{sops}{Input object.
 \itemize{
 \item \strong{Array:} \verb{[Patients x Time x States]} (Frequentist) or \verb{[Draws x Patients x Time x States]} (Bayes).
-\item \strong{Data Frame:} Output from \code{bootstrap_standardized_sops} containing columns \code{boot_id}, \code{time}, \code{tx}, and \verb{state_*}.
+\item \strong{Data Frame:} Legacy wide bootstrap SOP data containing columns
+\code{boot_id}, \code{time}, \code{tx}, and \verb{state_*}.
 }}
 
 \item{target_states}{Vector of target state(s) to include in the time calculation.
@@ -62,7 +63,10 @@ real time and uses trapezoidal AUC. Already interpolated SOP output from
 It automatically adapts to the input format:
 \itemize{
 \item \strong{Patient-Level:} If input is an array from \code{soprob_markov}, it returns time-in-state for each patient.
-\item \strong{Bootstrap-Level:} If input is a data frame from \code{\link{bootstrap_standardized_sops}}, it returns mean time-in-state per treatment group and the difference for each bootstrap sample.
+\item \strong{Legacy Wide Bootstrap-Level:} If input is a data frame with
+\code{boot_id}, \code{time}, \code{tx}, and \verb{state_*} columns, it returns mean
+time-in-state per treatment group and the difference for each bootstrap
+sample.
 }
 }
 \examples{
@@ -81,9 +85,15 @@ real_days_home <- time_in_state(
 )
 
 # --- Scenario 2: Bootstrap Inference ---
-bs_res <- bootstrap_standardized_sops(model, data, n_boot=100)
-# Get distribution of treatment effects
-bs_effects <- time_in_state(bs_res, target_states = 1)
+avg_boot <- avg_sops(
+  model,
+  variables = list(tx = c(0, 1)),
+  times = 1:30,
+  ylevels = 1:6,
+  id_var = "id"
+) |>
+  inferences(method = "bootstrap", n_sim = 100)
+boot_effects <- time_in_state(avg_boot, target_states = 1)
 }
 
 }

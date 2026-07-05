@@ -46,12 +46,21 @@ time_in_state_tidy <- function(x, target_states, real_time = FALSE) {
     total_formula <- stats::as.formula(
       paste(value_col, "~", paste(group_cols, collapse = " + "))
     )
-    out <- stats::aggregate(total_formula, data = by_time, FUN = sum, na.rm = TRUE)
+    out <- stats::aggregate(
+      total_formula,
+      data = by_time,
+      FUN = sum,
+      na.rm = TRUE
+    )
     names(out)[names(out) == value_col] <- "total_time"
     return(out)
   }
 
-  groups <- split(seq_len(nrow(by_time)), split_key(by_time, group_cols), drop = TRUE)
+  groups <- split(
+    seq_len(nrow(by_time)),
+    split_key(by_time, group_cols),
+    drop = TRUE
+  )
   pieces <- lapply(groups, function(idx) {
     group <- by_time[idx, , drop = FALSE]
     meta <- group[1, group_cols, drop = FALSE]
@@ -68,7 +77,9 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 
   state_cols_available <- grep("^state_", colnames(sops), value = TRUE)
   if (length(state_cols_available) == 0) {
-    stop("Input data frame does not contain any columns starting with 'state_'.")
+    stop(
+      "Input data frame does not contain any columns starting with 'state_'."
+    )
   }
 
   target_suffixes <- as.character(target_states)
@@ -91,7 +102,10 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
   agg_df$prob <- prob_target
 
   if (real_time) {
-    groups <- split(seq_len(nrow(agg_df)), split_key(agg_df, c("boot_id", "tx")))
+    groups <- split(
+      seq_len(nrow(agg_df)),
+      split_key(agg_df, c("boot_id", "tx"))
+    )
     res_grouped <- bind_rows_fill(lapply(groups, function(idx) {
       group <- agg_df[idx, , drop = FALSE]
       data.frame(
@@ -133,13 +147,17 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 #' It automatically adapts to the input format:
 #' \itemize{
 #'   \item **Patient-Level:** If input is an array from \code{soprob_markov}, it returns time-in-state for each patient.
-#'   \item **Bootstrap-Level:** If input is a data frame from \code{\link{bootstrap_standardized_sops}}, it returns mean time-in-state per treatment group and the difference for each bootstrap sample.
+#'   \item **Legacy Wide Bootstrap-Level:** If input is a data frame with
+#'     `boot_id`, `time`, `tx`, and `state_*` columns, it returns mean
+#'     time-in-state per treatment group and the difference for each bootstrap
+#'     sample.
 #' }
 #'
 #' @param sops Input object.
 #'   \itemize{
 #'     \item **Array:** `[Patients x Time x States]` (Frequentist) or `[Draws x Patients x Time x States]` (Bayes).
-#'     \item **Data Frame:** Output from `bootstrap_standardized_sops` containing columns `boot_id`, `time`, `tx`, and `state_*`.
+#'     \item **Data Frame:** Legacy wide bootstrap SOP data containing columns
+#'       `boot_id`, `time`, `tx`, and `state_*`.
 #'   }
 #' @param target_states Vector of target state(s) to include in the time calculation.
 #'   Can be integer indices or character names (e.g., \code{1} or \code{c("Home", "Rehab")}).
@@ -186,9 +204,15 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 #' )
 #'
 #' # --- Scenario 2: Bootstrap Inference ---
-#' bs_res <- bootstrap_standardized_sops(model, data, n_boot=100)
-#' # Get distribution of treatment effects
-#' bs_effects <- time_in_state(bs_res, target_states = 1)
+#' avg_boot <- avg_sops(
+#'   model,
+#'   variables = list(tx = c(0, 1)),
+#'   times = 1:30,
+#'   ylevels = 1:6,
+#'   id_var = "id"
+#' ) |>
+#'   inferences(method = "bootstrap", n_sim = 100)
+#' boot_effects <- time_in_state(avg_boot, target_states = 1)
 #' }
 #'
 #' @keywords time-in-state auc bootstrap
@@ -321,7 +345,9 @@ time_in_state <- function(
       stop("`time_map` must be supplied for real-time AUC.")
     }
     if (!is.null(origin_time) && origin == "empirical_baseline") {
-      stop("Empirical `origin_time` anchoring is only supported for tidy SOP outputs.")
+      stop(
+        "Empirical `origin_time` anchoring is only supported for tidy SOP outputs."
+      )
     }
     time_names <- dnames[[state_dim - 1L]]
     if (is.null(time_names)) {
@@ -333,7 +359,9 @@ time_in_state <- function(
     if (ndim == 3) {
       return(apply(prob_in_target, 1, function(z) trapezoid_auc(real_time, z)))
     }
-    return(apply(prob_in_target, c(1, 2), function(z) trapezoid_auc(real_time, z)))
+    return(apply(prob_in_target, c(1, 2), function(z) {
+      trapezoid_auc(real_time, z)
+    }))
   }
 
   if (ndim == 3) {

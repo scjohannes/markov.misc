@@ -1,6 +1,10 @@
 test_that("bootstrap_model_coefs validates inputs", {
   expect_error(
-    bootstrap_model_coefs(lm(mpg ~ wt, data = mtcars), data = mtcars, n_boot = 1),
+    bootstrap_model_coefs(
+      lm(mpg ~ wt, data = mtcars),
+      data = mtcars,
+      n_boot = 1
+    ),
     "model must be an orm object",
     fixed = TRUE
   )
@@ -58,8 +62,15 @@ test_that("bootstrap_model_coefs orchestrates bootstrap coefficient extraction",
         simplify = FALSE
       )
     },
-    apply_to_bootstrap = function(boot_samples, analysis_fn, data, id_var,
-                                  workers, packages, globals) {
+    apply_to_bootstrap = function(
+      boot_samples,
+      analysis_fn,
+      data,
+      id_var,
+      workers,
+      packages,
+      globals
+    ) {
       expect_length(boot_samples, 2)
       expect_equal(workers, 1)
       list(
@@ -101,7 +112,11 @@ test_that("bootstrap_model_coefs preserves numeric yprev before bootstrapping", 
   with_mocked_bindings(
     fast_group_bootstrap = function(data, id_var, n_boot) {
       observed_is_factor <<- is.factor(data$yprev)
-      list(data.frame(original_id = c(1, 2), new_id = c("1_1", "2_1"), boot_id = 1))
+      list(data.frame(
+        original_id = c(1, 2),
+        new_id = c("1_1", "2_1"),
+        boot_id = 1
+      ))
     },
     apply_to_bootstrap = function(...) list(list(tx = 1)),
     {
@@ -114,7 +129,10 @@ test_that("bootstrap_model_coefs preserves numeric yprev before bootstrapping", 
 })
 
 test_that("bootstrap_model_coefs records coefficients and failed refits", {
-  model <- structure(list(coefficients = c("(Intercept)" = 1, tx = 2)), class = "orm")
+  model <- structure(
+    list(coefficients = c("(Intercept)" = 1, tx = 2)),
+    class = "orm"
+  )
   data <- data.frame(
     id = c(1, 1, 2, 2),
     y = factor(c(1, 2, 1, 2)),
@@ -131,8 +149,15 @@ test_that("bootstrap_model_coefs records coefficients and failed refits", {
         simplify = FALSE
       )
     },
-    apply_to_bootstrap = function(boot_samples, analysis_fn, data, id_var,
-                                  workers, packages, globals) {
+    apply_to_bootstrap = function(
+      boot_samples,
+      analysis_fn,
+      data,
+      id_var,
+      workers,
+      packages,
+      globals
+    ) {
       lapply(boot_samples, function(sample) analysis_fn(data))
     },
     bootstrap_analysis_wrapper = function(...) {
@@ -155,221 +180,6 @@ test_that("bootstrap_model_coefs records coefficients and failed refits", {
   )
 
   expect_equal(result$tx, c(2, NA))
-})
-
-test_that("bootstrap_standardized_sops validates models and deprecated parallel", {
-  expect_error(
-    bootstrap_standardized_sops(lm(mpg ~ wt, data = mtcars), data = mtcars, n_boot = 1),
-    "model must be an orm object",
-    fixed = TRUE
-  )
-  expect_warning(
-    expect_error(
-      bootstrap_standardized_sops(
-        lm(mpg ~ wt, data = mtcars),
-        data = mtcars,
-        n_boot = 1,
-        parallel = TRUE
-      ),
-      "model must be an orm object",
-      fixed = TRUE
-    ),
-    "parallel.*deprecated"
-  )
-
-  model <- structure(list(), class = "vglm")
-  data <- data.frame(id = 1:2, time = c(1, 2), y = factor(c(1, 2)), yprev = factor(c(1, 1)))
-
-  with_mocked_bindings(
-    fast_group_bootstrap = function(...) list(data.frame(original_id = 1, new_id = "1_1", boot_id = 1)),
-    apply_to_bootstrap = function(...) list(list(sop_result = NULL, coefs = NULL)),
-    {
-      expect_warning(
-        result <- bootstrap_standardized_sops(
-          model,
-          data = data,
-          n_boot = 1,
-          parallel = FALSE,
-          ylevels = 1:2,
-          include_coefs = FALSE
-        ),
-        "parallel.*deprecated"
-      )
-    }
-  )
-
-  expect_equal(nrow(result$sops), 0)
-  expect_equal(names(result$sops), c("boot_id", "time", "tx", "state_1", "state_2"))
-  expect_equal(result$coefs$boot_id, 1)
-})
-
-test_that("bootstrap_standardized_sops combines SOPs and coefficients", {
-  model <- structure(list(), class = "vglm")
-  data <- data.frame(
-    id = c(1, 1, 2, 2),
-    time = c(1, 2, 1, 2),
-    y = factor(c(1, 2, 1, 2)),
-    yprev = factor(c(1, 1, 1, 1)),
-    tx = c(0, 0, 1, 1)
-  )
-
-  with_mocked_bindings(
-    fast_group_bootstrap = function(data, id_var, n_boot) {
-      list(data.frame(original_id = c(1, 2), new_id = c("1_1", "2_1"), boot_id = 1))
-    },
-    apply_to_bootstrap = function(boot_samples, analysis_fn, data, id_var,
-                                  workers, packages, globals) {
-      sop_tx <- matrix(c(0.8, 0.2, 0.7, 0.3), nrow = 2, byrow = TRUE)
-      sop_ctrl <- matrix(c(0.6, 0.4, 0.5, 0.5), nrow = 2, byrow = TRUE)
-      colnames(sop_tx) <- c("1", "2")
-      colnames(sop_ctrl) <- c("1", "2")
-      list(list(
-        sop_result = list(
-          sop_tx = sop_tx,
-          sop_ctrl = sop_ctrl
-        ),
-        coefs = list(tx = -0.4)
-      ))
-    },
-    {
-      result <- bootstrap_standardized_sops(
-        model,
-        data = data,
-        n_boot = 1,
-        ylevels = 1:2,
-        absorb = 2,
-        times = 1:2
-      )
-    }
-  )
-
-  expect_named(result, c("sops", "coefs"))
-  expect_equal(nrow(result$sops), 4)
-  expect_equal(result$sops$tx, c(1, 1, 0, 0))
-  expect_equal(result$sops$state_1, c(0.8, 0.7, 0.6, 0.5))
-  expect_equal(result$coefs$tx, -0.4)
-})
-
-test_that("bootstrap_standardized_sops pads missing states and records failed refits", {
-  model <- structure(list(coefficients = c(tx = -0.4)), class = "vglm")
-  data <- data.frame(
-    id = c(1, 1, 2, 2),
-    time = c(1, 2, 1, 2),
-    y = factor(c(1, 2, 1, 2), levels = 1:3),
-    yprev = factor(c(1, 1, 1, 1), levels = 1:3),
-    tx = c(0, 0, 1, 1)
-  )
-
-  call_id <- 0
-  with_mocked_bindings(
-    fast_group_bootstrap = function(data, id_var, n_boot) {
-      replicate(
-        n_boot,
-        data.frame(original_id = c(1, 2), new_id = c("1_1", "2_1")),
-        simplify = FALSE
-      )
-    },
-    apply_to_bootstrap = function(boot_samples, analysis_fn, data, id_var,
-                                  workers, packages, globals) {
-      lapply(boot_samples, function(sample) analysis_fn(data))
-    },
-    bootstrap_analysis_wrapper = function(...) {
-      call_id <<- call_id + 1
-      if (call_id == 3) {
-        return(list(
-          model = NULL,
-          data = data,
-          ylevels = 1:3,
-          absorb = 3,
-          missing_states = character(0)
-        ))
-      }
-      list(
-        model = model,
-        data = data,
-        ylevels = if (call_id == 1) 1:2 else 1:3,
-        absorb = if (call_id == 1) 2 else 3,
-        missing_states = if (call_id == 1) 3 else character(0)
-      )
-    },
-    standardize_sops = function(model, data, times, ylevels, absorb, varnames, t_covs) {
-      if (length(ylevels) == 2) {
-        sop_tx <- matrix(c(0.8, 0.7, 0.2, 0.3), nrow = 2)
-        sop_ctrl <- matrix(c(0.6, 0.5, 0.4, 0.5), nrow = 2)
-        colnames(sop_tx) <- c("1", "2")
-        colnames(sop_ctrl) <- c("1", "2")
-        list(sop_tx = sop_tx, sop_ctrl = sop_ctrl)
-      } else {
-        sop_tx <- matrix(c(0.5, 0.4, 0.3, 0.3, 0.2, 0.3), nrow = 2)
-        sop_ctrl <- matrix(c(0.3, 0.3, 0.4, 0.4, 0.3, 0.3), nrow = 2)
-        colnames(sop_tx) <- c("1", "2", "3")
-        colnames(sop_ctrl) <- c("1", "2", "3")
-        list(sop_tx = sop_tx, sop_ctrl = sop_ctrl)
-      }
-    },
-    {
-      result <- bootstrap_standardized_sops(
-        model,
-        data = data,
-        n_boot = 3,
-        ylevels = 1:3,
-        absorb = 3,
-        times = 1:2
-      )
-    }
-  )
-
-  expect_equal(nrow(result$sops), 8)
-  expect_equal(result$sops$state_3[1:2], c(0, 0))
-  expect_equal(result$coefs$tx[1:2], c(-0.4, -0.4))
-  expect_true(is.na(result$coefs$tx[3]))
-})
-
-test_that("bootstrap_standardized_sops handles failed SOPs and omitted coefficients", {
-  model <- structure(list(coefficients = c(tx = -0.4)), class = "vglm")
-  data <- data.frame(
-    id = c(1, 1, 2, 2),
-    time = c(1, 2, 1, 2),
-    y = factor(c(1, 2, 1, 2)),
-    yprev = factor(c(1, 1, 1, 1)),
-    tx = c(0, 0, 1, 1)
-  )
-
-  with_mocked_bindings(
-    fast_group_bootstrap = function(data, id_var, n_boot) {
-      list(data.frame(original_id = c(1, 2), new_id = c("1_1", "2_1")))
-    },
-    apply_to_bootstrap = function(boot_samples, analysis_fn, data, id_var,
-                                  workers, packages, globals) {
-      list(analysis_fn(data))
-    },
-    bootstrap_analysis_wrapper = function(...) {
-      list(
-        model = model,
-        data = data,
-        ylevels = 1:2,
-        absorb = 2,
-        missing_states = character(0)
-      )
-    },
-    standardize_sops = function(...) stop("sop failed"),
-    {
-      expect_warning(
-        result <- bootstrap_standardized_sops(
-          model,
-          data = data,
-          n_boot = 1,
-          ylevels = 1:2,
-          times = 1:2,
-          include_coefs = FALSE
-        ),
-        "standardize_sops failed"
-      )
-    }
-  )
-
-  expect_equal(nrow(result$sops), 0)
-  expect_equal(result$coefs$boot_id, 1)
 })
 
 test_that("tidy_bootstrap_coefs summarizes coefficient draws", {
@@ -416,7 +226,10 @@ test_that("tidy_bootstrap_coefs validates inputs", {
     fixed = TRUE
   )
   expect_error(
-    tidy_bootstrap_coefs(data.frame(boot_id = 1, tx = 1), na.rm = c(TRUE, FALSE)),
+    tidy_bootstrap_coefs(
+      data.frame(boot_id = 1, tx = 1),
+      na.rm = c(TRUE, FALSE)
+    ),
     "na.rm must be a single logical value",
     fixed = TRUE
   )

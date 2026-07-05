@@ -45,11 +45,21 @@ test_that("soprob_markov handles second-order recursion and absorbing states", {
   model <- structure(list(), class = "vglm")
 
   transition <- function(h, j) {
-    if (j == 3) return(c(0, 0, 1))
-    if (h == 1 && j == 1) return(c(0.2, 0.8, 0.0))
-    if (h == 1 && j == 2) return(c(0.1, 0.6, 0.3))
-    if (h == 2 && j == 1) return(c(0.5, 0.5, 0.0))
-    if (h == 2 && j == 2) return(c(0.0, 0.7, 0.3))
+    if (j == 3) {
+      return(c(0, 0, 1))
+    }
+    if (h == 1 && j == 1) {
+      return(c(0.2, 0.8, 0.0))
+    }
+    if (h == 1 && j == 2) {
+      return(c(0.1, 0.6, 0.3))
+    }
+    if (h == 2 && j == 1) {
+      return(c(0.5, 0.5, 0.0))
+    }
+    if (h == 2 && j == 2) {
+      return(c(0.0, 0.7, 0.3))
+    }
     c(0, 0, 1)
   }
 
@@ -97,9 +107,21 @@ test_that("soprob_markov handles second-order recursion and absorbing states", {
   )
 
   expect_equal(out[1, 1, ], c("1" = 0.2, "2" = 0.8, "3" = 0), tolerance = 1e-12)
-  expect_equal(out[1, 2, ], c("1" = 0.12, "2" = 0.64, "3" = 0.24), tolerance = 1e-12)
-  expect_equal(absorb_out[1, 1, ], c("1" = 0, "2" = 0, "3" = 1), tolerance = 1e-12)
-  expect_equal(absorb_out[1, 2, ], c("1" = 0, "2" = 0, "3" = 1), tolerance = 1e-12)
+  expect_equal(
+    out[1, 2, ],
+    c("1" = 0.12, "2" = 0.64, "3" = 0.24),
+    tolerance = 1e-12
+  )
+  expect_equal(
+    absorb_out[1, 1, ],
+    c("1" = 0, "2" = 0, "3" = 1),
+    tolerance = 1e-12
+  )
+  expect_equal(
+    absorb_out[1, 2, ],
+    c("1" = 0, "2" = 0, "3" = 1),
+    tolerance = 1e-12
+  )
 })
 
 test_that("soprob_markov handles single first-order time points", {
@@ -108,7 +130,12 @@ test_that("soprob_markov handles single first-order time points", {
   with_mocked_bindings(
     validate_markov_model = function(object) NULL,
     predict_vglm_response_markov = function(object, newdata) {
-      out <- matrix(c(0.2, 0.3, 0.5), nrow = nrow(newdata), ncol = 3, byrow = TRUE)
+      out <- matrix(
+        c(0.2, 0.3, 0.5),
+        nrow = nrow(newdata),
+        ncol = 3,
+        byrow = TRUE
+      )
       colnames(out) <- as.character(1:3)
       out
     },
@@ -128,7 +155,11 @@ test_that("soprob_markov handles single first-order time points", {
   )
 
   expect_equal(dim(out), c(1L, 1L, 3L))
-  expect_equal(out[1, 1, ], c("1" = 0.2, "2" = 0.3, "3" = 0.5), tolerance = 1e-12)
+  expect_equal(
+    out[1, 1, ],
+    c("1" = 0.2, "2" = 0.3, "3" = 0.5),
+    tolerance = 1e-12
+  )
 })
 
 test_that("soprob_markov carries absorbing labels that are not column positions", {
@@ -170,14 +201,26 @@ test_that("soprob_markov carries absorbing labels that are not column positions"
     }
   )
 
-  expect_equal(out[1, 2, ], c("0" = 0.1, "1" = 0.2, "2" = 0.7), tolerance = 1e-12)
+  expect_equal(
+    out[1, 2, ],
+    c("0" = 0.1, "1" = 0.2, "2" = 0.7),
+    tolerance = 1e-12
+  )
 })
 
 test_that("blrm posterior draw sampling is random, capped, and reproducible", {
   model <- make_fake_blrm(draws = matrix(0, nrow = 150, ncol = 3))
 
-  draw_ids_a <- markov.misc:::select_posterior_draws(model, n_draws = 100L, seed = 11)
-  draw_ids_b <- markov.misc:::select_posterior_draws(model, n_draws = 100L, seed = 11)
+  draw_ids_a <- markov.misc:::select_posterior_draws(
+    model,
+    n_draws = 100L,
+    seed = 11
+  )
+  draw_ids_b <- markov.misc:::select_posterior_draws(
+    model,
+    n_draws = 100L,
+    seed = 11
+  )
 
   expect_length(draw_ids_a, 100)
   expect_identical(draw_ids_a, draw_ids_b)
@@ -311,7 +354,11 @@ test_that("manual blrm prediction supports PO, constrained PPO, and random effec
   expected_p3 <- stats::plogis(-0.50 + 0.25)
 
   expect_equal(dim(no_re), c(2L, 2L, 3L))
-  expect_equal(unname(no_re[1, 1, ]), c(expected_p1, expected_p2, expected_p3), tolerance = 1e-12)
+  expect_equal(
+    unname(no_re[1, 1, ]),
+    c(expected_p1, expected_p2, expected_p3),
+    tolerance = 1e-12
+  )
   expect_false(isTRUE(all.equal(no_re, with_re)))
   expect_equal(sum(ppo[1, 1, ]), 1, tolerance = 1e-12)
   expect_equal(ppo_string, ppo, tolerance = 1e-12)
@@ -347,7 +394,10 @@ test_that("sops() summarizes blrm posterior SOP draws and stores optional draws"
   )
 
   expect_s3_class(result, "markov_sops")
-  expect_contains(names(result), c("estimate", "conf.low", "conf.high", "std.error"))
+  expect_contains(
+    names(result),
+    c("estimate", "conf.low", "conf.high", "std.error")
+  )
   expect_equal(attr(result, "n_draws"), 2L)
   expect_length(attr(result, "draw_ids"), 2)
   expect_s3_class(attr(result, "draws"), "data.frame")
@@ -358,7 +408,10 @@ test_that("sops() summarizes blrm posterior SOP draws and stores optional draws"
 
   first_cell <- attr(result, "draws")
   first_cell <- first_cell[first_cell$time == 1 & first_cell$state == 1, ]
-  expect_equal(result$estimate[result$time == 1 & result$state == 1], mean(first_cell$estimate))
+  expect_equal(
+    result$estimate[result$time == 1 & result$state == 1],
+    mean(first_cell$estimate)
+  )
   expect_s3_class(plot_sops(result, geom = "line"), "ggplot")
 })
 
@@ -402,12 +455,19 @@ test_that("avg_sops() streams and summarizes blrm posterior draws", {
   )
 
   expect_s3_class(result, "markov_avg_sops")
-  expect_contains(names(result), c("estimate", "conf.low", "conf.high", "std.error"))
+  expect_contains(
+    names(result),
+    c("estimate", "conf.low", "conf.high", "std.error")
+  )
   expect_equal(attr(result, "n_draws"), 3L)
   expect_equal(gamma_calls, 1L)
   expect_s3_class(attr(result, "draws"), "data.frame")
   expect_contains(names(get_draws(result)), c("draw_id", "draw"))
-  draw_sums <- stats::aggregate(estimate ~ draw_id + tx + time, attr(result, "draws"), sum)
+  draw_sums <- stats::aggregate(
+    estimate ~ draw_id + tx + time,
+    attr(result, "draws"),
+    sum
+  )
   expect_equal(draw_sums$estimate, rep(1, nrow(draw_sums)), tolerance = 1e-12)
   expect_s3_class(plot_sops(result, geom = "line", facet_var = "tx"), "ggplot")
 })

@@ -256,6 +256,129 @@ test_that("time-benefit array reducer preserves scenario blocks", {
   expect_equal(out$estimate, 0.5)
 })
 
+test_that("time-benefit array reducer uses real-time AUC when mapped", {
+  baseline <- data.frame(id = 1, tx = 0, yprev = 2, rowid = 1)
+  grid <- data.frame(tx = c(0, 1))
+  setup <- list(
+    n_cf = 2,
+    n_each = 1,
+    variables = list(tx = c(0, 1)),
+    ylevels = c("1", "2"),
+    times = 1:2,
+    by = NULL,
+    baseline_data = baseline,
+    newdata_orig = baseline,
+    newdata_pred = markov.misc:::create_counterfactual_data(
+      baseline,
+      grid,
+      list(tx = c(0, 1))
+    ),
+    grid = grid,
+    id_var = "id",
+    tvarname = "time",
+    pvarname = "yprev",
+    newdata_supplied = TRUE
+  )
+  sops_array <- array(NA_real_, dim = c(2, 2, 2))
+  sops_array[1, 1, ] <- c(0, 1)
+  sops_array[1, 2, ] <- c(0, 1)
+  sops_array[2, 1, ] <- c(0, 1)
+  sops_array[2, 2, ] <- c(1, 0)
+
+  out <- markov.misc:::reduce_time_benefit_array_for_setup(
+    sops_array = sops_array,
+    setup = setup,
+    comparison = "difference",
+    weights = NULL,
+    time_unit = NULL,
+    time_map = c("1" = 0, "2" = 4),
+    origin = "none"
+  )
+
+  expect_equal(out$estimate, 2)
+})
+
+test_that("time-benefit simulation inference uses real-time comparison scale", {
+  baseline <- data.frame(id = 1, tx = 0, yprev = 2, rowid = 1)
+  grid <- data.frame(tx = c(0, 1))
+  newdata_pred <- markov.misc:::create_counterfactual_data(
+    baseline,
+    grid,
+    list(tx = c(0, 1))
+  )
+  object <- data.frame(
+    metric = "time_benefit",
+    variable = "tx",
+    reference_level = 0,
+    comparison_level = 1,
+    contrast = "1 - 0",
+    comparison = "difference",
+    estimate = 2
+  )
+  class(object) <- c("markov_avg_comparisons", class(object))
+  attr(object, "model") <- structure(
+    list(coefficients = c(a = 0, b = 0)),
+    class = "mock_model"
+  )
+  attr(object, "avg_args") <- list(
+    variables = list(tx = c(0, 1)),
+    by = NULL,
+    times = 1:2,
+    id_var = "id"
+  )
+  attr(object, "comparison_args") <- list(
+    metric = "time_benefit",
+    comparison = "difference",
+    time_map = c("1" = 0, "2" = 4),
+    origin_time = NULL,
+    xout = NULL,
+    origin = "none",
+    time_unit = NULL
+  )
+  attr(object, "newdata_orig") <- baseline
+  attr(object, "newdata_pred") <- newdata_pred
+  attr(object, "newdata_supplied") <- TRUE
+  attr(object, "comparison_baseline_data") <- baseline
+  attr(object, "comparison_grid") <- grid
+  attr(object, "comparison_n_each") <- 1L
+  attr(object, "call_args") <- list(times = 1:2, ylevels = c("1", "2"))
+  attr(object, "tvarname") <- "time"
+  attr(object, "pvarname") <- "yprev"
+  attr(object, "ylevels") <- c("1", "2")
+
+  sops_array <- array(NA_real_, dim = c(2, 2, 2))
+  sops_array[1, 1, ] <- c(0, 1)
+  sops_array[1, 2, ] <- c(0, 1)
+  sops_array[2, 1, ] <- c(0, 1)
+  sops_array[2, 2, ] <- c(1, 0)
+
+  with_mocked_bindings(
+    get_coef = function(model) c(a = 0, b = 0),
+    get_vcov_robust = function(model) diag(2) * 1e-8,
+    set_coef = function(model, new_coefs) model,
+    soprob_markov = function(...) sops_array,
+    {
+      withr::local_seed(1)
+      out <- markov.misc:::inferences_avg_comparisons_time_benefit_simulation(
+        object = object,
+        engine = "mvn",
+        score_weight_dist = "exponential",
+        n_sim = 2,
+        vcov = NULL,
+        cluster = NULL,
+        workers = NULL,
+        conf_level = 0.95,
+        conf_type = "perc",
+        return_draws = TRUE
+      )
+    }
+  )
+
+  expect_equal(out$conf.low, 2)
+  expect_equal(out$conf.high, 2)
+  expect_equal(attr(out, "simulation_draws")$estimate, c(2, 2))
+})
+
 test_that("avg_comparisons() validates v1 interface boundaries", {
   avg <- make_mock_avg_sops()
 

@@ -284,7 +284,10 @@ sim_trajectories_deterministic <- function(
   dat_y$theta1 <- theta1[dat_y$id]
   dat_y$b0 <- b0[dat_y$id]
   dat_y$b1 <- b1[dat_y$id]
-  dat_y <- reorder_columns(dat_y, c("id", "tx", "theta0", "theta1", "b0", "b1", "time", "y"))
+  dat_y <- reorder_columns(
+    dat_y,
+    c("id", "tx", "theta0", "theta1", "b0", "b1", "time", "y")
+  )
 
   dat_x <- matrix_to_long(X, value_name = "x")
   dat_x$id <- as.integer(dat_x$id)
@@ -292,7 +295,9 @@ sim_trajectories_deterministic <- function(
 
   result <- left_join_preserve_order(dat_y, dat_x, by = c("id", "time"))
   result <- result[order(result$id, result$time), , drop = FALSE]
-  result$yprev <- ave(result$y, result$id, FUN = function(x) c(NA, utils::head(x, -1)))
+  result$yprev <- ave(result$y, result$id, FUN = function(x) {
+    c(NA, utils::head(x, -1))
+  })
   result <- result[result$time != 0, , drop = FALSE]
   rownames(result) <- NULL
 

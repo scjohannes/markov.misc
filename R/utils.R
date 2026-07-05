@@ -1,5 +1,22 @@
+# General package utilities.
+
 # Helper for list access
 `%||%` <- function(a, b) if (!is.null(a)) a else b
+
+validate_conf_level <- function(conf_level, arg = "conf_level") {
+  if (
+    !is.numeric(conf_level) ||
+      length(conf_level) != 1L ||
+      is.na(conf_level) ||
+      !is.finite(conf_level) ||
+      conf_level <= 0 ||
+      conf_level >= 1
+  ) {
+    stop("`", arg, "` must be a single finite number between 0 and 1.")
+  }
+
+  conf_level
+}
 
 # Bind data frames row-wise while filling columns missing from individual inputs.
 # This scoped helper is not a drop-in replacement for dplyr::bind_rows().
@@ -57,8 +74,12 @@ left_join_preserve_order <- function(x, y, by) {
   bind_rows_fill(pieces)
 }
 
-matrix_to_long <- function(mat, id_name = "id", time_name = "time",
-                           value_name = "value") {
+matrix_to_long <- function(
+  mat,
+  id_name = "id",
+  time_name = "time",
+  value_name = "value"
+) {
   ids <- rownames(mat) %||% seq_len(nrow(mat))
   times <- colnames(mat) %||% seq_len(ncol(mat))
 
@@ -78,20 +99,27 @@ named_list_to_wide <- function(x, id = seq_along(x), id_name = "boot_id") {
   names(out) <- id_name
 
   for (name in value_names) {
-    out[[name]] <- vapply(x, function(item) {
-      if (is.null(item) || !name %in% names(item)) {
-        return(NA_real_)
-      }
-      as.numeric(item[[name]][1])
-    }, numeric(1))
+    out[[name]] <- vapply(
+      x,
+      function(item) {
+        if (is.null(item) || !name %in% names(item)) {
+          return(NA_real_)
+        }
+        as.numeric(item[[name]][1])
+      },
+      numeric(1)
+    )
   }
 
   out
 }
 
-pivot_state_columns_long <- function(data, values_to = "probability",
-                                     names_to = "state",
-                                     names_prefix = "state_") {
+pivot_state_columns_long <- function(
+  data,
+  values_to = "probability",
+  names_to = "state",
+  names_prefix = "state_"
+) {
   state_cols <- grep(paste0("^", names_prefix), names(data), value = TRUE)
   id_cols <- setdiff(names(data), state_cols)
 
@@ -102,7 +130,11 @@ pivot_state_columns_long <- function(data, values_to = "probability",
   row_index <- rep(seq_len(nrow(data)), each = length(state_cols))
   out <- data[row_index, id_cols, drop = FALSE]
   rownames(out) <- NULL
-  out[[names_to]] <- sub(paste0("^", names_prefix), "", rep(state_cols, times = nrow(data)))
+  out[[names_to]] <- sub(
+    paste0("^", names_prefix),
+    "",
+    rep(state_cols, times = nrow(data))
+  )
   out[[values_to]] <- as.vector(t(as.matrix(data[, state_cols, drop = FALSE])))
   out
 }
@@ -193,7 +225,8 @@ model_uses_offset <- function(model) {
   if (!is.null(call_obj)) {
     call_args <- as.list(call_obj)
     if (
-      "offset" %in% names(call_args) &&
+      "offset" %in%
+        names(call_args) &&
         !is.null(call_args[["offset"]]) &&
         !offset_is_zero
     ) {

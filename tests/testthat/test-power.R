@@ -72,7 +72,33 @@ test_that("sample_from_arrow samples with replacement using synthetic IDs", {
   expect_false("boot_id" %in% names(sampled))
 })
 
-test_that("sample_from_arrow errors when requested arm size exceeds observed IDs", {
+test_that("sample_from_arrow samples with replacement beyond observed IDs", {
+  skip_if_not_installed("arrow")
+
+  path <- withr::local_tempdir()
+  data <- data.frame(
+    id = rep(1:4, each = 2),
+    tx = rep(rep(c(0, 1), each = 2), each = 2),
+    y = seq_len(8)
+  )
+  arrow::write_dataset(data, path)
+
+  sampled <- sample_from_arrow(
+    data_path = path,
+    sample_size = 6,
+    allocation_ratio = 0.5,
+    seed = 1,
+    replace = TRUE
+  )
+
+  expect_equal(length(unique(sampled$id)), 6)
+  expect_equal(sum(sampled$tx == 1), 6)
+  expect_equal(sum(sampled$tx == 0), 6)
+  expect_false("new_id" %in% names(sampled))
+  expect_false("boot_id" %in% names(sampled))
+})
+
+test_that("sample_from_arrow errors without replacement beyond observed IDs", {
   skip_if_not_installed("arrow")
 
   path <- withr::local_tempdir()
@@ -88,9 +114,33 @@ test_that("sample_from_arrow errors when requested arm size exceeds observed IDs
       data_path = path,
       sample_size = 6,
       allocation_ratio = 0.5,
-      replace = TRUE
+      replace = FALSE
     ),
     "Requested 3 treatment patients, but only 2 are available.",
+    fixed = TRUE
+  )
+})
+
+test_that("sample_from_arrow validates sampling controls", {
+  skip_if_not_installed("arrow")
+
+  path <- withr::local_tempdir()
+  data <- data.frame(id = 1:2, tx = c(0, 1), y = 1:2)
+  arrow::write_dataset(data, path)
+
+  expect_error(
+    sample_from_arrow(path, sample_size = 1.5),
+    "`sample_size` must be a single positive integer.",
+    fixed = TRUE
+  )
+  expect_error(
+    sample_from_arrow(path, sample_size = 2, allocation_ratio = 1.5),
+    "`allocation_ratio` must be a single number between 0 and 1.",
+    fixed = TRUE
+  )
+  expect_error(
+    sample_from_arrow(path, sample_size = 2, replace = NA),
+    "`replace` must be `TRUE` or `FALSE`.",
     fixed = TRUE
   )
 })

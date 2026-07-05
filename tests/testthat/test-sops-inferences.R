@@ -402,10 +402,27 @@ describe("avg_sops() and inferences() pipeline", {
       markov.misc:::compute_ci_from_draws(
         draws,
         c("time", "state"),
+        conf_level = 1
+      ),
+      "between 0 and 1",
+      fixed = TRUE
+    )
+    expect_error(
+      markov.misc:::compute_ci_from_draws(
+        draws,
+        c("time", "state"),
         conf_type = "other"
       ),
       "conf_type"
     )
+
+    overall <- markov.misc:::compute_ci_from_draws(
+      draws,
+      character(),
+      conf_level = 0.5
+    )
+    expect_named(overall, c("conf.low", "conf.high", "std.error"))
+    expect_equal(nrow(overall), 1L)
   })
 
   test_that("lp_to_probs() converts cumulative logits into valid category probabilities", {
@@ -431,9 +448,11 @@ describe("avg_sops() and inferences() pipeline", {
       stats::plogis(eta[, 3])
     )
     expected[expected < 0] <- 0
+    expected <- expected / rowSums(expected)
 
     expect_equal(probs, expected)
     expect_true(all(probs >= 0))
+    expect_equal(rowSums(probs), rep(1, nrow(probs)))
   })
 
   test_that("fast Markov components match soprob_markov() on a Brownian model", {

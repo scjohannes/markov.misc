@@ -191,7 +191,9 @@ sim_trajectories_tte <- function(
       any(tx_levels < 0) ||
       any(tx_levels != floor(tx_levels))
   ) {
-    stop("baseline_data$tx must contain non-negative integer treatment arm codes")
+    stop(
+      "baseline_data$tx must contain non-negative integer treatment arm codes"
+    )
   }
 
   missing_hr <- tx_levels[tx_levels > length(hazard_ratios)]

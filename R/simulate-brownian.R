@@ -271,11 +271,21 @@ sim_trajectories_brownian <- function(
   dat_observed$id <- as.integer(dat_observed$id)
   dat_observed$time <- as.integer(dat_observed$time)
   dat_observed$tx <- treatment[dat_observed$id]
-  dat_observed <- dat_observed[order(dat_observed$id, dat_observed$time), , drop = FALSE]
-  dat_observed$yprev <- ave(dat_observed$y, dat_observed$id, FUN = function(x) c(NA, utils::head(x, -1)))
+  dat_observed <- dat_observed[
+    order(dat_observed$id, dat_observed$time),
+    ,
+    drop = FALSE
+  ]
+  dat_observed$yprev <- ave(dat_observed$y, dat_observed$id, FUN = function(x) {
+    c(NA, utils::head(x, -1))
+  })
   dat_observed <- dat_observed[dat_observed$time > 0, , drop = FALSE]
 
-  result <- left_join_preserve_order(dat_observed, dat_latent, by = c("id", "time"))
+  result <- left_join_preserve_order(
+    dat_observed,
+    dat_latent,
+    by = c("id", "time")
+  )
   result <- result[order(result$id, result$time), , drop = FALSE]
   result <- reorder_columns(result, c("id", "tx", "time", "y", "yprev", "x"))
   rownames(result) <- NULL

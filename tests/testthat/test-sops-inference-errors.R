@@ -91,7 +91,6 @@ test_that("inferences_simulation() validates stored models and simulation engine
     "Unknown simulation engine",
     fixed = TRUE
   )
-
 })
 
 test_that("inferences() validates method and engine combinations", {
@@ -155,10 +154,22 @@ test_that("inferences_simulation() falls back when fast-path setup fails", {
     soprob_markov = function(...) {
       array(
         c(
-          0.8, 0.7, 0.2, 0.3,
-          0.6, 0.5, 0.4, 0.5,
-          0.7, 0.6, 0.3, 0.4,
-          0.5, 0.4, 0.5, 0.6
+          0.8,
+          0.7,
+          0.2,
+          0.3,
+          0.6,
+          0.5,
+          0.4,
+          0.5,
+          0.7,
+          0.6,
+          0.3,
+          0.4,
+          0.5,
+          0.4,
+          0.5,
+          0.6
         ),
         dim = c(4, 2, 2)
       )
@@ -199,7 +210,9 @@ test_that("inferences_simulation() errors when all fast-path draws fail", {
     get_vcov_robust = function(model) diag(2),
     validate_coef_vcov = function(beta, Sigma, arg = "vcov") Sigma,
     markov_msm_build = function(...) list(ok = TRUE),
-    get_effective_coefs = function(model, beta = NULL) matrix(c(0, 0), nrow = 1),
+    get_effective_coefs = function(model, beta = NULL) {
+      matrix(c(0, 0), nrow = 1)
+    },
     markov_msm_run = function(...) stop("run failed"),
     {
       withr::local_seed(2)
@@ -271,6 +284,39 @@ test_that("inferences_simulation() preserves individual slow-path grouping", {
   expect_s3_class(attr(out, "simulation_draws"), "data.frame")
 })
 
+test_that("inferences_simulation() rejects invalid custom vcov objects", {
+  model <- structure(list(coefficients = c(a = 0, b = 0)), class = "mock_model")
+  newdata <- data.frame(
+    id = 1:2,
+    tx = c(0, 1),
+    yprev = c(1, 2),
+    time = 1
+  )
+  object <- make_avg_sops_object(model, newdata)
+
+  with_mocked_bindings(
+    get_coef = function(model) c(a = 0, b = 0),
+    {
+      expect_error(
+        markov.misc:::inferences_simulation(
+          object,
+          engine = "mvn",
+          score_weight_dist = "exponential",
+          n_sim = 2,
+          vcov = data.frame(a = c(1, 0), b = c(0, 1)),
+          cluster = NULL,
+          conf_level = 0.95,
+          conf_type = "perc",
+          workers = NULL,
+          return_draws = FALSE
+        ),
+        "`vcov` must be a matrix.",
+        fixed = TRUE
+      )
+    }
+  )
+})
+
 test_that("inferences_simulation() applies score-bootstrap slow-path weights", {
   model <- structure(
     list(
@@ -296,10 +342,22 @@ test_that("inferences_simulation() applies score-bootstrap slow-path weights", {
     soprob_markov = function(...) {
       array(
         c(
-          0.8, 0.7, 0.2, 0.3,
-          0.6, 0.5, 0.4, 0.5,
-          0.7, 0.6, 0.3, 0.4,
-          0.5, 0.4, 0.5, 0.6
+          0.8,
+          0.7,
+          0.2,
+          0.3,
+          0.6,
+          0.5,
+          0.4,
+          0.5,
+          0.7,
+          0.6,
+          0.3,
+          0.4,
+          0.5,
+          0.4,
+          0.5,
+          0.6
         ),
         dim = c(4, 2, 2)
       )
@@ -393,7 +451,10 @@ test_that("inferences_simulation() applies score-bootstrap by weights", {
 })
 
 test_that("inferences_simulation() supports score-bootstrap individual sops", {
-  model <- structure(list(coefficients = c(a = 0, b = 0)), class = "robcov_vglm")
+  model <- structure(
+    list(coefficients = c(a = 0, b = 0)),
+    class = "robcov_vglm"
+  )
   newdata <- data.frame(id = 1:2, yprev = c(1, 2), time = 1)
   object <- make_individual_sops_object(model, newdata)
   attr(object, "id_var") <- "id"
@@ -410,8 +471,14 @@ test_that("inferences_simulation() supports score-bootstrap individual sops", {
     soprob_markov = function(...) {
       array(
         c(
-          0.8, 0.7, 0.2, 0.3,
-          0.6, 0.5, 0.4, 0.5
+          0.8,
+          0.7,
+          0.2,
+          0.3,
+          0.6,
+          0.5,
+          0.4,
+          0.5
         ),
         dim = c(2, 2, 2)
       )
@@ -448,7 +515,10 @@ test_that("inferences_simulation() supports score-bootstrap individual sops", {
 })
 
 test_that("inferences_simulation() rejects reserved score weight columns", {
-  model <- structure(list(coefficients = c(a = 0, b = 0)), class = "robcov_vglm")
+  model <- structure(
+    list(coefficients = c(a = 0, b = 0)),
+    class = "robcov_vglm"
+  )
   newdata <- data.frame(
     id = 1:2,
     yprev = c(1, 2),
@@ -593,7 +663,7 @@ test_that("soprob_markov() validates model classes and propagates Bayesian draws
   )
 
   expect_equal(dim(out), c(2L, 2L, 2L, 2L))
-  expect_equal(unname(out[, , 2, 2]), array(0.64, dim = c(2, 2)))
+  expect_equal(unname(out[,, 2, 2]), array(0.64, dim = c(2, 2)))
 })
 
 test_that("inferences_bootstrap() validates inputs and records callback outcomes", {
@@ -702,9 +772,21 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
   sop_call <- 0
   with_mocked_bindings(
     fast_group_bootstrap = function(data, id_var, n_boot) {
-      replicate(n_boot, data.frame(original_id = c(1, 2), new_id = c("1_1", "2_1")), simplify = FALSE)
+      replicate(
+        n_boot,
+        data.frame(original_id = c(1, 2), new_id = c("1_1", "2_1")),
+        simplify = FALSE
+      )
     },
-    apply_to_bootstrap = function(boot_samples, analysis_fn, data, id_var, workers, packages, globals) {
+    apply_to_bootstrap = function(
+      boot_samples,
+      analysis_fn,
+      data,
+      id_var,
+      workers,
+      packages,
+      globals
+    ) {
       lapply(boot_samples, function(sample) analysis_fn(data))
     },
     bootstrap_analysis_wrapper = function(...) {
@@ -728,13 +810,27 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
     },
     soprob_markov = function(...) {
       sop_call <<- sop_call + 1
-      if (sop_call == 2) stop("sop failed")
+      if (sop_call == 2) {
+        stop("sop failed")
+      }
       array(
         c(
-          0.8, 0.7, 0.2, 0.3,
-          0.6, 0.5, 0.4, 0.5,
-          0.7, 0.6, 0.3, 0.4,
-          0.5, 0.4, 0.5, 0.6
+          0.8,
+          0.7,
+          0.2,
+          0.3,
+          0.6,
+          0.5,
+          0.4,
+          0.5,
+          0.7,
+          0.6,
+          0.3,
+          0.4,
+          0.5,
+          0.4,
+          0.5,
+          0.6
         ),
         dim = c(4, 2, 2)
       )
@@ -762,8 +858,18 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
   expect_equal(as.character(out$grp), rep("a", nrow(out)))
 
   with_mocked_bindings(
-    fast_group_bootstrap = function(...) list(data.frame(original_id = 1, new_id = "1_1")),
-    apply_to_bootstrap = function(boot_samples, analysis_fn, data, id_var, workers, packages, globals) {
+    fast_group_bootstrap = function(...) {
+      list(data.frame(original_id = 1, new_id = "1_1"))
+    },
+    apply_to_bootstrap = function(
+      boot_samples,
+      analysis_fn,
+      data,
+      id_var,
+      workers,
+      packages,
+      globals
+    ) {
       list(NULL)
     },
     {
@@ -828,10 +934,22 @@ test_that("inferences_bootstrap() supports fractional weighted refits", {
     soprob_markov = function(...) {
       array(
         c(
-          0.8, 0.7, 0.2, 0.3,
-          0.6, 0.5, 0.4, 0.5,
-          0.7, 0.6, 0.3, 0.4,
-          0.5, 0.4, 0.5, 0.6
+          0.8,
+          0.7,
+          0.2,
+          0.3,
+          0.6,
+          0.5,
+          0.4,
+          0.5,
+          0.7,
+          0.6,
+          0.3,
+          0.4,
+          0.5,
+          0.4,
+          0.5,
+          0.6
         ),
         dim = c(4, 2, 2)
       )
@@ -999,8 +1117,14 @@ test_that("inferences_bootstrap_sops_fwb() attaches stored-data draw weights", {
     soprob_markov = function(...) {
       array(
         c(
-          0.8, 0.7, 0.2, 0.3,
-          0.6, 0.5, 0.4, 0.5
+          0.8,
+          0.7,
+          0.2,
+          0.3,
+          0.6,
+          0.5,
+          0.4,
+          0.5
         ),
         dim = c(2, 2, 2)
       )

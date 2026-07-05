@@ -147,6 +147,7 @@ sops <- function(
   if (missing(times) || is.null(times)) {
     stop("`times` must be supplied to `sops()`.")
   }
+  conf_level <- validate_conf_level(conf_level)
 
   data_res <- resolve_markov_source_data(model, newdata, refit_data)
   newdata_orig <- data_res$source_data
@@ -712,6 +713,7 @@ avg_sops <- function(
   if (missing(times) || is.null(times)) {
     stop("`times` must be supplied to `avg_sops()`.")
   }
+  conf_level <- validate_conf_level(conf_level)
 
   if (is.null(variables)) {
     stop(

@@ -286,6 +286,24 @@ lp_to_probs <- function(eta, M) {
   probs[, M + 1] <- cum_probs[, M]
   probs[probs < 0] <- 0
 
+  normalize_probability_rows(probs)
+}
+
+normalize_probability_rows <- function(probs) {
+  totals <- rowSums(probs, na.rm = TRUE)
+  valid <- is.finite(totals) & totals > 0
+  probs[valid, ] <- probs[valid, , drop = FALSE] / totals[valid]
+  probs
+}
+
+normalize_probability_array <- function(probs) {
+  totals <- apply(probs, c(1L, 2L), sum, na.rm = TRUE)
+  valid <- is.finite(totals) & totals > 0
+  for (k in seq_len(dim(probs)[3])) {
+    slice <- probs[,, k]
+    slice[valid] <- slice[valid] / totals[valid]
+    probs[,, k] <- slice
+  }
   probs
 }
 

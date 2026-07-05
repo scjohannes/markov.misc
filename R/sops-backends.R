@@ -471,7 +471,7 @@ predict_blrm_response_markov <- function(
       out[,, K] <- cum_probs[,, K - 1]
       out[out < 0] <- 0
 
-      out
+      normalize_probability_array(out)
     },
     error = function(e) {
       manual_error <<- e

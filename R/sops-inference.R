@@ -262,6 +262,9 @@ inferences <- function(
     )
   }
 
+  conf_level <- validate_conf_level(conf_level)
+  conf_type <- match.arg(conf_type, choices = c("perc", "wald"))
+
   if (inherits(attr(object, "model"), "blrm")) {
     return(object)
   }
@@ -437,82 +440,27 @@ inferences_simulation <- function(
   }
 
   # --- 3. Generate Coefficient Draws ---
-  baseline_weights_draws <- NULL
-  draw_weight_col <- NULL
-  draw_weights_attached <- FALSE
-  draw_weight_omission_reason <- NULL
-  if (engine == "mvn") {
-    # Check for mvtnorm package
-    if (!requireNamespace("mvtnorm", quietly = TRUE)) {
-      stop(
-        "Package 'mvtnorm' is required for MVN simulation inference.\n",
-        "Install with: install.packages('mvtnorm')"
-      )
-    }
-
-    # The vcov is extracted directly from the model object:
-    # - For robcov_vglm: uses the stored cluster-robust vcov
-    # - For orm with rms::robcov(): uses the stored robust vcov
-    # - For plain vglm/orm: uses model-based vcov
-    beta_hat <- get_coef(model)
-
-    if (!is.null(vcov) && is.matrix(vcov)) {
-      Sigma <- vcov
-      Sigma <- validate_coef_vcov(beta_hat, Sigma, arg = "vcov")
-    } else {
-      Sigma <- get_vcov_robust(model)
-      Sigma <- validate_coef_vcov(beta_hat, Sigma, arg = "model vcov")
-    }
-
-    beta_draws <- mvtnorm::rmvnorm(n_sim, mean = beta_hat, sigma = Sigma)
-  } else if (engine == "score_bootstrap") {
-    if (!is.null(vcov)) {
-      stop(
-        "`vcov` cannot be supplied when `engine = \"score_bootstrap\"` because ",
-        "draws are generated from score perturbations."
-      )
-    }
-
-    return_baseline_weights <- !newdata_supplied
-    if (return_baseline_weights) {
-      validate_prediction_weight_ids(baseline_data, id_var)
-    }
-
-    score_draws <- generate_score_bootstrap_draws(
-      model = model,
-      baseline_data = if (return_baseline_weights) baseline_data else NULL,
-      id_var = id_var,
-      n_sim = n_sim,
-      score_weight_dist = score_weight_dist,
-      cluster = cluster,
-      return_baseline_weights = return_baseline_weights
-    )
-    beta_draws <- score_draws$beta_draws
-    baseline_weights_draws <- if (return_baseline_weights) {
-      score_draws$baseline_weights
-    } else {
-      if (is_avg || !is.null(by)) {
-        warn_fixed_profile_bootstrap_weights("score-bootstrap")
-      } else if (isTRUE(return_draws)) {
-        warn_fixed_profile_draw_weights("score-bootstrap")
-      }
-      draw_weight_omission_reason <- "user_supplied_newdata"
-      NULL
-    }
-
-    if (!is_avg && is.null(by) && !is.null(baseline_weights_draws)) {
-      draw_weight_col <- "score_weight"
-      validate_draw_weight_column_available(newdata_pred, draw_weight_col)
-      draw_weights_attached <- isTRUE(return_draws)
-    } else if (!is_avg && !is.null(by)) {
-      draw_weight_omission_reason <- "grouped_sops"
-    }
-    if (is_avg && is.null(draw_weight_omission_reason)) {
-      draw_weight_omission_reason <- "averaged_sops"
-    }
-  } else {
-    stop("Unknown simulation engine: ", engine)
-  }
+  simulation_draws <- generate_sop_coefficient_draws(
+    model = model,
+    engine = engine,
+    score_weight_dist = score_weight_dist,
+    n_sim = n_sim,
+    vcov = vcov,
+    cluster = cluster,
+    baseline_data = baseline_data,
+    id_var = id_var,
+    newdata_supplied = newdata_supplied,
+    is_avg = is_avg,
+    by = by,
+    return_draws = return_draws,
+    prediction_data = newdata_pred
+  )
+  beta_draws <- simulation_draws$beta_draws
+  baseline_weights_draws <- simulation_draws$baseline_weights_draws
+  draw_weight_col <- simulation_draws$draw_weight_col
+  draw_weights_attached <- simulation_draws$draw_weights_attached
+  draw_weight_omission_reason <-
+    simulation_draws$draw_weight_omission_reason
 
   n_times <- length(times)
   n_states <- length(ylevels)
@@ -672,58 +620,39 @@ inferences_simulation <- function(
   }
 
   # --- 6. Apply Across All Draws ---
-  use_parallel <- !is.null(workers) && workers > 1
-
-  if (use_parallel) {
-    # Setup parallel
-    if (!requireNamespace("furrr", quietly = TRUE)) {
-      stop("Package 'furrr' is required for parallel processing")
-    }
-
-    future::plan(future.callr::callr, workers = workers)
-    on.exit(future::plan(future::sequential), add = TRUE)
-
-    # Build globals list dynamically based on fast/slow path
-    globals_list <- c(
-      "model",
-      "model_chk",
-      "beta_draws",
-      "newdata_pred",
-      "times",
-      "ylevels",
-      "absorb",
-      "tvarname",
-      "pvarname",
-      "p2varname",
-      "gap",
-      "t_covs",
-      "is_avg",
-      "grid",
-      "variables",
-      "n_cf",
-      "n_each",
-      "baseline_weights_draws",
-      "draw_weight_col",
-      "use_fast_path",
-      "by"
-    )
-    if (use_fast_path) {
-      globals_list <- c(globals_list, "components")
-    }
-
-    sim_results <- furrr::future_map(
-      seq_len(n_sim),
-      analysis_fn,
-      .options = furrr::furrr_options(
-        seed = TRUE,
-        globals = globals_list,
-        packages = c("rms", "VGAM", "stats", "markov.misc")
-      ),
-      .progress = FALSE
-    )
-  } else {
-    sim_results <- lapply(seq_len(n_sim), analysis_fn)
+  globals_list <- c(
+    "model",
+    "model_chk",
+    "beta_draws",
+    "newdata_pred",
+    "times",
+    "ylevels",
+    "absorb",
+    "tvarname",
+    "pvarname",
+    "p2varname",
+    "gap",
+    "t_covs",
+    "is_avg",
+    "grid",
+    "variables",
+    "n_cf",
+    "n_each",
+    "baseline_weights_draws",
+    "draw_weight_col",
+    "use_fast_path",
+    "by"
+  )
+  if (use_fast_path) {
+    globals_list <- c(globals_list, "components")
   }
+
+  sim_results <- apply_sop_simulation_draws(
+    n_draws = nrow(beta_draws),
+    analysis_fn = analysis_fn,
+    workers = workers,
+    globals = globals_list
+  )
 
   # --- 6. Combine Results ---
   sim_results <- Filter(Negate(is.null), sim_results)
@@ -761,7 +690,17 @@ inferences_simulation <- function(
   )
 
   # --- 8. Merge with Original Object ---
-  final_result <- merge(object, summary_stats, by = group_cols, all.x = TRUE)
+  object$.sop_order <- seq_len(nrow(object))
+  final_result <- merge(
+    object,
+    summary_stats,
+    by = group_cols,
+    all.x = TRUE,
+    sort = FALSE
+  )
+  final_result <- final_result[order(final_result$.sop_order), , drop = FALSE]
+  final_result$.sop_order <- NULL
+  rownames(final_result) <- NULL
 
   final_result <- restore_sops_attrs(final_result, object)
   # Add metadata

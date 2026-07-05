@@ -10,7 +10,10 @@ test_that("vglm_markov() supplies rms formula helpers for %ia%", {
     "ordered(y) ~ rcs(time, 4) + tx + yprev + time %ia% yprev",
     env = stripped_env
   )
-  expect_equal(exists("%ia%", envir = environment(form), inherits = TRUE), FALSE)
+  expect_equal(
+    exists("%ia%", envir = environment(form), inherits = TRUE),
+    FALSE
+  )
   expect_equal(exists("rcs", envir = environment(form), inherits = TRUE), FALSE)
 
   fit <- suppressWarnings(
@@ -24,7 +27,10 @@ test_that("vglm_markov() supplies rms formula helpers for %ia%", {
   ia_terms <- grep("%ia%", names(fit@constraints), value = TRUE, fixed = TRUE)
   expect_length(ia_terms, nlevels(data$yprev) - 1)
   expect_equal(grep("time'", ia_terms, fixed = TRUE), integer(0))
-  expect_equal(grep("time * yprev=", ia_terms, fixed = TRUE), seq_along(ia_terms))
+  expect_equal(
+    grep("time * yprev=", ia_terms, fixed = TRUE),
+    seq_along(ia_terms)
+  )
 
   out <- markov.misc::soprob_markov(
     fit,
@@ -59,7 +65,12 @@ test_that("vglm_markov() keeps explicit rms::%ia% calls working", {
     )
   )
 
-  ia_terms <- grep("rms::`%ia%`", names(fit@constraints), value = TRUE, fixed = TRUE)
+  ia_terms <- grep(
+    "rms::`%ia%`",
+    names(fit@constraints),
+    value = TRUE,
+    fixed = TRUE
+  )
   expect_length(ia_terms, nlevels(data$yprev) - 1)
   expect_equal(grep("time'", ia_terms, fixed = TRUE), integer(0))
 })

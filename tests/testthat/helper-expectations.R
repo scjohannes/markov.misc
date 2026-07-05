@@ -8,8 +8,14 @@ expect_trajectory_contract <- function(
 ) {
   testthat::expect_s3_class(object, "data.frame")
   testthat::expect_named(object, expected_cols, ignore.order = FALSE)
-  testthat::expect_false(anyNA(object$id), info = "`id` should not contain missing values")
-  testthat::expect_false(anyNA(object$time), info = "`time` should not contain missing values")
+  testthat::expect_false(
+    anyNA(object$id),
+    info = "`id` should not contain missing values"
+  )
+  testthat::expect_false(
+    anyNA(object$time),
+    info = "`time` should not contain missing values"
+  )
 
   if (!is.null(n_patients) && !is.null(follow_up_time)) {
     testthat::expect_equal(nrow(object), n_patients * follow_up_time)
@@ -34,16 +40,23 @@ expect_trajectory_contract <- function(
   }
 
   if (check_lag) {
-    by_id <- split(object[order(object$id, object$time), , drop = FALSE], object$id)
-    lag_ok <- vapply(by_id, function(patient) {
-      if (nrow(patient) <= 1) {
-        return(TRUE)
-      }
-      identical(
-        unname(patient$yprev[-1]),
-        unname(utils::head(patient$y, -1))
-      )
-    }, logical(1))
+    by_id <- split(
+      object[order(object$id, object$time), , drop = FALSE],
+      object$id
+    )
+    lag_ok <- vapply(
+      by_id,
+      function(patient) {
+        if (nrow(patient) <= 1) {
+          return(TRUE)
+        }
+        identical(
+          unname(patient$yprev[-1]),
+          unname(utils::head(patient$y, -1))
+        )
+      },
+      logical(1)
+    )
 
     testthat::expect_equal(
       names(lag_ok)[!lag_ok],
@@ -72,14 +85,21 @@ expect_absorbing_state_sticky <- function(
   )
 
   by_id <- split(object, object[[id_col]])
-  sticky <- vapply(by_id, function(patient) {
-    patient_states <- as.character(patient[[state_col]])
-    first_absorbed <- match(target, patient_states)
-    if (is.na(first_absorbed)) {
-      return(TRUE)
-    }
-    all(patient_states[seq.int(first_absorbed, length(patient_states))] == target)
-  }, logical(1))
+  sticky <- vapply(
+    by_id,
+    function(patient) {
+      patient_states <- as.character(patient[[state_col]])
+      first_absorbed <- match(target, patient_states)
+      if (is.na(first_absorbed)) {
+        return(TRUE)
+      }
+      all(
+        patient_states[seq.int(first_absorbed, length(patient_states))] ==
+          target
+      )
+    },
+    logical(1)
+  )
 
   testthat::expect_equal(
     names(sticky)[!sticky],
@@ -97,15 +117,27 @@ expect_probability_array <- function(
   state_margin = length(dim(object)),
   check_normalized = TRUE
 ) {
-  testthat::expect_true(is.array(object), info = "Probability output should be an array")
-  testthat::expect_true(is.numeric(object), info = "Probability output should be numeric")
+  testthat::expect_true(
+    is.array(object),
+    info = "Probability output should be an array"
+  )
+  testthat::expect_true(
+    is.numeric(object),
+    info = "Probability output should be numeric"
+  )
 
   if (!is.null(expected_dim)) {
     testthat::expect_equal(dim(object), expected_dim)
   }
 
-  testthat::expect_false(anyNA(object), info = "Probabilities should not be missing")
-  testthat::expect_true(all(is.finite(object)), info = "Probabilities should be finite")
+  testthat::expect_false(
+    anyNA(object),
+    info = "Probabilities should not be missing"
+  )
+  testthat::expect_true(
+    all(is.finite(object)),
+    info = "Probabilities should be finite"
+  )
   testthat::expect_true(
     all(object >= -tolerance & object <= 1 + tolerance),
     info = "Probabilities should stay in [0, 1]"
@@ -145,18 +177,21 @@ expect_absorbing_probability_monotone <- function(
     as.integer(absorbing_state)
   }
 
-  testthat::expect_false(is.na(state_index), info = "Absorbing state should be in the state dimension")
+  testthat::expect_false(
+    is.na(state_index),
+    info = "Absorbing state should be in the state dimension"
+  )
 
   if (length(dims) == 3L) {
     absorbing_probs <- matrix(
-      object[, , state_index],
+      object[,, state_index],
       nrow = dims[1],
       ncol = dims[time_margin]
     )
     increments <- apply(absorbing_probs, 1, diff)
   } else {
     absorbing_probs <- array(
-      object[, , , state_index],
+      object[,,, state_index],
       dim = dims[-state_margin]
     )
     increments <- apply(absorbing_probs, c(1, 2), diff)
@@ -176,8 +211,14 @@ expect_inference_intervals <- function(
   require_positive_std_error = FALSE
 ) {
   testthat::expect_contains(names(object), c("conf.low", "conf.high"))
-  testthat::expect_false(anyNA(object$conf.low), info = "`conf.low` should be complete")
-  testthat::expect_false(anyNA(object$conf.high), info = "`conf.high` should be complete")
+  testthat::expect_false(
+    anyNA(object$conf.low),
+    info = "`conf.low` should be complete"
+  )
+  testthat::expect_false(
+    anyNA(object$conf.high),
+    info = "`conf.high` should be complete"
+  )
   testthat::expect_true(
     all(object$conf.low <= object$conf.high),
     info = "Interval lower bounds should not exceed upper bounds"
@@ -185,12 +226,21 @@ expect_inference_intervals <- function(
 
   if (require_std_error || require_positive_std_error) {
     testthat::expect_contains(names(object), "std.error")
-    testthat::expect_false(anyNA(object$std.error), info = "`std.error` should be complete")
-    testthat::expect_true(all(object$std.error >= 0), info = "`std.error` should be non-negative")
+    testthat::expect_false(
+      anyNA(object$std.error),
+      info = "`std.error` should be complete"
+    )
+    testthat::expect_true(
+      all(object$std.error >= 0),
+      info = "`std.error` should be non-negative"
+    )
   }
 
   if (require_positive_std_error) {
-    testthat::expect_true(any(object$std.error > 0), info = "At least one standard error should be positive")
+    testthat::expect_true(
+      any(object$std.error > 0),
+      info = "At least one standard error should be positive"
+    )
   }
 
   invisible(object)
