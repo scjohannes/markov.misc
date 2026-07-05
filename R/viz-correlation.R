@@ -1,19 +1,20 @@
 # Correlation heatmaps and variograms.
 
-#' Plot Empirical or Model-Based Correlations Over Time
+#' Plot Empirical or Model-Implied Correlations Over Time
 #'
-#' `plot_correlation()` computes Spearman correlations between ordinal states
-#' at pairs of follow-up times. With a fitted Markov model, trajectories are
-#' simulated from the model for each patient in their observed group and the
-#' correlations are computed from those simulated paths.
+#' `plot_correlation()` computes correlations between ordinal state scores at
+#' pairs of follow-up times. With a fitted Markov model, correlations are
+#' computed from model-implied pairwise moments rather than sampled paths.
 #'
 #' @details
 #' Minimum inputs depend on the object type. For trajectory data, `object` must
 #' contain the ID, time, and state columns named by `id_var`, `time_var`, and
 #' `y_var`. For model-based plots, pass a fitted Markov model and `times`; use
 #' `newdata` for explicit prediction profiles and pass `ylevels` or `absorb`
-#' when needed. Model-based correlations are computed from simulated paths, so
-#' `n_rep` controls simulation precision and `seed` controls reproducibility.
+#' when needed. Model-based correlations are computed from exact first- or
+#' second-order Markov recursions. For `blrm` fits, posterior draws are kept
+#' separate through the moment calculation and summarized only after
+#' correlations are computed for each draw.
 #'
 #' @param object A trajectory data frame or a fitted Markov model.
 #' @param newdata Optional data frame of prediction profiles for model-based
@@ -22,25 +23,23 @@
 #' @param refit_data Optional full longitudinal data used only for stored-data
 #'   resolution in model-based plots.
 #' @param times Optional time values to include. Required for model-based plots.
-#' @param ylevels Optional state levels for model-based simulation.
-#' @param absorb Optional absorbing-state label for model-based simulation.
+#' @param ylevels Optional state levels. If supplied for raw trajectory data,
+#'   state scores follow this order.
+#' @param absorb Optional absorbing-state label for model-based recursions.
 #' @param id_var Character ID column for raw data and stored model-data
 #'   extraction.
 #' @param time_var Character name of the time column.
 #' @param y_var Character name of the state column in raw trajectory data.
 #' @param pvarname Character name of the previous-state column for model
-#'   simulation.
-#' @param p2varname Optional second previous-state column for model simulation.
+#'   recursions.
+#' @param p2varname Optional second previous-state column for second-order
+#'   model recursions.
 #' @param facet_var Optional grouping variable. Correlations are computed
 #'   separately within each observed stratum.
 #' @param gap Optional time-gap variable used by the fitted model.
 #' @param t_covs Optional time-varying covariate lookup table used by the fitted
 #'   model.
-#' @param n_rep Number of simulated paths per patient profile for model-based
-#'   plots.
-#' @param seed Optional random seed for model-based trajectory simulation.
-#' @param method Correlation method passed to [stats::cor()].
-#' @param use Missing-data handling passed to [stats::cor()].
+#' @param seed Optional random seed for `blrm` posterior draw selection.
 #' @param triangle `"upper"` to show one triangle or `"full"` to show both
 #'   off-diagonal triangles.
 #' @param show_values Logical. If `TRUE`, print rounded correlations in tiles.
@@ -70,10 +69,7 @@ plot_correlation <- function(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  n_rep = 20L,
   seed = NULL,
-  method = "spearman",
-  use = "pairwise.complete.obs",
   triangle = c("upper", "full"),
   show_values = TRUE,
   digits = 2,
@@ -87,7 +83,7 @@ plot_correlation <- function(
   }
   plot_validate_scalar(digits, "digits", lower = 0)
 
-  data <- plot_correlation_input_data(
+  corr <- plot_correlation_input_data(
     object = object,
     newdata = newdata,
     refit_data = refit_data,
@@ -99,20 +95,10 @@ plot_correlation <- function(
     y_var = y_var,
     pvarname = pvarname,
     p2varname = p2varname,
+    facet_var = facet_var,
     gap = gap,
     t_covs = t_covs,
-    n_rep = n_rep,
-    seed = seed
-  )
-
-  corr <- plot_correlation_data(
-    data = data$data,
-    id_var = data$id_var,
-    time_var = time_var,
-    y_var = data$y_var,
-    facet_var = facet_var,
-    method = method,
-    use = use,
+    seed = seed,
     triangle = triangle
   )
 
@@ -124,7 +110,7 @@ plot_correlation <- function(
   )
 }
 
-#' Plot an Empirical or Model-Based Correlation Variogram
+#' Plot an Empirical or Model-Implied Correlation Variogram
 #'
 #' `plot_variogram()` summarizes the same time-by-time correlation matrix used
 #' by [plot_correlation()] as correlations against absolute time differences.
@@ -155,17 +141,14 @@ plot_variogram <- function(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  n_rep = 20L,
   seed = NULL,
-  method = "spearman",
-  use = "pairwise.complete.obs",
   smooth = TRUE
 ) {
   if (!is.logical(smooth) || length(smooth) != 1L || is.na(smooth)) {
     stop("`smooth` must be TRUE or FALSE.")
   }
 
-  data <- plot_correlation_input_data(
+  corr <- plot_correlation_input_data(
     object = object,
     newdata = newdata,
     refit_data = refit_data,
@@ -177,20 +160,10 @@ plot_variogram <- function(
     y_var = y_var,
     pvarname = pvarname,
     p2varname = p2varname,
+    facet_var = facet_var,
     gap = gap,
     t_covs = t_covs,
-    n_rep = n_rep,
-    seed = seed
-  )
-
-  corr <- plot_correlation_data(
-    data = data$data,
-    id_var = data$id_var,
-    time_var = time_var,
-    y_var = data$y_var,
-    facet_var = facet_var,
-    method = method,
-    use = use,
+    seed = seed,
     triangle = "upper"
   )
   variogram <- plot_variogram_data(corr)
@@ -232,30 +205,30 @@ plot_correlation_input_data <- function(
   y_var,
   pvarname,
   p2varname,
+  facet_var,
   gap,
   t_covs,
-  n_rep,
-  seed
+  seed,
+  triangle
 ) {
   if (markov_supported_model(object)) {
-    sim <- markov_simulate_fitted_paths(
+    return(plot_correlation_model_data(
       model = object,
       newdata = newdata,
       refit_data = refit_data,
-      variables = NULL,
       times = times,
       ylevels = ylevels,
       absorb = absorb,
-      tvarname = time_var,
+      id_var = id_var,
+      time_var = time_var,
       pvarname = pvarname,
       p2varname = p2varname,
-      id_var = id_var,
+      facet_var = facet_var,
       gap = gap,
       t_covs = t_covs,
-      n_rep = n_rep,
-      seed = seed
-    )
-    return(list(data = sim, id_var = ".sim_id", y_var = "y"))
+      seed = seed,
+      triangle = triangle
+    ))
   }
 
   if (!is.data.frame(object)) {
@@ -264,6 +237,14 @@ plot_correlation_input_data <- function(
   if (!is.null(newdata) || !is.null(refit_data)) {
     stop("`newdata` and `refit_data` are only used for model-based plots.")
   }
+  if (!is.null(p2varname) || !is.null(gap) || !is.null(t_covs)) {
+    stop(
+      "`p2varname`, `gap`, and `t_covs` are only used for model-based plots."
+    )
+  }
+  if (!is.null(seed)) {
+    stop("`seed` is only used for `blrm` model-based plots.")
+  }
 
   data <- object
   plot_validate_columns(data, c(id_var, time_var, y_var), "`data`")
@@ -271,7 +252,493 @@ plot_correlation_input_data <- function(
     keep <- as.character(data[[time_var]]) %in% as.character(times)
     data <- data[keep, , drop = FALSE]
   }
-  list(data = data, id_var = id_var, y_var = y_var)
+
+  plot_correlation_data(
+    data = data,
+    id_var = id_var,
+    time_var = time_var,
+    y_var = y_var,
+    facet_var = facet_var,
+    ylevels = ylevels,
+    triangle = triangle
+  )
+}
+
+plot_correlation_model_data <- function(
+  model,
+  newdata,
+  refit_data,
+  times,
+  ylevels,
+  absorb,
+  id_var,
+  time_var,
+  pvarname,
+  p2varname,
+  facet_var,
+  gap,
+  t_covs,
+  seed,
+  triangle
+) {
+  setup <- plot_transition_model_setup(
+    model = model,
+    newdata = newdata,
+    refit_data = refit_data,
+    variables = NULL,
+    times = times,
+    ylevels = ylevels,
+    absorb = absorb,
+    time_var = time_var,
+    pvarname = pvarname,
+    p2varname = p2varname,
+    id_var = id_var,
+    gap = gap,
+    t_covs = t_covs
+  )
+
+  plot_correlation_model_summary(
+    model = model,
+    setup = setup,
+    facet_var = facet_var,
+    pvarname = pvarname,
+    p2varname = p2varname,
+    gap = gap,
+    t_covs = t_covs,
+    seed = seed,
+    triangle = triangle
+  )
+}
+
+plot_correlation_model_summary <- function(
+  model,
+  setup,
+  facet_var,
+  pvarname,
+  p2varname,
+  gap,
+  t_covs,
+  seed,
+  triangle
+) {
+  plot_validate_facets(setup$data, facet_var)
+  second_order <- !is.null(p2varname)
+
+  if (!inherits(model, "blrm")) {
+    trace <- markov_transition_trace(
+      object = model,
+      data = setup$data,
+      times = setup$times,
+      ylevels = setup$ylevels,
+      absorb = setup$absorb,
+      tvarname = setup$time_var,
+      pvarname = pvarname,
+      p2varname = p2varname,
+      gap = gap,
+      t_covs = t_covs,
+      return_kernels = TRUE
+    )
+    return(plot_correlation_trace_summary(
+      trace = trace,
+      data = setup$data,
+      plot_indices = setup$plot_indices,
+      plot_times = setup$plot_times,
+      ylevels = setup$ylevels,
+      facet_var = facet_var,
+      draw = FALSE,
+      second_order = second_order,
+      triangle = triangle
+    ))
+  }
+
+  draw_indices <- select_posterior_draws(model, n_draws = 100L, seed = seed)
+  chunks <- split_draw_indices(
+    draw_indices,
+    chunk_size = getOption("markov.misc.blrm_avg_chunk_size", 50L)
+  )
+  gamma_draws <- cache_blrm_gamma_draws(
+    model,
+    draw_indices = draw_indices,
+    include_re = FALSE
+  )
+  summaries <- vector("list", length(chunks))
+  for (i in seq_along(chunks)) {
+    chunk <- chunks[[i]]
+    trace <- markov_transition_trace(
+      object = model,
+      data = setup$data,
+      times = setup$times,
+      ylevels = setup$ylevels,
+      absorb = setup$absorb,
+      tvarname = setup$time_var,
+      pvarname = pvarname,
+      p2varname = p2varname,
+      gap = gap,
+      t_covs = t_covs,
+      id_var = setup$id_var,
+      n_draws = NULL,
+      return_kernels = TRUE,
+      .draw_indices = chunk,
+      .gamma_draws = subset_cached_draw_matrix(gamma_draws, draw_indices, chunk)
+    )
+    summaries[[i]] <- plot_correlation_trace_summary(
+      trace = trace,
+      data = setup$data,
+      plot_indices = setup$plot_indices,
+      plot_times = setup$plot_times,
+      ylevels = setup$ylevels,
+      facet_var = facet_var,
+      draw = TRUE,
+      second_order = second_order,
+      triangle = triangle
+    )
+  }
+
+  plot_correlation_summarize_draws(
+    data = bind_rows_fill(summaries),
+    facet_var = facet_var,
+    time_keys = as.character(setup$plot_times)
+  )
+}
+
+plot_correlation_trace_summary <- function(
+  trace,
+  data,
+  plot_indices,
+  plot_times,
+  ylevels,
+  facet_var,
+  draw,
+  second_order,
+  triangle
+) {
+  groups <- plot_facet_groups(data, facet_var)
+  out <- vector("list", nrow(groups))
+  time_keys <- as.character(plot_times)
+  scores <- seq_along(ylevels)
+
+  for (i in seq_len(nrow(groups))) {
+    keep <- plot_group_subset(data, groups[i, , drop = FALSE], facet_var)
+    rows <- match(rownames(keep), rownames(data))
+    group <- if (is.null(facet_var)) NULL else groups[i, , drop = FALSE]
+    out[[i]] <- plot_correlation_trace_group_summary(
+      trace = trace,
+      rows = rows,
+      time_indices = plot_indices,
+      time_keys = time_keys,
+      scores = scores,
+      group = group,
+      facet_var = facet_var,
+      draw = draw,
+      second_order = second_order,
+      triangle = triangle
+    )
+  }
+
+  out <- bind_rows_fill(out)
+  plot_correlation_finalize(out, facet_var = facet_var, time_keys = time_keys)
+}
+
+plot_correlation_trace_group_summary <- function(
+  trace,
+  rows,
+  time_indices,
+  time_keys,
+  scores,
+  group,
+  facet_var,
+  draw,
+  second_order,
+  triangle
+) {
+  if (isTRUE(draw)) {
+    draw_ids <- dimnames(trace$sops)[[1]]
+    out <- vector("list", length(draw_ids))
+    for (i in seq_along(draw_ids)) {
+      kernels_i <- if (isTRUE(second_order)) {
+        drop_first_array_dim(trace$kernels[i, , , , , , drop = FALSE])
+      } else {
+        drop_first_array_dim(trace$kernels[i, , , , , drop = FALSE])
+      }
+      corr <- plot_correlation_matrix_from_trace(
+        sops = drop_first_array_dim(trace$sops[i, , , , drop = FALSE]),
+        transitions = drop_first_array_dim(
+          trace$transitions[i, , , , , drop = FALSE]
+        ),
+        kernels = kernels_i,
+        rows = rows,
+        time_indices = time_indices,
+        scores = scores,
+        second_order = second_order
+      )
+      out[[i]] <- plot_correlation_matrix_long(
+        corr,
+        group = group,
+        facet_var = facet_var,
+        triangle = triangle
+      )
+      out[[i]]$draw_id <- draw_ids[i]
+    }
+    return(bind_rows_fill(out))
+  }
+
+  corr <- plot_correlation_matrix_from_trace(
+    sops = trace$sops,
+    transitions = trace$transitions,
+    kernels = trace$kernels,
+    rows = rows,
+    time_indices = time_indices,
+    scores = scores,
+    second_order = second_order
+  )
+  plot_correlation_matrix_long(
+    corr,
+    group = group,
+    facet_var = facet_var,
+    triangle = triangle
+  )
+}
+
+drop_first_array_dim <- function(x) {
+  array(
+    x,
+    dim = dim(x)[-1],
+    dimnames = dimnames(x)[-1]
+  )
+}
+
+plot_correlation_matrix_from_trace <- function(
+  sops,
+  transitions,
+  kernels,
+  rows,
+  time_indices,
+  scores,
+  second_order
+) {
+  n_plot_times <- length(time_indices)
+  time_keys <- dimnames(sops)[[2]][time_indices]
+  corr <- matrix(
+    NA_real_,
+    nrow = n_plot_times,
+    ncol = n_plot_times,
+    dimnames = list(time_keys, time_keys)
+  )
+  if (length(rows) == 0L) {
+    return(corr)
+  }
+
+  means <- plot_trace_state_means(sops, rows, time_indices, scores)
+  variances <- means$mean2 - means$mean^2
+  second_order_cross <- if (isTRUE(second_order)) {
+    plot_second_order_cross_moment_matrix(
+      transitions = transitions,
+      kernels = kernels,
+      rows = rows,
+      time_indices = time_indices,
+      scores = scores
+    )
+  } else {
+    NULL
+  }
+
+  for (i in seq_len(n_plot_times)) {
+    corr[i, i] <- 1
+    if (i == n_plot_times) {
+      next
+    }
+    for (j in seq.int(i + 1L, n_plot_times)) {
+      cross <- if (isTRUE(second_order)) {
+        second_order_cross[i, j]
+      } else {
+        plot_first_order_cross_moment(
+          sops = sops,
+          kernels = kernels,
+          rows = rows,
+          start = time_indices[i],
+          end = time_indices[j],
+          scores = scores
+        )
+      }
+      denom <- sqrt(variances[i] * variances[j])
+      value <- if (is.finite(denom) && denom > 0) {
+        (cross - means$mean[i] * means$mean[j]) / denom
+      } else {
+        NA_real_
+      }
+      corr[i, j] <- value
+      corr[j, i] <- value
+    }
+  }
+
+  corr
+}
+
+plot_trace_state_means <- function(sops, rows, time_indices, scores) {
+  mean <- numeric(length(time_indices))
+  mean2 <- numeric(length(time_indices))
+  scores2 <- scores^2
+  for (i in seq_along(time_indices)) {
+    prob <- sops[rows, time_indices[i], , drop = FALSE]
+    prob <- matrix(prob, nrow = length(rows), ncol = length(scores))
+    mean[i] <- mean(as.vector(prob %*% scores), na.rm = TRUE)
+    mean2[i] <- mean(as.vector(prob %*% scores2), na.rm = TRUE)
+  }
+  list(mean = mean, mean2 = mean2)
+}
+
+plot_first_order_cross_moment <- function(
+  sops,
+  kernels,
+  rows,
+  start,
+  end,
+  scores
+) {
+  values <- numeric(length(rows))
+  for (i in seq_along(rows)) {
+    row <- rows[i]
+    future <- scores
+    for (time in seq.int(end, start + 1L)) {
+      future <- as.numeric(kernels[row, time, , ] %*% future)
+    }
+    values[i] <- sum(sops[row, start, ] * scores * future)
+  }
+  mean(values, na.rm = TRUE)
+}
+
+plot_second_order_cross_moment_matrix <- function(
+  transitions,
+  kernels,
+  rows,
+  time_indices,
+  scores
+) {
+  n_plot_times <- length(time_indices)
+  out <- matrix(NA_real_, nrow = n_plot_times, ncol = n_plot_times)
+  if (n_plot_times < 2L) {
+    return(out)
+  }
+
+  for (start_pos in seq_len(n_plot_times - 1L)) {
+    start <- time_indices[start_pos]
+    end_positions <- seq.int(start_pos + 1L, n_plot_times)
+    max_end <- max(time_indices[end_positions])
+    anchor_pair <- plot_second_order_anchor_pair_array(
+      pair_history = transitions[rows, start, , , drop = FALSE],
+      n_states = length(scores)
+    )
+    for (time in seq.int(start + 1L, max_end)) {
+      anchor_pair <- plot_second_order_anchor_step_array(
+        anchor_pair = anchor_pair,
+        kernel = kernels[rows, time, , , , drop = FALSE]
+      )
+      end_pos <- match(time, time_indices)
+      if (!is.na(end_pos) && end_pos > start_pos) {
+        out[start_pos, end_pos] <- plot_second_order_anchor_cross_moment(
+          anchor_pair,
+          scores
+        )
+      }
+    }
+  }
+
+  out
+}
+
+plot_second_order_anchor_pair_array <- function(pair_history, n_states) {
+  n_rows <- dim(pair_history)[1]
+  pair_history <- array(pair_history, dim = c(n_rows, n_states, n_states))
+  out <- array(0, dim = c(n_rows, n_states, n_states, n_states))
+
+  for (previous_state in seq_len(n_states)) {
+    for (anchor_state in seq_len(n_states)) {
+      out[, anchor_state, previous_state, anchor_state] <-
+        pair_history[, previous_state, anchor_state]
+    }
+  }
+
+  out
+}
+
+plot_second_order_anchor_step_array <- function(anchor_pair, kernel) {
+  n_rows <- dim(anchor_pair)[1]
+  n_states <- dim(anchor_pair)[2]
+  kernel <- array(kernel, dim = c(n_rows, n_states, n_states, n_states))
+  out <- array(0, dim = dim(anchor_pair))
+
+  for (second_previous in seq_len(n_states)) {
+    for (previous in seq_len(n_states)) {
+      mass <- array(
+        anchor_pair[,, second_previous, previous, drop = FALSE],
+        dim = c(n_rows, n_states)
+      )
+      if (!any(mass > 0)) {
+        next
+      }
+      probs <- array(
+        kernel[, second_previous, previous, , drop = FALSE],
+        dim = c(n_rows, n_states)
+      )
+      prob_sum <- rowSums(probs)
+      reachable <- rowSums(mass) > 0
+      if (any(reachable & prob_sum == 0)) {
+        stop(
+          "Second-order model-implied correlation recursion encountered a ",
+          "reachable previous-state pair with no transition probabilities."
+        )
+      }
+      for (state in seq_len(n_states)) {
+        out[,, previous, state] <-
+          out[,, previous, state] + mass * probs[, state]
+      }
+    }
+  }
+
+  if (abs(sum(out) - sum(anchor_pair)) > 1e-8 * max(1, n_states)) {
+    stop(
+      "Second-order model-implied correlation recursion lost probability mass."
+    )
+  }
+
+  out
+}
+
+plot_second_order_anchor_cross_moment <- function(anchor_pair, scores) {
+  n_rows <- dim(anchor_pair)[1]
+  n_states <- length(scores)
+  score_product <- outer(scores, scores)
+  values <- numeric(n_rows)
+
+  for (anchor_state in seq_len(n_states)) {
+    for (state in seq_len(n_states)) {
+      joint <- array(
+        anchor_pair[, anchor_state, , state, drop = FALSE],
+        dim = c(n_rows, n_states)
+      )
+      values <- values + rowSums(joint) * score_product[anchor_state, state]
+    }
+  }
+
+  mean(values, na.rm = TRUE)
+}
+
+plot_correlation_summarize_draws <- function(data, facet_var, time_keys) {
+  data$time_1 <- as.character(data$time_1)
+  data$time_2 <- as.character(data$time_2)
+  group_cols <- c("time_1", "time_2", facet_var)
+  out <- stats::aggregate(
+    data["correlation"],
+    data[group_cols],
+    FUN = function(x) {
+      if (all(is.na(x))) {
+        NA_real_
+      } else {
+        mean(x, na.rm = TRUE)
+      }
+    }
+  )
+  plot_correlation_finalize(out, facet_var = facet_var, time_keys = time_keys)
 }
 
 plot_correlation_data <- function(
@@ -280,8 +747,7 @@ plot_correlation_data <- function(
   time_var,
   y_var,
   facet_var,
-  method,
-  use,
+  ylevels,
   triangle
 ) {
   plot_validate_columns(data, c(id_var, time_var, y_var), "`data`")
@@ -295,9 +761,10 @@ plot_correlation_data <- function(
       subset,
       id_var = id_var,
       time_var = time_var,
-      y_var = y_var
+      y_var = y_var,
+      ylevels = ylevels
     )
-    corr <- stats::cor(mat, method = method, use = use)
+    corr <- stats::cor(mat, method = "pearson", use = "pairwise.complete.obs")
     out[[i]] <- plot_correlation_matrix_long(
       corr,
       group = groups[i, , drop = FALSE],
@@ -307,11 +774,12 @@ plot_correlation_data <- function(
   }
 
   out <- bind_rows_fill(out)
-  if (length(facet_var) > 0L) {
-    out$.panel <- plot_generic_panel(out, facet_var)
-    out$.panel <- factor(out$.panel, levels = unique(out$.panel))
-  }
-  out
+  time_keys <- as.character(plot_ordered_values(data[[time_var]]))
+  plot_correlation_finalize(
+    out,
+    facet_var = facet_var,
+    time_keys = time_keys
+  )
 }
 
 plot_facet_groups <- function(data, facet_var) {
@@ -332,7 +800,13 @@ plot_group_subset <- function(data, group, facet_var) {
   data[keep, , drop = FALSE]
 }
 
-plot_state_time_matrix <- function(data, id_var, time_var, y_var) {
+plot_state_time_matrix <- function(
+  data,
+  id_var,
+  time_var,
+  y_var,
+  ylevels = NULL
+) {
   ids <- unique(as.character(data[[id_var]]))
   times <- plot_ordered_values(data[[time_var]])
   time_labels <- as.character(times)
@@ -356,11 +830,21 @@ plot_state_time_matrix <- function(data, id_var, time_var, y_var) {
     ncol = length(time_labels),
     dimnames = list(ids, time_labels)
   )
-  mat[cbind(id_index, time_index)] <- plot_state_scores(data[[y_var]])
+  mat[cbind(id_index, time_index)] <- plot_state_scores(data[[y_var]], ylevels)
   mat
 }
 
-plot_state_scores <- function(x) {
+plot_state_scores <- function(x, ylevels = NULL) {
+  if (!is.null(ylevels)) {
+    ylevel_names <- as_state_labels(ylevels)
+    out <- match(as.character(x), ylevel_names)
+    bad <- is.na(out) & !is.na(x)
+    if (any(bad)) {
+      stop("`data` contains state values that are not in `ylevels`.")
+    }
+    return(out)
+  }
+
   if (is.factor(x)) {
     return(as.integer(x))
   }
@@ -393,6 +877,16 @@ plot_correlation_matrix_long <- function(corr, group, facet_var, triangle) {
   out$time_1 <- factor(out$time_1, levels = colnames(corr))
   out$time_2 <- factor(out$time_2, levels = colnames(corr))
   out
+}
+
+plot_correlation_finalize <- function(data, facet_var, time_keys) {
+  data$time_1 <- factor(as.character(data$time_1), levels = time_keys)
+  data$time_2 <- factor(as.character(data$time_2), levels = time_keys)
+  if (length(facet_var) > 0L) {
+    data$.panel <- plot_generic_panel(data, facet_var)
+    data$.panel <- factor(data$.panel, levels = unique(data$.panel))
+  }
+  data
 }
 
 plot_generic_panel <- function(data, facet_var) {

@@ -215,8 +215,7 @@ mc <- plot_correlation(
   y_var = "y",
   times = seq_len(FOLLOW_UP), 
   ylevels = fit_orm$yunique, 
-  absorb = ABSORB,
-  n_rep = 100)
+  absorb = ABSORB)
 ```
 
 ```{r}
@@ -233,8 +232,7 @@ mt <- plot_transitions(
   y_var = "y",
   times = seq_len(FOLLOW_UP), 
   ylevels = fit_orm$yunique, 
-  absorb = ABSORB,
-  n_rep = 100)
+  absorb = ABSORB)
 
 td <- plot_transitions(
   fit_orm, 
@@ -245,8 +243,7 @@ td <- plot_transitions(
   y_var = "y",
   times = seq_len(FOLLOW_UP), 
   ylevels = fit_orm$yunique, 
-  absorb = ABSORB,
-  n_rep = 100)
+  absorb = ABSORB)
 ```
 
 ```{r}
@@ -264,8 +261,7 @@ plot_variogram(
   y_var = "y",
   times = seq_len(FOLLOW_UP), 
   ylevels = fit_orm$yunique, 
-  absorb = ABSORB,
-  n_rep = 100)
+  absorb = ABSORB)
 ```
 
 

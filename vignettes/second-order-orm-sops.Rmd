@@ -204,8 +204,8 @@ plot_sops(
 ## Model Diagnostics
 
 These diagnostics compare empirical trajectory features with the corresponding
-features from paths simulated under the second-order transition model. The
-model-based plots pass `p2varname = "ypprev"` so the simulated paths use both
+features implied by the second-order transition model. The model-based plots
+pass `p2varname = "ypprev"` so the deterministic recursions condition on both
 previous states.
 
 ```{r diagnostics-transitions-observed}
@@ -227,8 +227,6 @@ plot_transitions(
   ylevels = fit_second$yunique,
   absorb = ABSORB,
   p2varname = "ypprev",
-  n_rep = 100,
-  seed = SEED,
   show_values = FALSE
 ) +
   labs(title = "Model-based transition proportions")
@@ -250,8 +248,6 @@ plot_correlation(
   ylevels = fit_second$yunique,
   absorb = ABSORB,
   p2varname = "ypprev",
-  n_rep = 10,
-  seed = SEED,
   show_values = FALSE
 ) +
   labs(title = "Model-based state correlations")
@@ -271,9 +267,7 @@ plot_variogram(
   times = seq_len(FOLLOW_UP),
   ylevels = fit_second$yunique,
   absorb = ABSORB,
-  p2varname = "ypprev",
-  n_rep = 100,
-  seed = SEED
+  p2varname = "ypprev"
 ) +
   labs(title = "Model-based correlation variogram")
 ```

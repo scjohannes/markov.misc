@@ -3,11 +3,12 @@
 #' Plot Empirical or Model-Based Transition Proportions
 #'
 #' `plot_transitions()` creates heatmaps of population transition proportions
-#' from observed trajectory data or from trajectories simulated from a fitted
-#' Markov model. Model-based plots are population averaged over the supplied or
-#' stored patient profiles. When `comparison = "difference"`, counterfactual
-#' trajectories are simulated for the levels in `variables`, and the heatmap
-#' shows the difference in transition proportions relative to the first level.
+#' from observed trajectory data or from transition probabilities implied by a
+#' fitted Markov model. Model-based plots are population averaged over the
+#' supplied or stored patient profiles. When `comparison = "difference"`,
+#' counterfactual transition summaries are computed for the levels in
+#' `variables`, and the heatmap shows the difference in transition proportions
+#' relative to the first level.
 #'
 #' @details
 #' Minimum inputs depend on the object type. For trajectory data, `object` must
@@ -38,7 +39,8 @@
 #' @param time_var Character name of the time column in trajectory data.
 #' @param y_var Character name of the current-state column in trajectory data.
 #' @param pvarname Character name of the previous-state column.
-#' @param p2varname Optional second previous-state column for model simulation.
+#' @param p2varname Optional second previous-state column for second-order
+#'   model recursion.
 #' @param id_var Optional ID column used to extract one stored prediction row per
 #'   patient.
 #' @param facet_var Optional observed grouping variable. The plot always facets
@@ -46,9 +48,7 @@
 #' @param gap Optional time-gap variable used by the fitted model.
 #' @param t_covs Optional time-varying covariate lookup table used by the fitted
 #'   model.
-#' @param n_rep Number of simulated paths per patient profile for model-based
-#'   plots.
-#' @param seed Optional random seed for model-based trajectory simulation.
+#' @param seed Optional random seed for `blrm` posterior draw selection.
 #' @param show_values Logical. If `TRUE`, print rounded values in each tile.
 #' @param digits Number of digits used for tile labels. Defaults to 2 for
 #'   proportions and 3 for differences.
@@ -88,7 +88,6 @@ plot_transitions <- function(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  n_rep = 20L,
   seed = NULL,
   show_values = TRUE,
   digits = NULL,
@@ -125,7 +124,6 @@ plot_transitions <- function(
       facet_var = facet_var,
       gap = gap,
       t_covs = t_covs,
-      n_rep = n_rep,
       seed = seed
     )
   } else {
@@ -203,7 +201,6 @@ plot_transitions_model_data <- function(
   facet_var,
   gap,
   t_covs,
-  n_rep,
   seed
 ) {
   variables <- validate_plot_counterfactual_variables(
@@ -213,8 +210,7 @@ plot_transitions_model_data <- function(
   if (identical(comparison, "difference") && is.null(variables)) {
     stop("`variables` is required when `comparison = \"difference\"`.")
   }
-
-  sim <- markov_simulate_fitted_paths(
+  setup <- plot_transition_model_setup(
     model = model,
     newdata = newdata,
     refit_data = refit_data,
@@ -222,29 +218,28 @@ plot_transitions_model_data <- function(
     times = times,
     ylevels = ylevels,
     absorb = absorb,
-    tvarname = time_var,
+    time_var = time_var,
     pvarname = pvarname,
     p2varname = p2varname,
     id_var = id_var,
     gap = gap,
-    t_covs = t_covs,
-    n_rep = n_rep,
-    seed = seed
+    t_covs = t_covs
   )
 
-  ylevels <- attr(sim, "ylevels")
   facet_summary <- facet_var
   if (!is.null(variables)) {
     facet_summary <- unique(c(facet_summary, names(variables)))
   }
 
-  summary <- plot_transition_summary(
-    data = sim,
-    time_var = time_var,
-    y_var = "y",
-    pvarname = pvarname,
+  summary <- plot_transition_model_summary(
+    model = model,
+    setup = setup,
     facet_var = facet_summary,
-    ylevels = ylevels
+    pvarname = pvarname,
+    p2varname = p2varname,
+    gap = gap,
+    t_covs = t_covs,
+    seed = seed
   )
 
   if (identical(comparison, "none")) {
@@ -257,6 +252,314 @@ plot_transitions_model_data <- function(
     values = variables[[1]],
     facet_var = facet_var
   )
+}
+
+plot_transition_model_setup <- function(
+  model,
+  newdata,
+  refit_data,
+  variables,
+  times,
+  ylevels,
+  absorb,
+  time_var,
+  pvarname,
+  p2varname,
+  id_var,
+  gap,
+  t_covs
+) {
+  validate_markov_model(model)
+  if (missing(times) || is.null(times)) {
+    stop("`times` must be supplied for model-based plots.")
+  }
+
+  data_res <- resolve_markov_source_data(model, newdata, refit_data)
+  source_data <- data_res$source_data
+  refit_data <- data_res$refit_data
+  newdata_supplied <- data_res$newdata_supplied
+  id_var <- markov_model_id_var(model, id_var) %||% "id"
+
+  if (!is.null(refit_data)) {
+    validate_markov_id_var(id_var, refit_data, "refit_data")
+  }
+  if (!newdata_supplied) {
+    validate_markov_id_var(id_var, source_data, "stored model data")
+  }
+
+  baseline_data <- if (newdata_supplied) {
+    source_data
+  } else {
+    resolve_markov_prediction_data(
+      source_data,
+      id_var = id_var,
+      tvarname = time_var
+    )
+  }
+
+  plot_validate_columns(baseline_data, pvarname, "`newdata`")
+  if (!is.null(p2varname)) {
+    plot_validate_columns(baseline_data, p2varname, "`newdata`")
+  }
+
+  if (!is.null(variables)) {
+    missing_vars <- setdiff(names(variables), names(baseline_data))
+    if (length(missing_vars) > 0) {
+      stop("Variables not in data: ", paste(missing_vars, collapse = ", "))
+    }
+    grid <- do.call(
+      expand.grid,
+      c(variables, KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+    )
+    baseline_data <- create_counterfactual_data(baseline_data, grid, variables)
+  }
+
+  baseline_data <- ensure_markov_rowid(baseline_data)
+
+  time_res <- resolve_sop_times(
+    model,
+    baseline_data,
+    times,
+    time_var,
+    t_covs = NULL,
+    default = "unique"
+  )
+  plot_times <- time_res$times
+  time_info <- time_res$time_info
+  recursion_times <- complete_plot_recursion_times(plot_times, time_info)
+  if (!is.null(t_covs) && nrow(t_covs) != length(recursion_times)) {
+    stop(
+      "`t_covs` must have one row per recursion time point for model-based ",
+      "plots. Sparse plot times are expanded to the full recursion grid; ",
+      "expected ",
+      length(recursion_times),
+      " rows but got ",
+      nrow(t_covs),
+      "."
+    )
+  }
+  validate_factor_gap(gap, t_covs, time_info)
+
+  ylevels <- markov_model_ylevels(model, ylevels)
+  ylevel_names <- as_state_labels(ylevels)
+  plot_indices <- match(as.character(plot_times), as.character(recursion_times))
+
+  list(
+    data = baseline_data,
+    id_var = id_var,
+    times = recursion_times,
+    plot_times = plot_times,
+    plot_indices = plot_indices,
+    ylevels = ylevel_names,
+    absorb = absorb,
+    time_var = time_var
+  )
+}
+
+plot_transition_model_summary <- function(
+  model,
+  setup,
+  facet_var,
+  pvarname,
+  p2varname,
+  gap,
+  t_covs,
+  seed
+) {
+  plot_validate_facets(setup$data, facet_var)
+
+  if (!inherits(model, "blrm")) {
+    trace <- markov_transition_trace(
+      object = model,
+      data = setup$data,
+      times = setup$times,
+      ylevels = setup$ylevels,
+      absorb = setup$absorb,
+      tvarname = setup$time_var,
+      pvarname = pvarname,
+      p2varname = p2varname,
+      gap = gap,
+      t_covs = t_covs
+    )
+    return(plot_transition_trace_summary(
+      transitions = trace$transitions,
+      data = setup$data,
+      plot_indices = setup$plot_indices,
+      plot_times = setup$plot_times,
+      ylevels = setup$ylevels,
+      facet_var = facet_var,
+      draw = FALSE
+    ))
+  }
+
+  draw_indices <- select_posterior_draws(model, n_draws = 100L, seed = seed)
+  chunks <- split_draw_indices(
+    draw_indices,
+    chunk_size = getOption("markov.misc.blrm_avg_chunk_size", 50L)
+  )
+  gamma_draws <- cache_blrm_gamma_draws(
+    model,
+    draw_indices = draw_indices,
+    include_re = FALSE
+  )
+  summaries <- vector("list", length(chunks))
+  for (i in seq_along(chunks)) {
+    chunk <- chunks[[i]]
+    trace <- markov_transition_trace(
+      object = model,
+      data = setup$data,
+      times = setup$times,
+      ylevels = setup$ylevels,
+      absorb = setup$absorb,
+      tvarname = setup$time_var,
+      pvarname = pvarname,
+      p2varname = p2varname,
+      gap = gap,
+      t_covs = t_covs,
+      id_var = setup$id_var,
+      n_draws = NULL,
+      .draw_indices = chunk,
+      .gamma_draws = subset_cached_draw_matrix(gamma_draws, draw_indices, chunk)
+    )
+    summaries[[i]] <- plot_transition_trace_summary(
+      transitions = trace$transitions,
+      data = setup$data,
+      plot_indices = setup$plot_indices,
+      plot_times = setup$plot_times,
+      ylevels = setup$ylevels,
+      facet_var = facet_var,
+      draw = TRUE
+    )
+  }
+
+  plot_transition_summarize_draws(
+    data = bind_rows_fill(summaries),
+    facet_var = facet_var,
+    ylevels = setup$ylevels
+  )
+}
+
+plot_transition_trace_summary <- function(
+  transitions,
+  data,
+  plot_indices,
+  plot_times,
+  ylevels,
+  facet_var,
+  draw
+) {
+  groups <- plot_facet_groups(data, facet_var)
+  out <- vector("list", nrow(groups))
+  time_keys <- as.character(plot_times)
+
+  for (i in seq_len(nrow(groups))) {
+    keep <- plot_group_subset(data, groups[i, , drop = FALSE], facet_var)
+    rows <- match(rownames(keep), rownames(data))
+    group <- if (is.null(facet_var)) NULL else groups[i, , drop = FALSE]
+    out[[i]] <- plot_transition_trace_group_summary(
+      transitions = transitions,
+      rows = rows,
+      time_indices = plot_indices,
+      time_keys = time_keys,
+      ylevels = ylevels,
+      group = group,
+      facet_var = facet_var,
+      draw = draw
+    )
+  }
+
+  out <- bind_rows_fill(out)
+  plot_transition_finalize_summary(
+    out,
+    facet_var = facet_var,
+    time_keys = time_keys,
+    state_levels = ylevels
+  )
+}
+
+plot_transition_trace_group_summary <- function(
+  transitions,
+  rows,
+  time_indices,
+  time_keys,
+  ylevels,
+  group,
+  facet_var,
+  draw
+) {
+  total <- length(rows)
+  if (isTRUE(draw)) {
+    mass <- transitions[, rows, time_indices, , , drop = FALSE]
+    summed <- apply(mass, c(1, 3, 4, 5), sum)
+    draw_ids <- dimnames(transitions)[[1]]
+    out <- expand.grid(
+      draw_id = draw_ids,
+      .time_key = time_keys,
+      previous_state = ylevels,
+      state = ylevels,
+      KEEP.OUT.ATTRS = FALSE,
+      stringsAsFactors = FALSE
+    )
+  } else {
+    mass <- transitions[rows, time_indices, , , drop = FALSE]
+    summed <- apply(mass, c(2, 3, 4), sum)
+    out <- expand.grid(
+      .time_key = time_keys,
+      previous_state = ylevels,
+      state = ylevels,
+      KEEP.OUT.ATTRS = FALSE,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  out$n <- as.vector(summed)
+  out$total <- total
+  out$estimate <- if (total > 0) out$n / total else NA_real_
+  if (!is.null(facet_var)) {
+    for (var in facet_var) {
+      out[[var]] <- as.character(group[[var]][1])
+    }
+  }
+  out
+}
+
+plot_transition_summarize_draws <- function(data, facet_var, ylevels) {
+  group_cols <- c(".time_key", facet_var, "previous_state", "state")
+  agg_formula <- stats::as.formula(
+    paste("cbind(estimate, n, total) ~", paste(group_cols, collapse = " + "))
+  )
+  out <- stats::aggregate(
+    agg_formula,
+    data = data,
+    FUN = mean,
+    na.rm = TRUE
+  )
+  time_keys <- as.character(plot_ordered_values(out$.time_key))
+  plot_transition_finalize_summary(
+    out,
+    facet_var = facet_var,
+    time_keys = time_keys,
+    state_levels = ylevels
+  )
+}
+
+plot_transition_finalize_summary <- function(
+  data,
+  facet_var,
+  time_keys,
+  state_levels
+) {
+  data$previous_state <- factor(data$previous_state, levels = state_levels)
+  data$state <- factor(data$state, levels = state_levels)
+  panel_levels <- plot_transition_panel_levels(
+    data = data,
+    time_keys = time_keys,
+    facet_var = facet_var
+  )
+  data$.panel <- plot_transition_panel(data, facet_var)
+  data$.panel <- factor(data$.panel, levels = panel_levels)
+  attr(data, "state_levels") <- state_levels
+  data
 }
 
 plot_transition_summary <- function(
@@ -339,7 +642,7 @@ plot_transition_difference <- function(summary, variable, values, facet_var) {
   reference <- as.character(values[1])
   comparisons <- as.character(values[-1])
   if (!variable %in% names(summary)) {
-    stop("`variables` column not found in simulated transition summary.")
+    stop("`variables` column not found in transition summary.")
   }
 
   key <- setdiff(

@@ -71,7 +71,7 @@ test_that("plot_transitions orders sparse time facets chronologically", {
   expect_equal(levels(plot$data$.panel), paste0("Time ", c(1, 7, 14)))
 })
 
-test_that("model transition diagnostics simulate full sparse numeric grids", {
+test_that("model transition diagnostics evaluate full sparse numeric grids", {
   model <- structure(list(), class = "vglm")
   newdata <- data.frame(
     id = 1,
@@ -94,7 +94,6 @@ test_that("model transition diagnostics simulate full sparse numeric grids", {
         newdata = newdata,
         times = c(1, 7, 14),
         ylevels = 1:2,
-        n_rep = 1,
         seed = 1,
         show_values = FALSE
       )
@@ -106,7 +105,7 @@ test_that("model transition diagnostics simulate full sparse numeric grids", {
   expect_setequal(as.character(plot$data$.time_key), c("1", "7", "14"))
 })
 
-test_that("second-order model diagnostics simulate full sparse numeric grids", {
+test_that("second-order model diagnostics evaluate full sparse numeric grids", {
   model <- structure(list(), class = "vglm")
   newdata <- data.frame(
     id = 1,
@@ -131,7 +130,6 @@ test_that("second-order model diagnostics simulate full sparse numeric grids", {
         times = c(1, 7, 14),
         ylevels = 1:2,
         p2varname = "ypprev",
-        n_rep = 1,
         seed = 1,
         show_values = FALSE
       )
@@ -155,14 +153,76 @@ test_that("model diagnostics expand sparse factor visit grids", {
     ordered = TRUE
   )
 
-  out <- complete_plot_simulation_times(requested, time_info)
+  out <- complete_plot_recursion_times(requested, time_info)
 
   expect_equal(as.character(out), paste0("visit", 1:4))
   expect_equal(levels(out), time_info$levels)
   expect_equal(is.ordered(out), TRUE)
 })
 
-test_that("plot_transitions simulates second-order treatment differences", {
+test_that("transition traces preserve first- and second-order SOP marginals", {
+  model <- structure(list(), class = "vglm")
+  first_order <- data.frame(
+    id = 1:2,
+    time = 0,
+    yprev = factor(c(1, 2), levels = 1:2)
+  )
+  second_order <- data.frame(
+    id = 1:2,
+    time = 0,
+    ypprev = factor(c(1, 2), levels = 1:2),
+    yprev = factor(c(1, 2), levels = 1:2)
+  )
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    predict_vglm_response_markov = function(object, newdata) {
+      p2 <- ifelse(as.character(newdata$yprev) == "1", 0.25, 0.75)
+      cbind("1" = 1 - p2, "2" = p2)
+    },
+    {
+      trace_first <- markov.misc:::markov_transition_trace(
+        model,
+        data = first_order,
+        times = 1:3,
+        ylevels = 1:2
+      )
+      sops_first <- soprob_markov(
+        model,
+        data = first_order,
+        times = 1:3,
+        ylevels = 1:2
+      )
+      trace_second <- markov.misc:::markov_transition_trace(
+        model,
+        data = second_order,
+        times = 1:3,
+        ylevels = 1:2,
+        p2varname = "ypprev"
+      )
+      sops_second <- soprob_markov(
+        model,
+        data = second_order,
+        times = 1:3,
+        ylevels = 1:2,
+        p2varname = "ypprev"
+      )
+    }
+  )
+
+  expect_equal(trace_first$sops, sops_first)
+  expect_equal(
+    apply(trace_first$transitions, c(1, 2, 4), sum),
+    trace_first$sops
+  )
+  expect_equal(trace_second$sops, sops_second)
+  expect_equal(
+    apply(trace_second$transitions, c(1, 2, 4), sum),
+    trace_second$sops
+  )
+})
+
+test_that("plot_transitions computes second-order treatment differences", {
   model <- structure(list(), class = "vglm")
   newdata <- data.frame(
     id = 1:2,
@@ -190,7 +250,6 @@ test_that("plot_transitions simulates second-order treatment differences", {
         comparison = "difference",
         ylevels = 1:2,
         p2varname = "ypprev",
-        n_rep = 1,
         seed = 1
       )
     }
@@ -234,7 +293,6 @@ test_that("plot_transitions carries absorbing states absent from yprev levels", 
         times = 1:2,
         ylevels = 1:2,
         absorb = 2,
-        n_rep = 1,
         seed = 1
       )
     }
@@ -244,7 +302,7 @@ test_that("plot_transitions carries absorbing states absent from yprev levels", 
   expect_equal(sum(plot$data$n), 2)
 })
 
-test_that("plot_transitions uses manual blrm predictions averaged over draws", {
+test_that("plot_transitions summarizes blrm transition draws without sampling", {
   model <- structure(
     list(
       ylevels = 1:2,
@@ -257,7 +315,6 @@ test_that("plot_transitions uses manual blrm predictions averaged over draws", {
     yprev = factor(1, levels = 1:2)
   )
   calls <- list()
-  sampled_probabilities <- NULL
 
   with_mocked_bindings(
     validate_markov_model = function(object) NULL,
@@ -290,17 +347,12 @@ test_that("plot_transitions uses manual blrm predictions averaged over draws", {
       )
       out
     },
-    markov_sample_states = function(probabilities, ylevel_names) {
-      sampled_probabilities <<- probabilities
-      rep("2", nrow(probabilities))
-    },
     {
       plot <- plot_transitions(
         model,
         newdata = newdata,
         times = 1,
         ylevels = 1:2,
-        n_rep = 1,
         seed = 1
       )
     }
@@ -310,9 +362,8 @@ test_that("plot_transitions uses manual blrm predictions averaged over draws", {
     plot$data$previous_state == "1" & plot$data$state == "2"
   ]
 
-  expect_equal(estimate, 1)
+  expect_equal(estimate, 2 / 3)
   expect_length(calls, 1)
-  expect_equal(sampled_probabilities[, "2"], 2 / 3)
   expect_false(calls[[1]]$include_re)
   expect_equal(calls[[1]]$id_var, "id")
   expect_equal(calls[[1]]$draw_indices, 1:3)
@@ -347,6 +398,141 @@ test_that("plot_variogram plots correlations by time difference", {
   expect_s3_class(plot$layers[[1]]$geom, "GeomPoint")
   expect_equal(plot$labels$x, "Absolute Time Difference")
   expect_equal(plot$scales$get_scales("y")$limits, c(0, 1))
+})
+
+test_that("plot_correlation uses first-order model-implied moments", {
+  model <- structure(list(), class = "vglm")
+  newdata <- data.frame(
+    time = 0,
+    yprev = factor(c(1, 2), levels = 1:2)
+  )
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    predict_vglm_response_markov = function(object, newdata) {
+      yprev <- as.character(newdata$yprev)
+      p2 <- ifelse(
+        newdata$time == 1,
+        ifelse(yprev == "2", 1, 0),
+        ifelse(yprev == "1", 0.5, 1)
+      )
+      cbind("1" = 1 - p2, "2" = p2)
+    },
+    {
+      plot <- plot_correlation(
+        model,
+        newdata = newdata,
+        times = 1:2,
+        ylevels = 1:2,
+        show_values = FALSE
+      )
+      variogram <- plot_variogram(
+        model,
+        newdata = newdata,
+        times = 1:2,
+        ylevels = 1:2,
+        smooth = FALSE
+      )
+    }
+  )
+
+  expected <- 1 / sqrt(3)
+  expect_equal(as.numeric(plot$data$correlation), expected, tolerance = 1e-6)
+  expect_equal(
+    as.numeric(variogram$data$correlation),
+    expected,
+    tolerance = 1e-6
+  )
+})
+
+test_that("plot_correlation uses second-order model-implied moments", {
+  model <- structure(list(), class = "vglm")
+  newdata <- data.frame(
+    time = 0,
+    ypprev = factor(1, levels = 1:2),
+    yprev = factor(1, levels = 1:2)
+  )
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    predict_vglm_response_markov = function(object, newdata) {
+      p2 <- ifelse(newdata$time == 1, 0.5, as.character(newdata$yprev) == "2")
+      cbind("1" = 1 - p2, "2" = p2)
+    },
+    {
+      plot <- plot_correlation(
+        model,
+        newdata = newdata,
+        times = 1:3,
+        ylevels = 1:2,
+        p2varname = "ypprev",
+        show_values = FALSE
+      )
+    }
+  )
+
+  expect_equal(as.numeric(plot$data$correlation), rep(1, 3), tolerance = 1e-6)
+})
+
+test_that("plot_correlation summarizes blrm correlations by draw", {
+  model <- structure(
+    list(
+      ylevels = 1:2,
+      draws = matrix(0, nrow = 2, ncol = 1)
+    ),
+    class = "blrm"
+  )
+  newdata <- data.frame(
+    time = 0,
+    yprev = factor(1, levels = 1:2)
+  )
+  calls <- list()
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    predict_blrm_response_markov = function(
+      object,
+      newdata,
+      include_re,
+      id_var,
+      draw_indices,
+      gamma_draws
+    ) {
+      calls[[length(calls) + 1L]] <<- draw_indices
+      out <- array(
+        NA_real_,
+        dim = c(length(draw_indices), nrow(newdata), 2L),
+        dimnames = list(draw_indices, rownames(newdata), c("1", "2"))
+      )
+      yprev <- as.character(newdata$yprev)
+      for (i in seq_along(draw_indices)) {
+        draw <- draw_indices[i]
+        if (all(newdata$time == 1)) {
+          p2 <- rep(0.5, nrow(newdata))
+        } else if (draw == 1L) {
+          p2 <- yprev == "2"
+        } else {
+          p2 <- yprev == "1"
+        }
+        out[i, , 1] <- 1 - p2
+        out[i, , 2] <- p2
+      }
+      out
+    },
+    {
+      plot <- plot_correlation(
+        model,
+        newdata = newdata,
+        times = 1:2,
+        ylevels = 1:2,
+        seed = 1,
+        show_values = FALSE
+      )
+    }
+  )
+
+  expect_equal(as.numeric(plot$data$correlation), 0, tolerance = 1e-6)
+  expect_equal(calls, list(1:2, 1:2))
 })
 
 test_that("plot_lp_difference plots profile-based contrasts by previous state", {

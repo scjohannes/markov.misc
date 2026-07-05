@@ -2,7 +2,7 @@
 % Please edit documentation in R/viz-correlation.R
 \name{plot_variogram}
 \alias{plot_variogram}
-\title{Plot an Empirical or Model-Based Correlation Variogram}
+\title{Plot an Empirical or Model-Implied Correlation Variogram}
 \usage{
 plot_variogram(
   object,
@@ -19,10 +19,7 @@ plot_variogram(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  n_rep = 20L,
   seed = NULL,
-  method = "spearman",
-  use = "pairwise.complete.obs",
   smooth = TRUE
 )
 }
@@ -38,9 +35,10 @@ resolution in model-based plots.}
 
 \item{times}{Optional time values to include. Required for model-based plots.}
 
-\item{ylevels}{Optional state levels for model-based simulation.}
+\item{ylevels}{Optional state levels. If supplied for raw trajectory data,
+state scores follow this order.}
 
-\item{absorb}{Optional absorbing-state label for model-based simulation.}
+\item{absorb}{Optional absorbing-state label for model-based recursions.}
 
 \item{id_var}{Character ID column for raw data and stored model-data
 extraction.}
@@ -50,9 +48,10 @@ extraction.}
 \item{y_var}{Character name of the state column in raw trajectory data.}
 
 \item{pvarname}{Character name of the previous-state column for model
-simulation.}
+recursions.}
 
-\item{p2varname}{Optional second previous-state column for model simulation.}
+\item{p2varname}{Optional second previous-state column for second-order
+model recursions.}
 
 \item{facet_var}{Optional grouping variable. Correlations are computed
 separately within each observed stratum.}
@@ -62,14 +61,7 @@ separately within each observed stratum.}
 \item{t_covs}{Optional time-varying covariate lookup table used by the fitted
 model.}
 
-\item{n_rep}{Number of simulated paths per patient profile for model-based
-plots.}
-
-\item{seed}{Optional random seed for model-based trajectory simulation.}
-
-\item{method}{Correlation method passed to \code{\link[stats:cor]{stats::cor()}}.}
-
-\item{use}{Missing-data handling passed to \code{\link[stats:cor]{stats::cor()}}.}
+\item{seed}{Optional random seed for \code{blrm} posterior draw selection.}
 
 \item{smooth}{Logical. If \code{TRUE}, add a loess smooth.}
 }

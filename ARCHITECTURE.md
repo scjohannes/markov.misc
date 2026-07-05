@@ -737,18 +737,26 @@ plots do not depend on each other's implementation files. `plot_results()` in
 `R/viz-results.R` visualizes operating-characteristic summaries and can combine
 panels with `patchwork`.
 
-`plot_transitions()` in `R/viz-transitions.R` summarizes observed or
-model-based trajectories into joint population transition proportions.
+`plot_transitions()` in `R/viz-transitions.R` summarizes observed trajectories
+or model-implied transition traces into joint population transition
+proportions.
 Its time-order helper is also used by `plot_correlation()` and
 `plot_variogram()` in `R/viz-correlation.R`; numeric-looking time labels are
 ordered by numeric value before plot panels or state-time matrices are built.
 Model-based diagnostic plots treat requested `times` as plot times: sparse
 numeric or factor visit requests are expanded to the full intermediate
-simulation grid and filtered back to the requested times after path simulation.
-When `t_covs` is supplied, it must cover this expanded simulation grid.
-For `rmsb::blrm()` plotting, simulated trajectories use the existing manual
-`predict_blrm_response_markov()` backend and average posterior-draw probability
-arrays before sampling paths; fitted random effects are omitted.
+grid and filtered back to the requested times after deterministic evaluation.
+When `t_covs` is supplied, it must cover this expanded recursion grid.
+For `plot_transitions()` with `rmsb::blrm()` models, posterior draw-specific
+transition traces are computed in chunks with the existing manual
+`predict_blrm_response_markov()` backend and summarized only after draw-level
+aggregation; fitted random effects are omitted. `plot_correlation()` and
+`plot_variogram()` use the same trace and posterior chunk path, with optional
+first-order or second-order transition kernels propagated into exact pairwise
+state-score moments before conversion to correlations. Second-order correlation
+moments use start-time forward propagation, so each start time reuses one
+history recursion for all later plot times instead of replaying every time pair
+independently.
 `plot_lp_difference()` uses `rmsb::predict()` posterior medians for BLRM
 linear-predictor contrasts.
 
@@ -919,7 +927,7 @@ interfaces or examples change.
 | `R/mvn_helpers.R` | `set_coef()`, `get_vcov_robust()`, `validate_coef_vcov()`, `get_coef()` | Coefficient mutation and covariance extraction for inference. |
 | `R/sops-api.R` | `sops()`, `sops_blrm()`, `avg_sops()`, `avg_sops_blrm()` | Main public SOP API. |
 | `R/sops-standardize.R` | `standardize_sops()` | Legacy standardized SOP wrapper. |
-| `R/sops-engine.R` | `soprob_markov()`, `soprob_markov_second_order_run()` | Core first- and second-order recursive SOP engine. |
+| `R/sops-engine.R` | `soprob_markov()`, `soprob_markov_second_order_run()`, `markov_transition_trace()` | Core first- and second-order recursive SOP engine plus opt-in transition traces for diagnostics. |
 | `R/sops-backends.R` | `validate_markov_model()`, `predict_*_response_markov()`, BLRM helpers, ORM matrix helpers, time/gap helpers | Model adapters and dynamic prediction-data construction. |
 | `R/sops-fast-path.R` | `markov_msm_build()`, `markov_msm_run()`, `lp_to_probs()`, `compute_Gamma()` | Optimized repeated prediction for eligible first-order models. |
 | `R/sops-result-helpers.R` | `set_sops_attrs()`, `restore_sops_attrs()`, `create_counterfactual_data()`, `marginalize_sops_array()`, `array_to_df_individual()` | Tidy SOP object construction and attribute preservation. |

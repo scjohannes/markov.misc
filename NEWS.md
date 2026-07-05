@@ -20,11 +20,11 @@
   simulation or bootstrap interval summaries.
 - `plot_comparisons()` now plots `avg_comparisons()` output on the difference
   or ratio scale, with uncertainty intervals when available.
-- `plot_correlation()` now plots empirical or model-based ordinal
-  correlations over time, optionally within observed strata. For `blrm` model
-  plots, simulated paths use transition probabilities averaged over posterior
-  draws from the existing manual `blrm` prediction backend. Model-based plots
-  simulate the full intermediate visit grid before subsetting to requested plot
+- `plot_correlation()` and `plot_variogram()` now compute model-implied
+  ordinal correlations from exact pairwise moments instead of simulated paths,
+  including draw-specific moment calculations for `blrm` fits before posterior
+  averaging. Second-order model correlations now propagate each start time
+  forward once and reuse the resulting cross-moments across all later plot
   times.
 - `plot_lp_difference()` now plots profile-based treatment differences in the
   ordinal-model linear predictor over time, faceted by previous state,
@@ -114,11 +114,11 @@
   `"2"` in color and fill scales.
 - `plot_transitions()` now plots empirical or model-based joint transition
   proportions as heatmaps, including model-based treatment-difference
-  heatmaps from simulated counterfactual trajectories, and orders
-  numeric-looking time facets numerically. For `blrm` model plots, simulated
-  paths use transition probabilities averaged over posterior draws from the
-  existing manual `blrm` prediction backend. Model-based plots simulate the
-  full intermediate visit grid before subsetting to requested plot times.
+  heatmaps from deterministic counterfactual transition traces, and orders
+  numeric-looking time facets numerically. For `blrm` model plots, posterior
+  draw-specific transition traces are summarized directly using the existing
+  manual `blrm` prediction backend. Model-based plots evaluate the full
+  intermediate visit grid before subsetting to requested plot times.
 - `plot_variogram()` now plots empirical or model-based correlations
   against absolute time differences with a fixed 0-to-1 y-axis.
 - `prepare_markov_data()`, `soprob_markov()`, `avg_sops()`, and `inferences()`

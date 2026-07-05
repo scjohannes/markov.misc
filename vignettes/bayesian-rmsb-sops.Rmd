@@ -120,11 +120,10 @@ plot_sops(
 
 ## Model Diagnostics
 
-These diagnostics compare the empirical trajectories with trajectories
-simulated from the fitted transition model. For `blrm_markov()` plots, the
-transition probabilities are averaged over selected posterior draws; `seed`
-controls both posterior-draw selection and the simulated paths drawn from those
-probabilities.
+These diagnostics compare empirical trajectory features with features implied
+by the fitted transition model. For `blrm_markov()` plots, posterior draws are
+kept separate through the transition, correlation, and variogram summaries;
+`seed` controls posterior-draw selection.
 
 ```{r diagnostics-transitions-observed, eval = RUN_BAYESIAN}
 diagnostic_times <- c(1, 7, FOLLOW_UP)
@@ -144,7 +143,6 @@ plot_transitions(
   times = diagnostic_times,
   ylevels = fit_blrm$ylevels,
   absorb = ABSORB,
-  n_rep = 10,
   seed = SEED,
   show_values = FALSE
 ) +
@@ -166,7 +164,6 @@ plot_correlation(
   times = seq_len(FOLLOW_UP),
   ylevels = fit_blrm$ylevels,
   absorb = ABSORB,
-  n_rep = 10,
   seed = SEED,
   show_values = FALSE
 ) +
@@ -187,7 +184,6 @@ plot_variogram(
   times = seq_len(FOLLOW_UP),
   ylevels = fit_blrm$ylevels,
   absorb = ABSORB,
-  n_rep = 10,
   seed = SEED
 ) +
   labs(title = "Model-based correlation variogram")

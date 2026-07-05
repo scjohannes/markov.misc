@@ -21,7 +21,6 @@ plot_transitions(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  n_rep = 20L,
   seed = NULL,
   show_values = TRUE,
   digits = NULL,
@@ -59,7 +58,8 @@ counterfactual differences in transition proportions.}
 
 \item{pvarname}{Character name of the previous-state column.}
 
-\item{p2varname}{Optional second previous-state column for model simulation.}
+\item{p2varname}{Optional second previous-state column for second-order
+model recursion.}
 
 \item{id_var}{Optional ID column used to extract one stored prediction row per
 patient.}
@@ -72,10 +72,7 @@ by time; \code{facet_var} adds grouping to the time panels.}
 \item{t_covs}{Optional time-varying covariate lookup table used by the fitted
 model.}
 
-\item{n_rep}{Number of simulated paths per patient profile for model-based
-plots.}
-
-\item{seed}{Optional random seed for model-based trajectory simulation.}
+\item{seed}{Optional random seed for \code{blrm} posterior draw selection.}
 
 \item{show_values}{Logical. If \code{TRUE}, print rounded values in each tile.}
 
@@ -90,11 +87,12 @@ A ggplot object.
 }
 \description{
 \code{plot_transitions()} creates heatmaps of population transition proportions
-from observed trajectory data or from trajectories simulated from a fitted
-Markov model. Model-based plots are population averaged over the supplied or
-stored patient profiles. When \code{comparison = "difference"}, counterfactual
-trajectories are simulated for the levels in \code{variables}, and the heatmap
-shows the difference in transition proportions relative to the first level.
+from observed trajectory data or from transition probabilities implied by a
+fitted Markov model. Model-based plots are population averaged over the
+supplied or stored patient profiles. When \code{comparison = "difference"},
+counterfactual transition summaries are computed for the levels in
+\code{variables}, and the heatmap shows the difference in transition proportions
+relative to the first level.
 }
 \details{
 Minimum inputs depend on the object type. For trajectory data, \code{object} must

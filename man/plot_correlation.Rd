@@ -2,7 +2,7 @@
 % Please edit documentation in R/viz-correlation.R
 \name{plot_correlation}
 \alias{plot_correlation}
-\title{Plot Empirical or Model-Based Correlations Over Time}
+\title{Plot Empirical or Model-Implied Correlations Over Time}
 \usage{
 plot_correlation(
   object,
@@ -19,10 +19,7 @@ plot_correlation(
   facet_var = NULL,
   gap = NULL,
   t_covs = NULL,
-  n_rep = 20L,
   seed = NULL,
-  method = "spearman",
-  use = "pairwise.complete.obs",
   triangle = c("upper", "full"),
   show_values = TRUE,
   digits = 2,
@@ -41,9 +38,10 @@ resolution in model-based plots.}
 
 \item{times}{Optional time values to include. Required for model-based plots.}
 
-\item{ylevels}{Optional state levels for model-based simulation.}
+\item{ylevels}{Optional state levels. If supplied for raw trajectory data,
+state scores follow this order.}
 
-\item{absorb}{Optional absorbing-state label for model-based simulation.}
+\item{absorb}{Optional absorbing-state label for model-based recursions.}
 
 \item{id_var}{Character ID column for raw data and stored model-data
 extraction.}
@@ -53,9 +51,10 @@ extraction.}
 \item{y_var}{Character name of the state column in raw trajectory data.}
 
 \item{pvarname}{Character name of the previous-state column for model
-simulation.}
+recursions.}
 
-\item{p2varname}{Optional second previous-state column for model simulation.}
+\item{p2varname}{Optional second previous-state column for second-order
+model recursions.}
 
 \item{facet_var}{Optional grouping variable. Correlations are computed
 separately within each observed stratum.}
@@ -65,14 +64,7 @@ separately within each observed stratum.}
 \item{t_covs}{Optional time-varying covariate lookup table used by the fitted
 model.}
 
-\item{n_rep}{Number of simulated paths per patient profile for model-based
-plots.}
-
-\item{seed}{Optional random seed for model-based trajectory simulation.}
-
-\item{method}{Correlation method passed to \code{\link[stats:cor]{stats::cor()}}.}
-
-\item{use}{Missing-data handling passed to \code{\link[stats:cor]{stats::cor()}}.}
+\item{seed}{Optional random seed for \code{blrm} posterior draw selection.}
 
 \item{triangle}{\code{"upper"} to show one triangle or \code{"full"} to show both
 off-diagonal triangles.}
@@ -87,18 +79,19 @@ off-diagonal triangles.}
 A ggplot object.
 }
 \description{
-\code{plot_correlation()} computes Spearman correlations between ordinal states
-at pairs of follow-up times. With a fitted Markov model, trajectories are
-simulated from the model for each patient in their observed group and the
-correlations are computed from those simulated paths.
+\code{plot_correlation()} computes correlations between ordinal state scores at
+pairs of follow-up times. With a fitted Markov model, correlations are
+computed from model-implied pairwise moments rather than sampled paths.
 }
 \details{
 Minimum inputs depend on the object type. For trajectory data, \code{object} must
 contain the ID, time, and state columns named by \code{id_var}, \code{time_var}, and
 \code{y_var}. For model-based plots, pass a fitted Markov model and \code{times}; use
 \code{newdata} for explicit prediction profiles and pass \code{ylevels} or \code{absorb}
-when needed. Model-based correlations are computed from simulated paths, so
-\code{n_rep} controls simulation precision and \code{seed} controls reproducibility.
+when needed. Model-based correlations are computed from exact first- or
+second-order Markov recursions. For \code{blrm} fits, posterior draws are kept
+separate through the moment calculation and summarized only after
+correlations are computed for each draw.
 }
 \examples{
 \dontrun{

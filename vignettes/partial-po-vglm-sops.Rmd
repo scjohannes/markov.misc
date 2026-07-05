@@ -138,9 +138,8 @@ plot_sops(
 
 ## Model Diagnostics
 
-These diagnostics compare empirical trajectory features with the corresponding
-features from paths simulated under the partial proportional-odds transition
-model.
+These diagnostics compare empirical trajectory features with corresponding
+features implied by the partial proportional-odds transition model.
 
 ```{r diagnostics-transitions-observed}
 diagnostic_times <- 1:FOLLOW_UP
@@ -160,8 +159,6 @@ plot_transitions(
   times = diagnostic_times,
   ylevels = STATE_LEVELS,
   absorb = ABSORB,
-  n_rep = 100,
-  seed = SEED,
   show_values = FALSE
 ) +
   labs(title = "Model-based transition proportions")
@@ -182,8 +179,6 @@ plot_correlation(
   times = seq_len(FOLLOW_UP),
   ylevels = STATE_LEVELS,
   absorb = ABSORB,
-  n_rep = 100,
-  seed = SEED,
   show_values = FALSE
 ) +
   labs(title = "Model-based state correlations")
@@ -202,9 +197,7 @@ plot_variogram(
   fit_ppo,
   times = seq_len(FOLLOW_UP),
   ylevels = STATE_LEVELS,
-  absorb = ABSORB,
-  n_rep = 100,
-  seed = SEED
+  absorb = ABSORB
 ) +
   labs(title = "Model-based correlation variogram")
 ```
