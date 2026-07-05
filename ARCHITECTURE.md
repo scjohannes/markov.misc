@@ -737,6 +737,12 @@ plots do not depend on each other's implementation files. `plot_results()` in
 `R/viz-results.R` visualizes operating-characteristic summaries and can combine
 panels with `patchwork`.
 
+`plot_transitions()` in `R/viz-transitions.R` summarizes observed or
+model-simulated trajectories into joint population transition proportions.
+Its time-order helper is also used by `plot_correlation()` and
+`plot_variogram()` in `R/viz-correlation.R`; numeric-looking time labels are
+ordered by numeric value before plot panels or state-time matrices are built.
+
 ## Validation Boundaries
 
 The package favors explicit early failures where prediction would otherwise be

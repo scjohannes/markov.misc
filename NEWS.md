@@ -20,6 +20,10 @@
   simulation or bootstrap interval summaries.
 - `plot_comparisons()` now plots `avg_comparisons()` output on the difference
   or ratio scale, with uncertainty intervals when available.
+- `plot_correlation()` now plots empirical or model-simulated ordinal
+  correlations over time, optionally within observed strata.
+- `plot_lp_difference()` now plots profile-based treatment differences in the
+  ordinal-model linear predictor over time, faceted by previous state.
 - `sops()`, `avg_sops()`, and `avg_comparisons()` now require an explicit
   `times` argument instead of inferring a prediction grid, expose Markov
   structure arguments directly, and reserve `refit_data` for refit-bootstrap
@@ -103,6 +107,12 @@
 - `plot_sops()` now respects the stored `ylevels` order on model-derived SOP
   objects, so character state labels such as `"10"` no longer sort before
   `"2"` in color and fill scales.
+- `plot_transitions()` now plots empirical or model-simulated joint transition
+  proportions as heatmaps, including model-based treatment-difference
+  heatmaps from simulated counterfactual trajectories, and orders
+  numeric-looking time facets numerically.
+- `plot_variogram()` now plots empirical or model-simulated correlations
+  against absolute time differences.
 - `prepare_markov_data()`, `soprob_markov()`, `avg_sops()`, and `inferences()`
   now support numeric previous-state effects, including nonlinear terms such as
   `rms::rcs(yprev, 6)`, while preserving factor previous-state behavior by
