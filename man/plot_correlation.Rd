@@ -20,6 +20,7 @@ plot_correlation(
   gap = NULL,
   t_covs = NULL,
   seed = NULL,
+  n_draws = 100L,
   triangle = c("upper", "full"),
   show_values = TRUE,
   digits = 2,
@@ -65,6 +66,9 @@ separately within each observed stratum.}
 model.}
 
 \item{seed}{Optional random seed for \code{blrm} posterior draw selection.}
+
+\item{n_draws}{Integer number of posterior draws to sample for \code{blrm}, or
+\code{NULL} to use all stored draws. Defaults to 100.}
 
 \item{triangle}{\code{"upper"} to show one triangle or \code{"full"} to show both
 off-diagonal triangles.}

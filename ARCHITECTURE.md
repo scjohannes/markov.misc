@@ -110,7 +110,7 @@ The package is organized by workflow stage rather than by model class.
 | Bootstrap infrastructure | `R/bootstrap_helpers.R`, `R/bootstrap-coefs.R`, `R/bootstrap-tidy.R` | Memory-efficient group bootstrap sampling, fractional weighted bootstrap weights, just-in-time materialization, model refitting, and bootstrap coefficient summaries. |
 | Endpoint summaries | `R/endpoint-summaries.R`, `R/endpoint-tte.R`, `R/competing-risks.R`, `R/sops-time-in-state.R`, `R/sops-interpolate.R`, `R/sops-comparisons.R`, `R/sops-comparisons-setup.R`, `R/sops-comparisons-reduce.R` | Convert trajectories or SOPs to days-at-home, time-to-event, competing-risk, real-time interpolation, time-in-state summaries, and average counterfactual comparisons. |
 | Operating characteristics | `R/power.R` | Sample from Arrow superpopulations, run iteration-level analyses, summarize power, type I error, bias, coverage, and Monte Carlo error. |
-| Visualization | `R/viz-sops.R`, `R/viz-comparisons.R`, `R/viz-results.R`, `R/viz-helpers.R` | Plot empirical or model-derived SOPs, average comparisons, and operating-characteristic summaries. |
+| Visualization | `R/viz-sops.R`, `R/viz-comparisons.R`, `R/viz-results.R`, `R/viz-helpers.R`, `R/viz-*.R`, `R/diagnostic-*.R` | Render empirical/model-derived SOPs, comparisons, operating-characteristic summaries, and diagnostic transition/correlation summaries. |
 | Method reports | `doc/*.qmd` | Reproducible Quarto reports that exercise package workflows and document simulation-study findings without adding exported package APIs. |
 
 ## Core Data Contracts
@@ -737,28 +737,31 @@ plots do not depend on each other's implementation files. `plot_results()` in
 `R/viz-results.R` visualizes operating-characteristic summaries and can combine
 panels with `patchwork`.
 
-`plot_transitions()` in `R/viz-transitions.R` summarizes observed trajectories
-or model-implied transition traces into joint population transition
-proportions.
-Its time-order helper is also used by `plot_correlation()` and
-`plot_variogram()` in `R/viz-correlation.R`; numeric-looking time labels are
-ordered by numeric value before plot panels or state-time matrices are built.
+Diagnostic transition and correlation plots split data computation from
+rendering. `R/diagnostic-trace.R` computes opt-in transition traces for first-
+and second-order models without changing the `soprob_markov()` hot path.
+`R/diagnostic-data.R` resolves model prediction data, recursion times, facets,
+and shared BLRM draw chunking. `R/diagnostic-transitions.R` and
+`R/diagnostic-correlation.R` turn empirical data or model traces into tidy
+transition, correlation, and variogram summaries. `R/viz-transitions.R` and
+`R/viz-correlation.R` then validate public plotting arguments and render those
+summaries with ggplot.
+
 Model-based diagnostic plots treat requested `times` as plot times: sparse
-numeric or factor visit requests are expanded to the full intermediate
-grid and filtered back to the requested times after deterministic evaluation.
-When `t_covs` is supplied, it must cover this expanded recursion grid.
-For `plot_transitions()` with `rmsb::blrm()` models, posterior draw-specific
-transition traces are computed in chunks with the existing manual
-`predict_blrm_response_markov()` backend and summarized only after draw-level
-aggregation; fitted random effects are omitted. `plot_correlation()` and
-`plot_variogram()` use the same trace and posterior chunk path, with optional
-first-order or second-order transition kernels propagated into exact pairwise
-state-score moments before conversion to correlations. Second-order correlation
-moments use start-time forward propagation, so each start time reuses one
-history recursion for all later plot times instead of replaying every time pair
-independently.
-`plot_lp_difference()` uses `rmsb::predict()` posterior medians for BLRM
-linear-predictor contrasts.
+numeric or factor visit requests are expanded to the full intermediate grid and
+filtered back to the requested times after deterministic evaluation. When
+`t_covs` is supplied, it must cover this expanded recursion grid. For
+`rmsb::blrm()` models, posterior draw-specific traces are computed in chunks
+with the existing manual `predict_blrm_response_markov()` backend and
+summarized only after draw-level aggregation; fitted random effects are omitted.
+`plot_transitions()`, `plot_correlation()`, and `plot_variogram()` expose
+`n_draws`, with `NULL` meaning all stored posterior draws. Correlation and
+variogram summaries use optional first-order or second-order transition kernels
+propagated into exact pairwise state-score moments before conversion to
+correlations. Second-order correlation moments use start-time forward
+propagation, so each start time reuses one history recursion for all later plot
+times instead of replaying every time pair independently. `plot_lp_difference()`
+uses `rmsb::predict()` posterior medians for BLRM linear-predictor contrasts.
 
 ## Validation Boundaries
 
@@ -927,7 +930,9 @@ interfaces or examples change.
 | `R/mvn_helpers.R` | `set_coef()`, `get_vcov_robust()`, `validate_coef_vcov()`, `get_coef()` | Coefficient mutation and covariance extraction for inference. |
 | `R/sops-api.R` | `sops()`, `sops_blrm()`, `avg_sops()`, `avg_sops_blrm()` | Main public SOP API. |
 | `R/sops-standardize.R` | `standardize_sops()` | Legacy standardized SOP wrapper. |
-| `R/sops-engine.R` | `soprob_markov()`, `soprob_markov_second_order_run()`, `markov_transition_trace()` | Core first- and second-order recursive SOP engine plus opt-in transition traces for diagnostics. |
+| `R/sops-engine.R` | `soprob_markov()`, `soprob_markov_second_order_run()` | Core first- and second-order recursive SOP engine for SOP arrays. |
+| `R/diagnostic-trace.R` | `markov_transition_trace()` and trace helpers | Opt-in transition traces and kernels for diagnostic summaries, kept separate from the SOP hot path. |
+| `R/diagnostic-data.R`, `R/diagnostic-transitions.R`, `R/diagnostic-correlation.R` | diagnostic setup, BLRM trace chunking, transition summaries, correlation summaries | Internal diagnostic-data layer used by transition, correlation, and variogram plots. |
 | `R/sops-backends.R` | `validate_markov_model()`, `predict_*_response_markov()`, BLRM helpers, ORM matrix helpers, time/gap helpers | Model adapters and dynamic prediction-data construction. |
 | `R/sops-fast-path.R` | `markov_msm_build()`, `markov_msm_run()`, `lp_to_probs()`, `compute_Gamma()` | Optimized repeated prediction for eligible first-order models. |
 | `R/sops-result-helpers.R` | `set_sops_attrs()`, `restore_sops_attrs()`, `create_counterfactual_data()`, `marginalize_sops_array()`, `array_to_df_individual()` | Tidy SOP object construction and attribute preservation. |

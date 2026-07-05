@@ -22,6 +22,7 @@ plot_transitions(
   gap = NULL,
   t_covs = NULL,
   seed = NULL,
+  n_draws = 100L,
   show_values = TRUE,
   digits = NULL,
   fill_limits = NULL
@@ -73,6 +74,9 @@ by time; \code{facet_var} adds grouping to the time panels.}
 model.}
 
 \item{seed}{Optional random seed for \code{blrm} posterior draw selection.}
+
+\item{n_draws}{Integer number of posterior draws to sample for \code{blrm}, or
+\code{NULL} to use all stored draws. Defaults to 100.}
 
 \item{show_values}{Logical. If \code{TRUE}, print rounded values in each tile.}
 

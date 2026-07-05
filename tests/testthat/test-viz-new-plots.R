@@ -353,7 +353,8 @@ test_that("plot_transitions summarizes blrm transition draws without sampling", 
         newdata = newdata,
         times = 1,
         ylevels = 1:2,
-        seed = 1
+        seed = 1,
+        n_draws = NULL
       )
     }
   )
@@ -368,6 +369,62 @@ test_that("plot_transitions summarizes blrm transition draws without sampling", 
   expect_equal(calls[[1]]$id_var, "id")
   expect_equal(calls[[1]]$draw_indices, 1:3)
   expect_null(calls[[1]]$gamma_draws)
+})
+
+test_that("plot_transitions passes n_draws to blrm diagnostics", {
+  model <- structure(
+    list(
+      ylevels = 1:2,
+      draws = matrix(0, nrow = 3, ncol = 1)
+    ),
+    class = "blrm"
+  )
+  newdata <- data.frame(
+    time = 0,
+    yprev = factor(1, levels = 1:2)
+  )
+  selected <- NULL
+  calls <- list()
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    select_posterior_draws = function(model, n_draws = 100L, seed = NULL) {
+      selected <<- list(n_draws = n_draws, seed = seed)
+      seq_len(n_draws)
+    },
+    predict_blrm_response_markov = function(
+      object,
+      newdata,
+      include_re,
+      id_var,
+      draw_indices,
+      gamma_draws
+    ) {
+      calls[[length(calls) + 1L]] <<- draw_indices
+      out <- array(
+        0,
+        dim = c(length(draw_indices), nrow(newdata), 2L),
+        dimnames = list(draw_indices, rownames(newdata), c("1", "2"))
+      )
+      out[,, 1] <- 1
+      out
+    },
+    {
+      plot <- plot_transitions(
+        model,
+        newdata = newdata,
+        times = 1,
+        ylevels = 1:2,
+        seed = 123,
+        n_draws = 1
+      )
+    }
+  )
+
+  expect_s3_class(plot, "ggplot")
+  expect_equal(selected$n_draws, 1)
+  expect_equal(selected$seed, 123)
+  expect_equal(calls, list(1L))
 })
 
 test_that("plot_correlation creates ordinal correlation heatmaps", {
@@ -526,6 +583,7 @@ test_that("plot_correlation summarizes blrm correlations by draw", {
         times = 1:2,
         ylevels = 1:2,
         seed = 1,
+        n_draws = NULL,
         show_values = FALSE
       )
     }
@@ -533,6 +591,82 @@ test_that("plot_correlation summarizes blrm correlations by draw", {
 
   expect_equal(as.numeric(plot$data$correlation), 0, tolerance = 1e-6)
   expect_equal(calls, list(1:2, 1:2))
+})
+
+test_that("plot_correlation and plot_variogram pass n_draws to blrm diagnostics", {
+  model <- structure(
+    list(
+      ylevels = 1:2,
+      draws = matrix(0, nrow = 4, ncol = 1)
+    ),
+    class = "blrm"
+  )
+  newdata <- data.frame(
+    time = 0,
+    yprev = factor(1, levels = 1:2)
+  )
+  selected <- list()
+  calls <- list()
+
+  with_mocked_bindings(
+    validate_markov_model = function(object) NULL,
+    select_posterior_draws = function(model, n_draws = 100L, seed = NULL) {
+      selected[[length(selected) + 1L]] <<- list(n_draws = n_draws, seed = seed)
+      seq_len(n_draws)
+    },
+    predict_blrm_response_markov = function(
+      object,
+      newdata,
+      include_re,
+      id_var,
+      draw_indices,
+      gamma_draws
+    ) {
+      calls[[length(calls) + 1L]] <<- draw_indices
+      out <- array(
+        NA_real_,
+        dim = c(length(draw_indices), nrow(newdata), 2L),
+        dimnames = list(draw_indices, rownames(newdata), c("1", "2"))
+      )
+      p2 <- ifelse(newdata$time == 1, 0.5, as.character(newdata$yprev) == "2")
+      for (i in seq_along(draw_indices)) {
+        out[i, , 1] <- 1 - p2
+        out[i, , 2] <- p2
+      }
+      out
+    },
+    {
+      correlation <- plot_correlation(
+        model,
+        newdata = newdata,
+        times = 1:2,
+        ylevels = 1:2,
+        seed = 321,
+        n_draws = 1,
+        show_values = FALSE
+      )
+      variogram <- plot_variogram(
+        model,
+        newdata = newdata,
+        times = 1:2,
+        ylevels = 1:2,
+        seed = 654,
+        n_draws = 1,
+        smooth = FALSE
+      )
+    }
+  )
+
+  expect_s3_class(correlation, "ggplot")
+  expect_s3_class(variogram, "ggplot")
+  expect_equal(
+    selected,
+    list(
+      list(n_draws = 1, seed = 321),
+      list(n_draws = 1, seed = 654)
+    )
+  )
+  expect_true(all(vapply(calls, identical, logical(1), 1L)))
 })
 
 test_that("plot_lp_difference plots profile-based contrasts by previous state", {

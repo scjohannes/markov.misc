@@ -25,7 +25,8 @@
   including draw-specific moment calculations for `blrm` fits before posterior
   averaging. Second-order model correlations now propagate each start time
   forward once and reuse the resulting cross-moments across all later plot
-  times.
+  times. `plot_transitions()`, `plot_correlation()`, and `plot_variogram()` now
+  expose `n_draws` for `blrm` diagnostic summaries.
 - `plot_lp_difference()` now plots profile-based treatment differences in the
   ordinal-model linear predictor over time, faceted by previous state,
   including posterior-median linear predictor contrasts for `blrm` models.

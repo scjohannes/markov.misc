@@ -20,6 +20,7 @@ plot_variogram(
   gap = NULL,
   t_covs = NULL,
   seed = NULL,
+  n_draws = 100L,
   smooth = TRUE
 )
 }
@@ -62,6 +63,9 @@ separately within each observed stratum.}
 model.}
 
 \item{seed}{Optional random seed for \code{blrm} posterior draw selection.}
+
+\item{n_draws}{Integer number of posterior draws to sample for \code{blrm}, or
+\code{NULL} to use all stored draws. Defaults to 100.}
 
 \item{smooth}{Logical. If \code{TRUE}, add a loess smooth.}
 }
