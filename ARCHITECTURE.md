@@ -758,7 +758,10 @@ summarized only after draw-level aggregation; fitted random effects are omitted.
 `n_draws`, with `NULL` meaning all stored posterior draws. Correlation and
 variogram summaries use optional first-order or second-order transition kernels
 propagated into exact pairwise state-score moments before conversion to
-correlations. Second-order correlation moments use start-time forward
+correlations. Correlation heatmaps render the full `[-1, 1]` correlation
+domain; variograms use a `0..1` coordinate window rather than scale limits so
+out-of-window correlations are not converted to missing values before ggplot
+statistics run. Second-order correlation moments use start-time forward
 propagation, so each start time reuses one history recursion for all later plot
 times instead of replaying every time pair independently. `plot_lp_difference()`
 uses `rmsb::predict()` posterior medians for BLRM linear-predictor contrasts.

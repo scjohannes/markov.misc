@@ -454,7 +454,30 @@ test_that("plot_variogram plots correlations by time difference", {
   expect_s3_class(plot, "ggplot")
   expect_s3_class(plot$layers[[1]]$geom, "GeomPoint")
   expect_equal(plot$labels$x, "Absolute Time Difference")
-  expect_equal(plot$scales$get_scales("y")$limits, c(0, 1))
+  expect_s3_class(plot$coordinates, "CoordCartesian")
+  expect_equal(plot$coordinates$limits$y, c(0, 1))
+})
+
+test_that("correlation diagnostics preserve negative correlations", {
+  data <- data.frame(
+    id = rep(1:4, each = 2),
+    time = rep(1:2, times = 4),
+    y = c(1, 2, 2, 1, 1, 2, 2, 1)
+  )
+
+  correlation <- plot_correlation(data, show_values = FALSE)
+  correlation_build <- ggplot2::ggplot_build(correlation)
+
+  expect_equal(as.numeric(correlation$data$correlation), -1)
+  expect_equal(correlation$scales$get_scales("fill")$limits, c(-1, 1))
+  expect_equal(sum(correlation_build$data[[1]]$fill == "grey90"), 0L)
+
+  variogram <- plot_variogram(data, smooth = FALSE)
+  variogram_build <- ggplot2::ggplot_build(variogram)
+
+  expect_equal(as.numeric(variogram$data$correlation), -1)
+  expect_equal(variogram$coordinates$limits$y, c(0, 1))
+  expect_equal(variogram_build$data[[1]]$y, -1)
 })
 
 test_that("plot_correlation uses first-order model-implied moments", {

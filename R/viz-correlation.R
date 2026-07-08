@@ -46,7 +46,7 @@
 #'   off-diagonal triangles.
 #' @param show_values Logical. If `TRUE`, print rounded correlations in tiles.
 #' @param digits Number of digits used for tile labels.
-#' @param fill_limits Fill-scale limits. Defaults to `c(0, 1)`.
+#' @param fill_limits Fill-scale limits. Defaults to `c(-1, 1)`.
 #'
 #' @return A ggplot object.
 #'
@@ -76,7 +76,7 @@ plot_correlation <- function(
   triangle = c("upper", "full"),
   show_values = TRUE,
   digits = 2,
-  fill_limits = c(0, 1)
+  fill_limits = c(-1, 1)
 ) {
   triangle <- match.arg(triangle)
   if (
@@ -181,7 +181,7 @@ plot_variogram <- function(
       x = "Absolute Time Difference",
       y = "Correlation"
     ) +
-    ggplot2::scale_y_continuous(limits = c(0, 1)) +
+    ggplot2::coord_cartesian(ylim = c(0, 1)) +
     ggplot2::theme_bw()
 
   if (smooth) {

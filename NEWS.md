@@ -121,7 +121,8 @@
   manual `blrm` prediction backend. Model-based plots evaluate the full
   intermediate visit grid before subsetting to requested plot times.
 - `plot_variogram()` now plots empirical or model-based correlations
-  against absolute time differences with a fixed 0-to-1 y-axis.
+  against absolute time differences with a 0-to-1 coordinate window, preserving
+  underlying correlation values for ggplot statistics.
 - `prepare_markov_data()`, `soprob_markov()`, `avg_sops()`, and `inferences()`
   now support numeric previous-state effects, including nonlinear terms such as
   `rms::rcs(yprev, 6)`, while preserving factor previous-state behavior by

@@ -69,7 +69,7 @@
 #'   data = data
 #' )
 #'
-#' constraints <- fit_po@constraints
+#' constraints <- fit_po$vglm_fit@constraints
 #' linear_time_term <- grep("^rcs\\(time, 4\\).*time$", names(constraints),
 #'   value = TRUE
 #' )[[1]]
