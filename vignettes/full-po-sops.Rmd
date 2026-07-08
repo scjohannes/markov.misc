@@ -191,7 +191,8 @@ head(combined_sops)
 plot_sops(
   combined_sops,
   geom = "line",
-  facet_var = c("backend", "tx")
+  linetype_var = "tx",
+  facet_var = c("backend")
 ) +
   labs(
     x = "Day",
@@ -216,6 +217,9 @@ mc <- plot_correlation(
   times = seq_len(FOLLOW_UP), 
   ylevels = fit_orm$yunique, 
   absorb = ABSORB)
+
+ec
+mc
 ```
 
 ```{r}
@@ -234,6 +238,9 @@ mt <- plot_transitions(
   ylevels = fit_orm$yunique, 
   absorb = ABSORB)
 
+et
+mt
+
 td <- plot_transitions(
   fit_orm, 
   comparison = "difference",
@@ -244,6 +251,7 @@ td <- plot_transitions(
   times = seq_len(FOLLOW_UP), 
   ylevels = fit_orm$yunique, 
   absorb = ABSORB)
+td
 ```
 
 ```{r}
@@ -252,7 +260,8 @@ plot_variogram(
   id_var = "id",
   time_var = "time",
   y_var = "y"
-  )
+  ) +
+  coord_cartesian(ylim = c(0, 1))
 
 plot_variogram(
   fit_orm, 
@@ -261,7 +270,8 @@ plot_variogram(
   y_var = "y",
   times = seq_len(FOLLOW_UP), 
   ylevels = fit_orm$yunique, 
-  absorb = ABSORB)
+  absorb = ABSORB) +
+  coord_cartesian(ylim = c(0, 1))
 ```
 
 

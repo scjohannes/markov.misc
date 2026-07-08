@@ -89,6 +89,78 @@ fit_many <- orm_markov(
 fit_many
 ```
 
+## Diagnostics
+
+```{r}
+ec <- plot_correlation(
+  raw_data,
+  id_var = "id",
+  time_var = "time",
+  y_var = "y")
+
+mc <- plot_correlation(
+  fit_many,
+  id_var = "id",
+  time_var = "time",
+  y_var = "y",
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_many$yunique,
+  absorb = ABSORB)
+
+ec
+mc
+```
+
+```{r}
+et <- plot_transitions(
+  raw_data,
+  id_var = "id",
+  time_var = "time",
+  y_var = "y")
+
+mt <- plot_transitions(
+  fit_many,
+  id_var = "id",
+  time_var = "time",
+  y_var = "y",
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_many$yunique,
+  absorb = ABSORB)
+
+et
+mt
+
+td <- plot_transitions(
+  fit_many,
+  comparison = "difference",
+  variables = list(tx = c(0, 1)),
+  id_var = "id",
+  time_var = "time",
+  y_var = "y",
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_many$yunique,
+  absorb = ABSORB)
+td
+```
+
+```{r}
+plot_variogram(
+  raw_data,
+  id_var = "id",
+  time_var = "time",
+  y_var = "y"
+  )
+
+plot_variogram(
+  fit_many,
+  id_var = "id",
+  time_var = "time",
+  y_var = "y",
+  times = seq_len(FOLLOW_UP),
+  ylevels = fit_many$yunique,
+  absorb = ABSORB)
+```
+
 ## SOPs
 
 ```{r avg-sops}
