@@ -335,7 +335,7 @@ fit_spline_basis_by_prev <- vglm_markov(
   data = data
 )
 
-constraints <- fit_po@constraints
+constraints <- fit_po$vglm_fit@constraints
 linear_time_term <- grep("^rcs\\\\(time, 4\\\\).*time$", names(constraints),
   value = TRUE
 )[[1]]

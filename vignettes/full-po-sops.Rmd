@@ -191,13 +191,89 @@ head(combined_sops)
 plot_sops(
   combined_sops,
   geom = "line",
-  facet_var = c("backend", "tx")
+  linetype_var = "tx",
+  facet_var = c("backend")
 ) +
   labs(
     x = "Day",
     y = "State occupancy probability"
   )
 ```
+
+## Diagnostics
+
+```{r}
+ec <- plot_correlation(
+  raw_data, 
+  id_var = "id",
+  time_var = "time",
+  y_var = "y")
+
+mc <- plot_correlation(
+  fit_orm, 
+  id_var = "id",
+  time_var = "time",
+  y_var = "y",
+  times = seq_len(FOLLOW_UP), 
+  ylevels = fit_orm$yunique, 
+  absorb = ABSORB)
+
+ec
+mc
+```
+
+```{r}
+et <- plot_transitions(
+  raw_data, 
+  id_var = "id",
+  time_var = "time",
+  y_var = "y")
+
+mt <- plot_transitions(
+  fit_orm, 
+  id_var = "id",
+  time_var = "time",
+  y_var = "y",
+  times = seq_len(FOLLOW_UP), 
+  ylevels = fit_orm$yunique, 
+  absorb = ABSORB)
+
+et
+mt
+
+td <- plot_transitions(
+  fit_orm, 
+  comparison = "difference",
+  variables = list(tx = c(0, 1)),
+  id_var = "id",
+  time_var = "time",
+  y_var = "y",
+  times = seq_len(FOLLOW_UP), 
+  ylevels = fit_orm$yunique, 
+  absorb = ABSORB)
+td
+```
+
+```{r}
+plot_variogram(
+  raw_data, 
+  id_var = "id",
+  time_var = "time",
+  y_var = "y"
+  ) +
+  coord_cartesian(ylim = c(0, 1))
+
+plot_variogram(
+  fit_orm, 
+  id_var = "id",
+  time_var = "time",
+  y_var = "y",
+  times = seq_len(FOLLOW_UP), 
+  ylevels = fit_orm$yunique, 
+  absorb = ABSORB) +
+  coord_cartesian(ylim = c(0, 1))
+```
+
 
 ## References
 
