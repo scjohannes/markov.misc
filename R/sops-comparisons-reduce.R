@@ -1,19 +1,19 @@
-# Average comparison metric reducers.
+# Average comparison estimand reducers.
 
 avg_comparison_from_avg_sops <- function(
   x,
-  metric,
+  estimand,
   state_sets,
   comparison,
   time_map,
   origin_time,
-  xout,
+  target_times,
   origin,
   time_unit,
   return_draws
 ) {
   if (
-    metric == "time_in_state" && (!is.null(time_map) || !is.null(origin_time))
+    estimand == "time_in_state" && (!is.null(time_map) || !is.null(origin_time))
   ) {
     if (is.null(time_map)) {
       stop("`time_map` must be supplied for real-time AUC.")
@@ -21,7 +21,7 @@ avg_comparison_from_avg_sops <- function(
     x <- interpolate_sops(
       x,
       time_map = time_map,
-      xout = xout,
+      target_times = target_times,
       origin_time = origin_time,
       origin = origin
     )
@@ -32,7 +32,7 @@ avg_comparison_from_avg_sops <- function(
   real_time <- inherits(x, "markov_interpolated_sops")
   point <- reduce_avg_sop_metric_df(
     data = as.data.frame(x),
-    metric = metric,
+    estimand = estimand,
     state_sets = state_sets,
     variables = variables,
     by = by,
@@ -49,7 +49,7 @@ avg_comparison_from_avg_sops <- function(
     value_col <- sop_draw_value_col(draws)
     draw_reduced <- reduce_avg_sop_metric_df(
       data = as.data.frame(draws),
-      metric = metric,
+      estimand = estimand,
       state_sets = state_sets,
       variables = variables,
       by = by,
@@ -90,7 +90,7 @@ avg_comparison_from_avg_sops <- function(
 
 reduce_avg_sop_metric_df <- function(
   data,
-  metric,
+  estimand,
   state_sets,
   variables,
   by,
@@ -99,7 +99,7 @@ reduce_avg_sop_metric_df <- function(
   real_time,
   time_unit
 ) {
-  if (metric == "sop") {
+  if (estimand == "sop") {
     out <- reduce_sop_comparison_df(
       data = data,
       state_sets = state_sets,
@@ -108,7 +108,7 @@ reduce_avg_sop_metric_df <- function(
       comparison = comparison,
       value_col = value_col
     )
-  } else if (metric == "time_in_state") {
+  } else if (estimand == "time_in_state") {
     out <- reduce_time_in_state_comparison_df(
       data = data,
       state_sets = state_sets,
@@ -119,7 +119,7 @@ reduce_avg_sop_metric_df <- function(
       real_time = real_time
     )
   } else {
-    stop("Unknown comparison metric: ", metric)
+    stop("Unknown comparison estimand: ", estimand)
   }
 
   if (!is.null(time_unit)) {
@@ -153,7 +153,7 @@ reduce_sop_comparison_df <- function(
       variables = variables,
       comparison = comparison
     )
-    comp$metric <- "sop"
+    comp$estimand <- "sop"
     comp$state_set <- names(state_sets)[i]
     pieces[[i]] <- comp
   }
@@ -162,10 +162,10 @@ reduce_sop_comparison_df <- function(
   reorder_columns(
     out,
     c(
-      "metric",
+      "estimand",
       "time",
       "state_set",
-      "variable",
+      "term",
       "reference_level",
       "comparison_level",
       "contrast",
@@ -211,7 +211,7 @@ reduce_time_in_state_comparison_df <- function(
       variables = variables,
       comparison = comparison
     )
-    comp$metric <- "time_in_state"
+    comp$estimand <- "time_in_state"
     comp$state_set <- names(state_sets)[i]
     pieces[[i]] <- comp
   }
@@ -220,9 +220,9 @@ reduce_time_in_state_comparison_df <- function(
   reorder_columns(
     out,
     c(
-      "metric",
+      "estimand",
       "state_set",
-      "variable",
+      "term",
       "reference_level",
       "comparison_level",
       "contrast",
@@ -307,7 +307,7 @@ compare_counterfactual_levels <- function(
 
     merged <- merge(hi_df, ref_df, by = base_cols, all.x = TRUE, sort = FALSE)
     out <- merged[, base_cols, drop = FALSE]
-    out$variable <- varname
+    out$term <- varname
     out$reference_level <- ref
     out$comparison_level <- level
     out$contrast <- comparison_contrast_label(level, ref, comparison)
@@ -351,13 +351,13 @@ comparison_value <- function(hi, lo, comparison) {
 avg_comparison_time_benefit_point <- function(
   model,
   setup,
-  ylevels,
+  y_levels,
   absorb,
-  tvarname,
-  pvarname,
-  p2varname,
-  gap,
-  t_covs,
+  time_var,
+  p_var,
+  p2_var,
+  gap_var,
+  time_covariates,
   include_re,
   n_draws,
   seed,
@@ -367,7 +367,7 @@ avg_comparison_time_benefit_point <- function(
   comparison,
   time_map,
   origin_time,
-  xout,
+  target_times,
   origin,
   time_unit,
   ...
@@ -377,14 +377,14 @@ avg_comparison_time_benefit_point <- function(
     newdata = setup$newdata_pred,
     refit_data = setup$refit_data,
     times = setup$times,
-    ylevels = ylevels,
+    y_levels = y_levels,
     absorb = absorb,
-    tvarname = tvarname,
-    pvarname = pvarname,
+    time_var = time_var,
+    p_var = p_var,
     id_var = setup$id_var,
-    p2varname = p2varname,
-    gap = gap,
-    t_covs = t_covs,
+    p2_var = p2_var,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     include_re = include_re,
     n_draws = n_draws,
     seed = seed,
@@ -401,14 +401,14 @@ avg_comparison_time_benefit_point <- function(
     ind <- interpolate_sops(
       ind,
       time_map = time_map,
-      xout = xout,
+      target_times = target_times,
       origin_time = origin_time,
       origin = origin
     )
   }
 
   setup$times <- sort(unique(ind$time))
-  setup$ylevels <- attr(ind, "ylevels")
+  setup$y_levels <- attr(ind, "y_levels")
   point <- reduce_time_benefit_sops_df(
     data = as.data.frame(ind),
     setup = setup,
@@ -457,14 +457,14 @@ avg_comparison_time_benefit_point <- function(
 copy_sops_attrs_to_setup <- function(setup, x) {
   call_args <- attr(x, "call_args")
   setup$times <- call_args$times %||% setup$times
-  setup$ylevels <- attr(x, "ylevels") %||% setup$ylevels
+  setup$y_levels <- attr(x, "y_levels") %||% setup$y_levels
   setup$call_args <- call_args %||% setup$call_args
-  setup$tvarname <- attr(x, "tvarname") %||% setup$tvarname
-  setup$pvarname <- attr(x, "pvarname") %||% setup$pvarname
-  setup$p2varname <- attr(x, "p2varname") %||% setup$p2varname
+  setup$time_var <- attr(x, "time_var") %||% setup$time_var
+  setup$p_var <- attr(x, "p_var") %||% setup$p_var
+  setup$p2_var <- attr(x, "p2_var") %||% setup$p2_var
   setup$absorb <- attr(x, "absorb") %||% setup$absorb
-  setup$gap <- attr(x, "gap") %||% setup$gap
-  setup$t_covs <- attr(x, "t_covs") %||% setup$t_covs
+  setup$gap_var <- attr(x, "gap_var") %||% setup$gap_var
+  setup$time_covariates <- attr(x, "time_covariates") %||% setup$time_covariates
   setup
 }
 
@@ -513,7 +513,7 @@ reduce_time_benefit_sops_df <- function(
 }
 
 counterfactual_array_from_tidy <- function(data, value_col, setup) {
-  states <- as_state_labels(setup$ylevels)
+  states <- as_state_labels(setup$y_levels)
   times <- setup$times %||% sort(unique(data$time))
   n_states <- length(states)
   n_times <- length(times)
@@ -553,7 +553,7 @@ time_benefit_from_counterfactual_array <- function(
   varname <- names(setup$variables)[1]
   ref_idx <- 1L
   comp_idx <- seq.int(2L, length(values))
-  state_seq <- seq_along(as_state_labels(setup$ylevels))
+  state_seq <- seq_along(as_state_labels(setup$y_levels))
   score <- outer(state_seq, state_seq, function(ref, hi) sign(ref - hi))
   times <- setup$times %||% seq_len(dim(sops_array)[3])
   by <- setup$by
@@ -588,8 +588,8 @@ time_benefit_from_counterfactual_array <- function(
       by = by,
       weights = weights
     )
-    summary$metric <- "time_benefit"
-    summary$variable <- varname
+    summary$estimand <- "time_benefit"
+    summary$term <- varname
     summary$reference_level <- values[1]
     summary$comparison_level <- values[level_idx]
     summary$contrast <- comparison_contrast_label(
@@ -605,8 +605,8 @@ time_benefit_from_counterfactual_array <- function(
   reorder_columns(
     out,
     c(
-      "metric",
-      "variable",
+      "estimand",
+      "term",
       "reference_level",
       "comparison_level",
       "contrast",

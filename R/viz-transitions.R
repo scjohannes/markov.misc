@@ -13,14 +13,14 @@
 #' @details
 #' Minimum inputs depend on the object type. For trajectory data, `object` must
 #' contain the current time, current state, and previous-state columns named by
-#' `time_var`, `y_var`, and `pvarname`. For model-based plots, pass a fitted
+#' `time_var`, `y_var`, and `p_var`. For model-based plots, pass a fitted
 #' Markov model and `times`; use `newdata` for explicit prediction profiles and
-#' pass `ylevels` or `absorb` when they are not inferable or absorbing-state
+#' pass `y_levels` or `absorb` when they are not inferable or absorbing-state
 #' behavior matters. Difference plots also require
 #' `comparison = "difference"` and `variables = list(var = c(reference,
 #' comparison))`.
 #'
-#' @param object A trajectory data frame or a fitted Markov model.
+#' @param x A trajectory data frame or a fitted Markov model.
 #' @param newdata Optional data frame of prediction profiles for model-based
 #'   plots. If `NULL`, wrapper-fitted models use their stored data and extract
 #'   one prediction row per ID.
@@ -31,22 +31,22 @@
 #'   first value is the reference.
 #' @param times Optional current-time values to plot. Required for model-based
 #'   plots.
-#' @param ylevels Optional state levels. If omitted for model-based plots,
+#' @param y_levels Optional state levels. If omitted for model-based plots,
 #'   levels are inferred from the model when possible.
 #' @param absorb Optional absorbing-state label.
 #' @param comparison `"none"` for transition proportions or `"difference"` for
 #'   counterfactual differences in transition proportions.
 #' @param time_var Character name of the time column in trajectory data.
 #' @param y_var Character name of the current-state column in trajectory data.
-#' @param pvarname Character name of the previous-state column.
-#' @param p2varname Optional second previous-state column for second-order
+#' @param p_var Character name of the previous-state column.
+#' @param p2_var Optional second previous-state column for second-order
 #'   model recursion.
 #' @param id_var Optional ID column used to extract one stored prediction row per
 #'   patient.
 #' @param facet_var Optional observed grouping variable. The plot always facets
 #'   by time; `facet_var` adds grouping to the time panels.
-#' @param gap Optional time-gap variable used by the fitted model.
-#' @param t_covs Optional time-varying covariate lookup table used by the fitted
+#' @param gap_var Optional time-gap_var variable used by the fitted model.
+#' @param time_covariates Optional time-varying covariate lookup table used by the fitted
 #'   model.
 #' @param seed Optional random seed for `blrm` posterior draw selection.
 #' @param n_draws Integer number of posterior draws to sample for `blrm`, or
@@ -61,41 +61,42 @@
 #'
 #' @examples
 #' \dontrun{
-#' plot_transitions(data, time_var = "week", pvarname = "yprev")
+#' plot_transitions(data, time_var = "week", p_var = "yprev")
 #'
 #' plot_transitions(
 #'   fit,
 #'   times = 1:7,
 #'   variables = list(tx = c(0, 1)),
 #'   comparison = "difference",
-#'   ylevels = 1:8,
+#'   y_levels = 1:8,
 #'   absorb = 8
 #' )
 #' }
 #' @export
 plot_transitions <- function(
-  object,
+  x,
   newdata = NULL,
   refit_data = NULL,
   variables = NULL,
   times = NULL,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   comparison = c("none", "difference"),
   time_var = "time",
   y_var = "y",
-  pvarname = "yprev",
-  p2varname = NULL,
+  p_var = "yprev",
+  p2_var = NULL,
   id_var = NULL,
   facet_var = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   seed = NULL,
   n_draws = 100L,
   show_values = TRUE,
   digits = NULL,
   fill_limits = NULL
 ) {
+  object <- x
   comparison <- match.arg(comparison)
   if (
     !is.logical(show_values) || length(show_values) != 1L || is.na(show_values)
@@ -117,16 +118,16 @@ plot_transitions <- function(
       refit_data = refit_data,
       variables = variables,
       times = times,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
       comparison = comparison,
       time_var = time_var,
-      pvarname = pvarname,
-      p2varname = p2varname,
+      p_var = p_var,
+      p2_var = p2_var,
       id_var = id_var,
       facet_var = facet_var,
-      gap = gap,
-      t_covs = t_covs,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       seed = seed,
       n_draws = n_draws
     )
@@ -148,9 +149,9 @@ plot_transitions <- function(
       times = times,
       time_var = time_var,
       y_var = y_var,
-      pvarname = pvarname,
+      p_var = p_var,
       facet_var = facet_var,
-      ylevels = ylevels
+      y_levels = y_levels
     )
   }
 

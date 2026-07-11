@@ -11,7 +11,7 @@ test_that("plot_transitions creates empirical joint-proportion heatmaps", {
     data,
     time_var = "week",
     y_var = "y",
-    pvarname = "yprev"
+    p_var = "yprev"
   )
 
   expect_s3_class(plot, "ggplot")
@@ -36,7 +36,7 @@ test_that("plot_transitions orders numeric-looking time facets numerically", {
     data,
     time_var = "week",
     y_var = "y",
-    pvarname = "yprev"
+    p_var = "yprev"
   )
 
   data$week <- factor(data$week)
@@ -44,7 +44,7 @@ test_that("plot_transitions orders numeric-looking time facets numerically", {
     data,
     time_var = "week",
     y_var = "y",
-    pvarname = "yprev"
+    p_var = "yprev"
   )
 
   expected <- paste0("Time ", 1:12)
@@ -65,7 +65,7 @@ test_that("plot_transitions orders sparse time facets chronologically", {
     times = c(1, 7, 14),
     time_var = "week",
     y_var = "y",
-    pvarname = "yprev"
+    p_var = "yprev"
   )
 
   expect_equal(levels(plot$data$.panel), paste0("Time ", c(1, 7, 14)))
@@ -93,7 +93,7 @@ test_that("model transition diagnostics evaluate full sparse numeric grids", {
         model,
         newdata = newdata,
         times = c(1, 7, 14),
-        ylevels = 1:2,
+        y_levels = 1:2,
         seed = 1,
         show_values = FALSE
       )
@@ -128,8 +128,8 @@ test_that("second-order model diagnostics evaluate full sparse numeric grids", {
         model,
         newdata = newdata,
         times = c(1, 7, 14),
-        ylevels = 1:2,
-        p2varname = "ypprev",
+        y_levels = 1:2,
+        p2_var = "ypprev",
         seed = 1,
         show_values = FALSE
       )
@@ -185,27 +185,27 @@ test_that("transition traces preserve first- and second-order SOP marginals", {
         model,
         data = first_order,
         times = 1:3,
-        ylevels = 1:2
+        y_levels = 1:2
       )
       sops_first <- soprob_markov(
         model,
-        data = first_order,
+        newdata = first_order,
         times = 1:3,
-        ylevels = 1:2
+        y_levels = 1:2
       )
       trace_second <- markov.misc:::markov_transition_trace(
         model,
         data = second_order,
         times = 1:3,
-        ylevels = 1:2,
-        p2varname = "ypprev"
+        y_levels = 1:2,
+        p2_var = "ypprev"
       )
       sops_second <- soprob_markov(
         model,
-        data = second_order,
+        newdata = second_order,
         times = 1:3,
-        ylevels = 1:2,
-        p2varname = "ypprev"
+        y_levels = 1:2,
+        p2_var = "ypprev"
       )
     }
   )
@@ -248,8 +248,8 @@ test_that("plot_transitions computes second-order treatment differences", {
         times = 1,
         variables = list(tx = c(0, 1)),
         comparison = "difference",
-        ylevels = 1:2,
-        p2varname = "ypprev",
+        y_levels = 1:2,
+        p2_var = "ypprev",
         seed = 1
       )
     }
@@ -291,7 +291,7 @@ test_that("plot_transitions carries absorbing states absent from yprev levels", 
         model,
         newdata = newdata,
         times = 1:2,
-        ylevels = 1:2,
+        y_levels = 1:2,
         absorb = 2,
         seed = 1
       )
@@ -305,7 +305,7 @@ test_that("plot_transitions carries absorbing states absent from yprev levels", 
 test_that("plot_transitions summarizes blrm transition draws without sampling", {
   model <- structure(
     list(
-      ylevels = 1:2,
+      y_levels = 1:2,
       draws = matrix(0, nrow = 3, ncol = 1)
     ),
     class = "blrm"
@@ -352,7 +352,7 @@ test_that("plot_transitions summarizes blrm transition draws without sampling", 
         model,
         newdata = newdata,
         times = 1,
-        ylevels = 1:2,
+        y_levels = 1:2,
         seed = 1,
         n_draws = NULL
       )
@@ -374,7 +374,7 @@ test_that("plot_transitions summarizes blrm transition draws without sampling", 
 test_that("plot_transitions passes n_draws to blrm diagnostics", {
   model <- structure(
     list(
-      ylevels = 1:2,
+      y_levels = 1:2,
       draws = matrix(0, nrow = 3, ncol = 1)
     ),
     class = "blrm"
@@ -414,7 +414,7 @@ test_that("plot_transitions passes n_draws to blrm diagnostics", {
         model,
         newdata = newdata,
         times = 1,
-        ylevels = 1:2,
+        y_levels = 1:2,
         seed = 123,
         n_draws = 1
       )
@@ -503,14 +503,14 @@ test_that("plot_correlation uses first-order model-implied moments", {
         model,
         newdata = newdata,
         times = 1:2,
-        ylevels = 1:2,
+        y_levels = 1:2,
         show_values = FALSE
       )
       variogram <- plot_variogram(
         model,
         newdata = newdata,
         times = 1:2,
-        ylevels = 1:2,
+        y_levels = 1:2,
         smooth = FALSE
       )
     }
@@ -544,8 +544,8 @@ test_that("plot_correlation uses second-order model-implied moments", {
         model,
         newdata = newdata,
         times = 1:3,
-        ylevels = 1:2,
-        p2varname = "ypprev",
+        y_levels = 1:2,
+        p2_var = "ypprev",
         show_values = FALSE
       )
     }
@@ -557,7 +557,7 @@ test_that("plot_correlation uses second-order model-implied moments", {
 test_that("plot_correlation summarizes blrm correlations by draw", {
   model <- structure(
     list(
-      ylevels = 1:2,
+      y_levels = 1:2,
       draws = matrix(0, nrow = 2, ncol = 1)
     ),
     class = "blrm"
@@ -604,7 +604,7 @@ test_that("plot_correlation summarizes blrm correlations by draw", {
         model,
         newdata = newdata,
         times = 1:2,
-        ylevels = 1:2,
+        y_levels = 1:2,
         seed = 1,
         n_draws = NULL,
         show_values = FALSE
@@ -619,7 +619,7 @@ test_that("plot_correlation summarizes blrm correlations by draw", {
 test_that("plot_correlation and plot_variogram pass n_draws to blrm diagnostics", {
   model <- structure(
     list(
-      ylevels = 1:2,
+      y_levels = 1:2,
       draws = matrix(0, nrow = 4, ncol = 1)
     ),
     class = "blrm"
@@ -663,7 +663,7 @@ test_that("plot_correlation and plot_variogram pass n_draws to blrm diagnostics"
         model,
         newdata = newdata,
         times = 1:2,
-        ylevels = 1:2,
+        y_levels = 1:2,
         seed = 321,
         n_draws = 1,
         show_values = FALSE
@@ -672,7 +672,7 @@ test_that("plot_correlation and plot_variogram pass n_draws to blrm diagnostics"
         model,
         newdata = newdata,
         times = 1:2,
-        ylevels = 1:2,
+        y_levels = 1:2,
         seed = 654,
         n_draws = 1,
         smooth = FALSE
@@ -715,7 +715,7 @@ test_that("plot_lp_difference plots profile-based contrasts by previous state", 
         variables = list(tx = c(0, 1)),
         times = 1:2,
         previous_states = 1:2,
-        ylevels = 1:2
+        y_levels = 1:2
       )
     }
   )
@@ -750,7 +750,7 @@ test_that("plot_lp_difference supports blrm posterior median linear predictors",
         variables = list(tx = c(0, 1)),
         times = 1:2,
         previous_states = 1:2,
-        ylevels = 1:3
+        y_levels = 1:3
       )
     }
   )

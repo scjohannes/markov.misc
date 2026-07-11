@@ -8,25 +8,25 @@ avg_comparisons(
   model,
   newdata = NULL,
   variables,
-  metric = c("sop", "time_in_state", "time_benefit"),
-  states = NULL,
+  estimand = c("sop", "time_in_state", "time_benefit"),
+  state_sets = NULL,
   comparison = c("difference", "ratio"),
   by = NULL,
   times,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   time_map = NULL,
   origin_time = NULL,
-  xout = NULL,
+  target_times = NULL,
   origin = c("empirical_baseline", "none"),
   time_unit = NULL,
   refit_data = NULL,
   id_var = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  p2varname = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  p2_var = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   include_re = FALSE,
   n_draws = 100L,
   seed = NULL,
@@ -45,10 +45,10 @@ avg_comparisons(
 \item{variables}{A named list with one counterfactual variable. The variable
 must contain at least two values, for example \code{list(tx = c(0, 1))}.}
 
-\item{metric}{Character scalar. One of \code{"sop"}, \code{"time_in_state"}, or
+\item{estimand}{Character scalar. One of \code{"sop"}, \code{"time_in_state"}, or
 \code{"time_benefit"}.}
 
-\item{states}{State selection for \code{"sop"} and \code{"time_in_state"}. \code{NULL}
+\item{state_sets}{State selection for \code{"sop"} and \code{"time_in_state"}. \code{NULL}
 returns one result per state. An atomic vector is treated as one lumped
 state set. A named list returns one result per named state set.}
 
@@ -61,7 +61,7 @@ standardization.}
 
 \item{times}{Required visit-scale time points. See \code{\link[=avg_sops]{avg_sops()}}.}
 
-\item{ylevels}{A vector of state levels. See \code{\link[=avg_sops]{avg_sops()}}.}
+\item{y_levels}{A vector of state levels. See \code{\link[=avg_sops]{avg_sops()}}.}
 
 \item{absorb}{The absorbing state. See \code{\link[=avg_sops]{avg_sops()}}.}
 
@@ -72,7 +72,7 @@ labels to real elapsed times. Used by \code{"time_in_state"} and
 \item{origin_time}{Optional real time for an empirical baseline anchor. See
 \code{\link[=interpolate_sops]{interpolate_sops()}}.}
 
-\item{xout}{Optional numeric real-time grid when \code{time_map} is supplied.}
+\item{target_times}{Optional numeric real-time grid when \code{time_map} is supplied.}
 
 \item{origin}{Origin handling when \code{origin_time} is supplied. See
 \code{\link[=interpolate_sops]{interpolate_sops()}}.}
@@ -84,16 +84,16 @@ inference. It is not used for point estimates. See \code{\link[=avg_sops]{avg_so
 
 \item{id_var}{Name of the patient ID variable. See \code{\link[=avg_sops]{avg_sops()}}.}
 
-\item{tvarname}{Name of the time variable in the model. See \code{\link[=avg_sops]{avg_sops()}}.}
+\item{time_var}{Name of the time variable in the model. See \code{\link[=avg_sops]{avg_sops()}}.}
 
-\item{pvarname}{Name of the previous state variable in the model. See
+\item{p_var}{Name of the previous state variable in the model. See
 \code{\link[=avg_sops]{avg_sops()}}.}
 
-\item{p2varname}{Optional second previous-state variable. See \code{\link[=avg_sops]{avg_sops()}}.}
+\item{p2_var}{Optional second previous-state variable. See \code{\link[=avg_sops]{avg_sops()}}.}
 
-\item{gap}{Name of the time gap variable, if used. See \code{\link[=avg_sops]{avg_sops()}}.}
+\item{gap_var}{Name of the time gap_var variable, if used. See \code{\link[=avg_sops]{avg_sops()}}.}
 
-\item{t_covs}{Optional time-varying covariate lookup table for explicit
+\item{time_covariates}{Optional time-varying covariate lookup table for explicit
 precomputed time-basis columns. See \code{\link[=avg_sops]{avg_sops()}}.}
 
 \item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
@@ -123,8 +123,8 @@ The first value in \code{variables[[1]]} is the reference level, and every later
 value is compared to it. Reverse the order of values to reverse the contrast.
 }
 \details{
-\code{metric = "sop"} and \code{metric = "time_in_state"} are computed from marginal
-SOPs. \code{metric = "time_benefit"} is computed before marginalization from
+\code{estimand = "sop"} and \code{estimand = "time_in_state"} are computed from marginal
+SOPs. \code{estimand = "time_benefit"} is computed before marginalization from
 paired patient/profile-level counterfactual state distributions, because it
 is nonlinear in the two state distributions.
 
@@ -138,13 +138,13 @@ posterior SOP draws directly and therefore return uncertainty from
 avg_comparisons(
   fit,
   variables = list(tx = c(0, 1)),
-  metric = "time_in_state",
-  states = "1",
+  estimand = "time_in_state",
+  state_sets = "1",
   times = 1:30,
-  ylevels = 1:6,
+  y_levels = 1:6,
   absorb = 6
 ) |>
-  inferences(method = "simulation", n_sim = 500)
+  inferences(method = "mvn", n_draws = 500)
 }
 
 }

@@ -18,28 +18,28 @@
 #'   variables this is a numeric vector. For factor-valued visit indices,
 #'   values are matched to the fitted factor levels; if `NULL`, all fitted
 #'   visit levels are used.
-#' @param ylevels A character vector defining the names of the outcome levels (states).
+#' @param y_levels A character vector defining the names of the outcome levels (states).
 #'   These must match the levels used in the fitted `object`.
 #' @param absorb (Optional) A character vector of absorbing states (states from which
 #'   transitions out are impossible). Defaults to \code{NULL}.
-#' @param tvarname A character string specifying the name of the time variable in the
+#' @param time_var A character string specifying the name of the time variable in the
 #'   model formula. Defaults to \code{"time"}.
-#' @param pvarname A character string specifying the name of the previous state variable
+#' @param p_var A character string specifying the name of the previous state variable
 #'   used in the model formula. Defaults to \code{"yprev"}.
-#' @param p2varname Optional character string specifying the second previous
+#' @param p2_var Optional character string specifying the second previous
 #'   state variable. `NULL` uses first-order recursion; any non-`NULL` value
-#'   uses second-order recursion with histories `(p2varname, pvarname)`.
-#' @param gap (Optional) A character string specifying the name of the variable representing
-#'   the time gap (delta time) between observations, if used in the model. Defaults to \code{NULL}.
-#' @param t_covs (Optional) A data frame used for explicit time-basis columns
+#'   uses second-order recursion with histories `(p2_var, p_var)`.
+#' @param gap_var (Optional) A character string specifying the name of the variable representing
+#'   the time gap_var (delta time) between observations, if used in the model. Defaults to \code{NULL}.
+#' @param time_covariates (Optional) A data frame used for explicit time-basis columns
 #'   or other time-varying covariates.
 #'   \itemize{
-#'     \item **Structure:** The number of rows in \code{t_covs} must exactly match the length of \code{times}.
+#'     \item **Structure:** The number of rows in \code{time_covariates} must exactly match the length of \code{times}.
 #'     \item **Columns:** Column names must match the specific basis variables used in the model formula (e.g., \code{t1}, \code{t2}).
-#'     \item **Usage:** At step \code{i}, the values from the \code{i}-th row of \code{t_covs} are injected into the prediction data.
+#'     \item **Usage:** At step \code{i}, the values from the \code{i}-th row of \code{time_covariates} are injected into the prediction data.
 #'   }
 #'   Inline model terms such as \code{rms::rcs(time, 4)} do not require
-#'   \code{t_covs}; prediction reuses the fitted model's stored transform
+#'   \code{time_covariates}; prediction reuses the fitted model's stored transform
 #'   metadata.
 #' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
 #'   fitted random-effect draws in posterior predictions. This does not
@@ -113,31 +113,33 @@
 #' baseline <- markov_data[!duplicated(markov_data$id), , drop = FALSE]
 #' probabilities <- soprob_markov(
 #'   fit,
-#'   data = baseline,
+#'   newdata = baseline,
 #'   times = 1:3,
-#'   ylevels = fit$yunique,
+#'   y_levels = fit$yunique,
 #'   absorb = "8"
 #' )
 #' dim(probabilities)
 #'
 #' @export
 soprob_markov <- function(
-  object,
-  data,
+  model,
+  newdata,
   times = NULL,
-  ylevels,
+  y_levels,
   absorb = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  p2varname = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  p2_var = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   include_re = FALSE,
   id_var = NULL,
   n_draws = 100L,
   seed = NULL,
   ...
 ) {
+  object <- model
+  data <- newdata
   # --- 1. Initial Checks & Setup ---
   dots <- list(...)
   unknown_dots <- setdiff(names(dots), c(".draw_indices", ".gamma_draws"))
@@ -176,13 +178,13 @@ soprob_markov <- function(
   # Validate model is compatible with Markov simulation
   validate_markov_model(object)
 
-  if (!pvarname %in% names(data)) {
-    stop("Previous-state variable `", pvarname, "` not found in `data`.")
+  if (!p_var %in% names(data)) {
+    stop("Previous-state variable `", p_var, "` not found in `data`.")
   }
-  if (!is.null(p2varname) && !p2varname %in% names(data)) {
+  if (!is.null(p2_var) && !p2_var %in% names(data)) {
     stop(
       "Second previous-state variable `",
-      p2varname,
+      p2_var,
       "` not found in `data`."
     )
   }
@@ -190,13 +192,13 @@ soprob_markov <- function(
     object,
     data,
     times,
-    tvarname,
-    t_covs = t_covs,
+    time_var,
+    time_covariates = time_covariates,
     default = "unique"
   )
   times <- time_res$times
   time_info <- time_res$time_info
-  validate_factor_gap(gap, t_covs, time_info)
+  validate_factor_gap(gap_var, time_covariates, time_info)
 
   draw_indices <- NULL
   if (ftype == "rmsb") {
@@ -233,7 +235,7 @@ soprob_markov <- function(
   # Prepare dimensions
   n_pat <- nrow(data)
   n_times <- length(times)
-  ylevel_names <- as_state_labels(ylevels)
+  ylevel_names <- as_state_labels(y_levels)
   absorb_names <- as_state_labels(absorb)
   n_states <- length(ylevel_names)
   absorb_idx <- which(ylevel_names %in% absorb_names)
@@ -264,11 +266,11 @@ soprob_markov <- function(
   # Update time variables for T1
   data <- assign_sop_visit(
     data,
-    tvarname = tvarname,
+    time_var = time_var,
     times = times,
     index = 1L,
-    t_covs = t_covs,
-    gap = gap,
+    time_covariates = time_covariates,
+    gap_var = gap_var,
     time_info = time_info
   )
 
@@ -282,7 +284,7 @@ soprob_markov <- function(
     P[,, 1, ] <- p_t1
   }
 
-  if (!is.null(p2varname)) {
+  if (!is.null(p2_var)) {
     return(soprob_markov_second_order_run(
       P = P,
       object = object,
@@ -292,11 +294,11 @@ soprob_markov <- function(
       times = times,
       ylevel_names = ylevel_names,
       absorb_names = absorb_names,
-      tvarname = tvarname,
-      pvarname = pvarname,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      time_var = time_var,
+      p_var = p_var,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       time_info = time_info
     ))
   }
@@ -315,22 +317,22 @@ soprob_markov <- function(
   # Assign the previous state variable
   # We repeat each state n_pat times
 
-  edata_base[[pvarname]] <- make_previous_state_column(
+  edata_base[[p_var]] <- make_previous_state_column(
     states = yna,
-    prototype = data[[pvarname]],
+    prototype = data[[p_var]],
     n = n_pat,
-    pvarname = pvarname
+    p_var = p_var
   )
 
   # --- 4. Iterate Through Time (Vectorized over Patients) ---
   for (it in 2:n_times) {
     edata_base <- assign_sop_visit(
       edata_base,
-      tvarname = tvarname,
+      time_var = time_var,
       times = times,
       index = it,
-      t_covs = t_covs,
-      gap = gap,
+      time_covariates = time_covariates,
+      gap_var = gap_var,
       time_info = time_info
     )
 
@@ -417,7 +419,7 @@ match_state_indices <- function(values, ylevel_names, varname) {
     stop(
       "Values in `",
       varname,
-      "` are not among `ylevels`: ",
+      "` are not among `y_levels`: ",
       paste(utils::head(bad, 5), collapse = ", "),
       if (length(bad) > 5) " ..." else ""
     )
@@ -436,7 +438,7 @@ check_transition_probabilities <- function(probs, context) {
     ". This often happens when the SOP recursion asks for transitions from ",
     "a state level that is not represented in the fitted transition model. ",
     "If that level is absorbing, pass it via `absorb`; otherwise check that ",
-    "`data`, `ylevels`, and fitted factor levels agree.",
+    "`data`, `y_levels`, and fitted factor levels agree.",
     call. = FALSE
   )
 }
@@ -450,11 +452,11 @@ soprob_markov_second_order_run <- function(
   times,
   ylevel_names,
   absorb_names,
-  tvarname,
-  pvarname,
-  p2varname,
-  gap,
-  t_covs,
+  time_var,
+  p_var,
+  p2_var,
+  gap_var,
+  time_covariates,
   time_info
 ) {
   n_pat <- nrow(data)
@@ -462,7 +464,7 @@ soprob_markov_second_order_run <- function(
   n_states <- length(ylevel_names)
   absorb_idx <- which(ylevel_names %in% absorb_names)
   non_absorb_idx <- setdiff(seq_len(n_states), absorb_idx)
-  prev_idx <- match_state_indices(data[[pvarname]], ylevel_names, pvarname)
+  prev_idx <- match_state_indices(data[[p_var]], ylevel_names, p_var)
 
   if (nd == 0) {
     joint_prev <- array(
@@ -519,27 +521,27 @@ soprob_markov_second_order_run <- function(
   })
 
   edata_base <- data[rep(seq_len(n_pat), times = n_pairs), , drop = FALSE]
-  edata_base[[p2varname]] <- make_previous_state_column(
+  edata_base[[p2_var]] <- make_previous_state_column(
     states = ylevel_names[pair_grid$h],
-    prototype = data[[p2varname]],
+    prototype = data[[p2_var]],
     n = n_pat,
-    pvarname = p2varname
+    p_var = p2_var
   )
-  edata_base[[pvarname]] <- make_previous_state_column(
+  edata_base[[p_var]] <- make_previous_state_column(
     states = ylevel_names[pair_grid$j],
-    prototype = data[[pvarname]],
+    prototype = data[[p_var]],
     n = n_pat,
-    pvarname = pvarname
+    p_var = p_var
   )
 
   for (it in 2:n_times) {
     edata_base <- assign_sop_visit(
       edata_base,
-      tvarname = tvarname,
+      time_var = time_var,
       times = times,
       index = it,
-      t_covs = t_covs,
-      gap = gap,
+      time_covariates = time_covariates,
+      gap_var = gap_var,
       time_info = time_info
     )
 

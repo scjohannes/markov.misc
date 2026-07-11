@@ -8,7 +8,7 @@ inferences_simulation(
   object,
   engine,
   score_weight_dist,
-  n_sim,
+  n_draws,
   vcov,
   cluster,
   conf_level,
@@ -24,7 +24,7 @@ inferences_simulation(
 
 \item{score_weight_dist}{Cluster weight distribution for score bootstrap.}
 
-\item{n_sim}{Number of simulation draws.}
+\item{n_draws}{Number of simulation draws.}
 
 \item{vcov}{Custom variance-covariance matrix (optional, overrides model vcov).}
 

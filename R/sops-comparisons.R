@@ -11,9 +11,9 @@
 #'   [avg_sops()].
 #' @param variables A named list with one counterfactual variable. The variable
 #'   must contain at least two values, for example `list(tx = c(0, 1))`.
-#' @param metric Character scalar. One of `"sop"`, `"time_in_state"`, or
+#' @param estimand Character scalar. One of `"sop"`, `"time_in_state"`, or
 #'   `"time_benefit"`.
-#' @param states State selection for `"sop"` and `"time_in_state"`. `NULL`
+#' @param state_sets State selection for `"sop"` and `"time_in_state"`. `NULL`
 #'   returns one result per state. An atomic vector is treated as one lumped
 #'   state set. A named list returns one result per named state set.
 #' @param comparison Character scalar. `"difference"` computes comparison level
@@ -22,26 +22,26 @@
 #' @param by Optional character vector of variables to stratify by after
 #'   standardization.
 #' @param times Required visit-scale time points. See [avg_sops()].
-#' @param ylevels A vector of state levels. See [avg_sops()].
+#' @param y_levels A vector of state levels. See [avg_sops()].
 #' @param absorb The absorbing state. See [avg_sops()].
 #' @param time_map Optional named numeric vector or data frame mapping visit
 #'   labels to real elapsed times. Used by `"time_in_state"` and
 #'   `"time_benefit"`.
 #' @param origin_time Optional real time for an empirical baseline anchor. See
 #'   [interpolate_sops()].
-#' @param xout Optional numeric real-time grid when `time_map` is supplied.
+#' @param target_times Optional numeric real-time grid when `time_map` is supplied.
 #' @param origin Origin handling when `origin_time` is supplied. See
 #'   [interpolate_sops()].
 #' @param time_unit Optional label stored in output.
 #' @param refit_data Optional full longitudinal data used only by refit-bootstrap
 #'   inference. It is not used for point estimates. See [avg_sops()].
 #' @param id_var Name of the patient ID variable. See [avg_sops()].
-#' @param tvarname Name of the time variable in the model. See [avg_sops()].
-#' @param pvarname Name of the previous state variable in the model. See
+#' @param time_var Name of the time variable in the model. See [avg_sops()].
+#' @param p_var Name of the previous state variable in the model. See
 #'   [avg_sops()].
-#' @param p2varname Optional second previous-state variable. See [avg_sops()].
-#' @param gap Name of the time gap variable, if used. See [avg_sops()].
-#' @param t_covs Optional time-varying covariate lookup table for explicit
+#' @param p2_var Optional second previous-state variable. See [avg_sops()].
+#' @param gap_var Name of the time gap_var variable, if used. See [avg_sops()].
+#' @param time_covariates Optional time-varying covariate lookup table for explicit
 #'   precomputed time-basis columns. See [avg_sops()].
 #' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
 #'   fitted random-effect draws in posterior predictions for known IDs.
@@ -58,8 +58,8 @@
 #' @return A data frame of class `markov_avg_comparisons`.
 #'
 #' @details
-#' `metric = "sop"` and `metric = "time_in_state"` are computed from marginal
-#' SOPs. `metric = "time_benefit"` is computed before marginalization from
+#' `estimand = "sop"` and `estimand = "time_in_state"` are computed from marginal
+#' SOPs. `estimand = "time_benefit"` is computed before marginalization from
 #' paired patient/profile-level counterfactual state distributions, because it
 #' is nonlinear in the two state distributions.
 #'
@@ -75,13 +75,13 @@
 #' avg_comparisons(
 #'   fit,
 #'   variables = list(tx = c(0, 1)),
-#'   metric = "time_in_state",
-#'   states = "1",
+#'   estimand = "time_in_state",
+#'   state_sets = "1",
 #'   times = 1:30,
-#'   ylevels = 1:6,
+#'   y_levels = 1:6,
 #'   absorb = 6
 #' ) |>
-#'   inferences(method = "simulation", n_sim = 500)
+#'   inferences(method = "mvn", n_draws = 500)
 #' }
 #'
 #' @export
@@ -89,25 +89,25 @@ avg_comparisons <- function(
   model,
   newdata = NULL,
   variables,
-  metric = c("sop", "time_in_state", "time_benefit"),
-  states = NULL,
+  estimand = c("sop", "time_in_state", "time_benefit"),
+  state_sets = NULL,
   comparison = c("difference", "ratio"),
   by = NULL,
   times,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   time_map = NULL,
   origin_time = NULL,
-  xout = NULL,
+  target_times = NULL,
   origin = c("empirical_baseline", "none"),
   time_unit = NULL,
   refit_data = NULL,
   id_var = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  p2varname = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  p2_var = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   include_re = FALSE,
   n_draws = 100L,
   seed = NULL,
@@ -116,7 +116,7 @@ avg_comparisons <- function(
   return_draws = FALSE,
   ...
 ) {
-  metric <- match.arg(metric)
+  estimand <- match.arg(estimand)
   comparison <- match.arg(comparison)
   origin <- match.arg(origin)
   posterior_summary <- match.arg(posterior_summary)
@@ -126,9 +126,9 @@ avg_comparisons <- function(
   }
   conf_level <- validate_conf_level(conf_level)
   variables <- validate_avg_comparison_variables(variables)
-  validate_avg_comparison_metric(metric, states, comparison)
+  validate_avg_comparison_estimand(estimand, state_sets, comparison)
 
-  if (metric == "time_benefit") {
+  if (estimand == "time_benefit") {
     setup <- avg_comparison_setup(
       model = model,
       newdata = newdata,
@@ -136,27 +136,27 @@ avg_comparisons <- function(
       variables = variables,
       by = by,
       times = times,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
-      tvarname = tvarname,
-      pvarname = pvarname,
+      time_var = time_var,
+      p_var = p_var,
       id_var = id_var,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       include_re = include_re,
       ...
     )
     tb <- avg_comparison_time_benefit_point(
       model = model,
       setup = setup,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
-      tvarname = tvarname,
-      pvarname = pvarname,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      time_var = time_var,
+      p_var = p_var,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       include_re = include_re,
       n_draws = n_draws,
       seed = seed,
@@ -166,7 +166,7 @@ avg_comparisons <- function(
       comparison = comparison,
       time_map = time_map,
       origin_time = origin_time,
-      xout = xout,
+      target_times = target_times,
       origin = origin,
       time_unit = time_unit,
       ...
@@ -181,14 +181,14 @@ avg_comparisons <- function(
       variables = variables,
       by = by,
       times = times,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
-      tvarname = tvarname,
-      pvarname = pvarname,
+      time_var = time_var,
+      p_var = p_var,
       id_var = id_var,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       include_re = include_re,
       n_draws = n_draws,
       seed = seed,
@@ -197,15 +197,18 @@ avg_comparisons <- function(
       return_draws = inherits(model, "blrm") || isTRUE(return_draws),
       extra_args = list(...)
     )
-    state_sets <- normalize_comparison_state_sets(states, attr(avg, "ylevels"))
+    state_sets <- normalize_comparison_state_sets(
+      state_sets,
+      attr(avg, "y_levels")
+    )
     result <- avg_comparison_from_avg_sops(
       avg,
-      metric = metric,
+      estimand = estimand,
       state_sets = state_sets,
       comparison = comparison,
       time_map = time_map,
       origin_time = origin_time,
-      xout = xout,
+      target_times = target_times,
       origin = origin,
       time_unit = time_unit,
       return_draws = return_draws
@@ -217,8 +220,8 @@ avg_comparisons <- function(
     result = result,
     model = model,
     setup = setup,
-    metric = metric,
-    states = states,
+    estimand = estimand,
+    state_sets = state_sets,
     comparison = comparison,
     include_re = include_re,
     n_draws = n_draws,
@@ -227,7 +230,7 @@ avg_comparisons <- function(
     conf_level = conf_level,
     time_map = time_map,
     origin_time = origin_time,
-    xout = xout,
+    target_times = target_times,
     origin = origin,
     time_unit = time_unit,
     extra_args = list(...)

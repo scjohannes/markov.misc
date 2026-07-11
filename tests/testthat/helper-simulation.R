@@ -84,7 +84,7 @@ make_score_bootstrap_case <- function(
     baseline = data[data$time == 1, , drop = FALSE],
     model = make_test_model(data, robust = TRUE),
     times = seq_len(follow_up_time),
-    ylevels = 1:6,
+    y_levels = 1:6,
     absorb = 6
   )
 }

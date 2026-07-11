@@ -5,22 +5,22 @@
 \title{Plot Empirical or Model-Based Transition Proportions}
 \usage{
 plot_transitions(
-  object,
+  x,
   newdata = NULL,
   refit_data = NULL,
   variables = NULL,
   times = NULL,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   comparison = c("none", "difference"),
   time_var = "time",
   y_var = "y",
-  pvarname = "yprev",
-  p2varname = NULL,
+  p_var = "yprev",
+  p2_var = NULL,
   id_var = NULL,
   facet_var = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   seed = NULL,
   n_draws = 100L,
   show_values = TRUE,
@@ -29,7 +29,7 @@ plot_transitions(
 )
 }
 \arguments{
-\item{object}{A trajectory data frame or a fitted Markov model.}
+\item{x}{A trajectory data frame or a fitted Markov model.}
 
 \item{newdata}{Optional data frame of prediction profiles for model-based
 plots. If \code{NULL}, wrapper-fitted models use their stored data and extract
@@ -45,7 +45,7 @@ first value is the reference.}
 \item{times}{Optional current-time values to plot. Required for model-based
 plots.}
 
-\item{ylevels}{Optional state levels. If omitted for model-based plots,
+\item{y_levels}{Optional state levels. If omitted for model-based plots,
 levels are inferred from the model when possible.}
 
 \item{absorb}{Optional absorbing-state label.}
@@ -57,9 +57,9 @@ counterfactual differences in transition proportions.}
 
 \item{y_var}{Character name of the current-state column in trajectory data.}
 
-\item{pvarname}{Character name of the previous-state column.}
+\item{p_var}{Character name of the previous-state column.}
 
-\item{p2varname}{Optional second previous-state column for second-order
+\item{p2_var}{Optional second previous-state column for second-order
 model recursion.}
 
 \item{id_var}{Optional ID column used to extract one stored prediction row per
@@ -68,9 +68,9 @@ patient.}
 \item{facet_var}{Optional observed grouping variable. The plot always facets
 by time; \code{facet_var} adds grouping to the time panels.}
 
-\item{gap}{Optional time-gap variable used by the fitted model.}
+\item{gap_var}{Optional time-gap_var variable used by the fitted model.}
 
-\item{t_covs}{Optional time-varying covariate lookup table used by the fitted
+\item{time_covariates}{Optional time-varying covariate lookup table used by the fitted
 model.}
 
 \item{seed}{Optional random seed for \code{blrm} posterior draw selection.}
@@ -101,22 +101,22 @@ relative to the first level.
 \details{
 Minimum inputs depend on the object type. For trajectory data, \code{object} must
 contain the current time, current state, and previous-state columns named by
-\code{time_var}, \code{y_var}, and \code{pvarname}. For model-based plots, pass a fitted
+\code{time_var}, \code{y_var}, and \code{p_var}. For model-based plots, pass a fitted
 Markov model and \code{times}; use \code{newdata} for explicit prediction profiles and
-pass \code{ylevels} or \code{absorb} when they are not inferable or absorbing-state
+pass \code{y_levels} or \code{absorb} when they are not inferable or absorbing-state
 behavior matters. Difference plots also require
 \code{comparison = "difference"} and \code{variables = list(var = c(reference, comparison))}.
 }
 \examples{
 \dontrun{
-plot_transitions(data, time_var = "week", pvarname = "yprev")
+plot_transitions(data, time_var = "week", p_var = "yprev")
 
 plot_transitions(
   fit,
   times = 1:7,
   variables = list(tx = c(0, 1)),
   comparison = "difference",
-  ylevels = 1:8,
+  y_levels = 1:8,
   absorb = 8
 )
 }

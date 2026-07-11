@@ -8,7 +8,7 @@ marginalize_sops_array(
   sops_array,
   grid,
   times,
-  ylevels,
+  y_levels,
   variables,
   n_cf,
   n_each,
@@ -24,7 +24,7 @@ marginalize_sops_array(
 
 \item{times}{Vector of time points.}
 
-\item{ylevels}{Vector of state levels.}
+\item{y_levels}{Vector of state levels.}
 
 \item{variables}{Named list of variables.}
 

@@ -88,7 +88,7 @@ s <- avg_sops(
   variables = "tx",
   by = "initial_y",
   times = seq_len(FOLLOW_UP),
-  ylevels = fit$yunique,
+  y_levels = fit$yunique,
   absorb = ABSORB
 )
 
@@ -97,7 +97,7 @@ head(s)
 
 ## Fractional Bootstrap
 
-Use `engine = "fwb"` for fractional weighted refits. In this grouped `sops()`
+Use `method = "fwb"` for fractional weighted refits. In this grouped `sops()`
 example, each draw's `initial_y` subgroup average uses the corresponding
 patient-level FWB weights internally.
 
@@ -105,9 +105,8 @@ patient-level FWB weights internally.
 set.seed(SEED)
 sop_fwb <- inferences(
   s,
-  method = "bootstrap",
-  engine = "fwb",
-  n_sim = N_BOOT,
+  method = "fwb",
+  n_draws = N_BOOT,
   workers = 1,
   return_draws = TRUE
 )
@@ -130,13 +129,12 @@ c <- avg_comparisons(
   fit, 
   times = seq_len(FOLLOW_UP),
   variables = list(tx = c(0, 1)),
-  metric = "time_in_state",
+  estimand = "time_in_state",
   absorb = ABSORB,
   by = "initial_y"
 ) |> 
-  inferences(method = "bootstrap",
-  engine = "fwb",
-  n_sim = N_BOOT,
+  inferences(method = "fwb",
+  n_draws = N_BOOT,
   workers = 1,
   return_draws = TRUE)
 

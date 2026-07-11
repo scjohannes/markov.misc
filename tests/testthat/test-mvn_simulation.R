@@ -3,7 +3,7 @@
 # These tests verify that:
 # 1. set_coef() works correctly for vglm and orm models
 # 2. get_vcov_robust() returns correct variance matrices
-# 3. inferences(method = "simulation") produces valid confidence intervals
+# 3. inferences(method = "mvn") produces valid confidence intervals
 # 4. inferences() works for both avg_sops and sops objects
 # 5. get_draws() extracts simulation draws correctly
 # 6. score-bootstrap simulation works for robcov_vglm avg_sops pipelines
@@ -297,7 +297,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
         newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:15,
-        ylevels = 1:6,
+        y_levels = 1:6,
         absorb = 6,
         id_var = "id"
       )
@@ -305,8 +305,8 @@ describe("MVN Simulation-Based Inference for SOPs", {
       # Add simulation-based inference (vcov extracted from model)
       result_ci <- inferences(
         result,
-        method = "simulation",
-        n_sim = 100, # Small for testing
+        method = "mvn",
+        n_draws = 100, # Small for testing
         conf_level = 0.95
       )
 
@@ -322,8 +322,8 @@ describe("MVN Simulation-Based Inference for SOPs", {
       expect_all_true(result_ci$std.error >= 0)
 
       # Check attributes
-      expect_equal(attr(result_ci, "method"), "simulation")
-      expect_equal(attr(result_ci, "n_sim"), 100)
+      expect_equal(attr(result_ci, "method"), "mvn")
+      expect_equal(attr(result_ci, "n_draws"), 100)
     })
 
     it("stores simulation draws when return_draws=TRUE", {
@@ -341,14 +341,14 @@ describe("MVN Simulation-Based Inference for SOPs", {
         newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
-        ylevels = 1:6,
+        y_levels = 1:6,
         absorb = 6,
         id_var = "id"
       )
       result <- inferences(
         result,
-        method = "simulation",
-        n_sim = 30,
+        method = "mvn",
+        n_draws = 30,
         return_draws = TRUE
       )
 
@@ -388,16 +388,15 @@ describe("MVN Simulation-Based Inference for SOPs", {
         refit_data = data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
-        ylevels = 1:6,
+        y_levels = 1:6,
         absorb = 6,
         id_var = "id"
       )
 
       result_score <- inferences(
         avg_result,
-        method = "simulation",
-        engine = "score_bootstrap",
-        n_sim = 60,
+        method = "score_bootstrap",
+        n_draws = 60,
         return_draws = TRUE
       )
 
@@ -405,9 +404,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
         names(result_score),
         c("conf.low", "conf.high", "std.error")
       )
-      expect_equal(attr(result_score, "method"), "simulation")
-      expect_equal(attr(result_score, "engine"), "score_bootstrap")
-      expect_equal(attr(result_score, "score_weight_dist"), "exponential")
+      expect_equal(attr(result_score, "method"), "score_bootstrap")
       expect_gt(mean(result_score$std.error, na.rm = TRUE), 0)
 
       draws <- get_draws(result_score)
@@ -438,14 +435,14 @@ describe("MVN Simulation-Based Inference for SOPs", {
         newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
-        ylevels = 1:6,
+        y_levels = 1:6,
         absorb = 6,
         id_var = "id"
       )
       result <- inferences(
         result,
-        method = "simulation",
-        n_sim = 50,
+        method = "mvn",
+        n_draws = 50,
         vcov = V_inflated
       )
 
@@ -455,14 +452,14 @@ describe("MVN Simulation-Based Inference for SOPs", {
         newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
-        ylevels = 1:6,
+        y_levels = 1:6,
         absorb = 6,
         id_var = "id"
       )
       result_standard <- inferences(
         result_standard,
-        method = "simulation",
-        n_sim = 50
+        method = "mvn",
+        n_draws = 50
       )
 
       # Compare CI widths
@@ -491,7 +488,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
         newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
-        ylevels = 1:6,
+        y_levels = 1:6,
         absorb = 6,
         id_var = "id"
       )
@@ -499,16 +496,16 @@ describe("MVN Simulation-Based Inference for SOPs", {
       # Percentile CIs (vcov from model)
       result_perc <- inferences(
         avg_result,
-        method = "simulation",
-        n_sim = 100,
+        method = "mvn",
+        n_draws = 100,
         conf_type = "perc"
       )
 
       # Wald CIs (vcov from model)
       result_wald <- inferences(
         avg_result,
-        method = "simulation",
-        n_sim = 100,
+        method = "mvn",
+        n_draws = 100,
         conf_type = "wald"
       )
 
@@ -536,10 +533,10 @@ describe("MVN Simulation-Based Inference for SOPs", {
         model = m_robust,
         newdata = data[data$time == 1, ],
         times = 1:10,
-        ylevels = 1:6,
+        y_levels = 1:6,
         absorb = 6,
-        tvarname = "time",
-        pvarname = "yprev"
+        time_var = "time",
+        p_var = "yprev"
       )
 
       # Check that newdata_orig attribute is stored
@@ -552,8 +549,8 @@ describe("MVN Simulation-Based Inference for SOPs", {
       # Add simulation-based inference (vcov from model)
       result_ci <- inferences(
         sops_result,
-        method = "simulation",
-        n_sim = 100,
+        method = "mvn",
+        n_draws = 100,
         conf_level = 0.95,
         return_draws = TRUE
       )
@@ -570,8 +567,8 @@ describe("MVN Simulation-Based Inference for SOPs", {
       expect_gt(mean(in_bounds, na.rm = TRUE), 0.999)
 
       # Check attributes
-      expect_equal(attr(result_ci, "method"), "simulation")
-      expect_equal(attr(result_ci, "n_sim"), 100)
+      expect_equal(attr(result_ci, "method"), "mvn")
+      expect_equal(attr(result_ci, "n_draws"), 100)
 
       # Check draws can be extracted
       draws <- get_draws(result_ci)
@@ -604,7 +601,7 @@ describe("MVN Simulation-Based Inference for SOPs", {
         newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
-        ylevels = 1:6,
+        y_levels = 1:6,
         absorb = 6,
         id_var = "id"
       )
@@ -618,9 +615,8 @@ describe("MVN Simulation-Based Inference for SOPs", {
       expect_error(
         inferences(
           avg_result,
-          method = "simulation",
-          engine = "score_bootstrap",
-          n_sim = 20
+          method = "score_bootstrap",
+          n_draws = 20
         ),
         "requires a 'robcov_vglm' model"
       )
@@ -630,15 +626,14 @@ describe("MVN Simulation-Based Inference for SOPs", {
         model = m_vglm,
         newdata = data[data$time == 1, ],
         times = 1:10,
-        ylevels = 1:6,
+        y_levels = 1:6,
         absorb = 6
       )
       expect_error(
         inferences(
           sops_result,
-          method = "simulation",
-          engine = "score_bootstrap",
-          n_sim = 20
+          method = "score_bootstrap",
+          n_draws = 20
         ),
         "requires a 'robcov_vglm' model"
       )
@@ -659,14 +654,14 @@ describe("MVN Simulation-Based Inference for SOPs", {
         newdata = baseline_data,
         variables = list(tx = c(0, 1)),
         times = 1:10,
-        ylevels = 1:6,
+        y_levels = 1:6,
         absorb = 6,
         id_var = "id"
       )
       result <- inferences(
         result,
-        method = "simulation",
-        n_sim = 20,
+        method = "mvn",
+        n_draws = 20,
         return_draws = FALSE
       )
 

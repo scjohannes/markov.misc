@@ -6,14 +6,14 @@ plot_transition_model_setup <- function(
   refit_data,
   variables,
   times,
-  ylevels,
+  y_levels,
   absorb,
   time_var,
-  pvarname,
-  p2varname,
+  p_var,
+  p2_var,
   id_var,
-  gap,
-  t_covs
+  gap_var,
+  time_covariates
 ) {
   validate_markov_model(model)
   if (missing(times) || is.null(times)) {
@@ -39,13 +39,13 @@ plot_transition_model_setup <- function(
     resolve_markov_prediction_data(
       source_data,
       id_var = id_var,
-      tvarname = time_var
+      time_var = time_var
     )
   }
 
-  plot_validate_columns(baseline_data, pvarname, "`newdata`")
-  if (!is.null(p2varname)) {
-    plot_validate_columns(baseline_data, p2varname, "`newdata`")
+  plot_validate_columns(baseline_data, p_var, "`newdata`")
+  if (!is.null(p2_var)) {
+    plot_validate_columns(baseline_data, p2_var, "`newdata`")
   }
 
   if (!is.null(variables)) {
@@ -67,27 +67,30 @@ plot_transition_model_setup <- function(
     baseline_data,
     times,
     time_var,
-    t_covs = NULL,
+    time_covariates = NULL,
     default = "unique"
   )
   plot_times <- time_res$times
   time_info <- time_res$time_info
   recursion_times <- complete_plot_recursion_times(plot_times, time_info)
-  if (!is.null(t_covs) && nrow(t_covs) != length(recursion_times)) {
+  if (
+    !is.null(time_covariates) &&
+      nrow(time_covariates) != length(recursion_times)
+  ) {
     stop(
-      "`t_covs` must have one row per recursion time point for model-based ",
+      "`time_covariates` must have one row per recursion time point for model-based ",
       "plots. Sparse plot times are expanded to the full recursion grid; ",
       "expected ",
       length(recursion_times),
       " rows but got ",
-      nrow(t_covs),
+      nrow(time_covariates),
       "."
     )
   }
-  validate_factor_gap(gap, t_covs, time_info)
+  validate_factor_gap(gap_var, time_covariates, time_info)
 
-  ylevels <- markov_model_ylevels(model, ylevels)
-  ylevel_names <- as_state_labels(ylevels)
+  y_levels <- markov_model_ylevels(model, y_levels)
+  ylevel_names <- as_state_labels(y_levels)
   plot_indices <- match(as.character(plot_times), as.character(recursion_times))
 
   list(
@@ -96,7 +99,7 @@ plot_transition_model_setup <- function(
     times = recursion_times,
     plot_times = plot_times,
     plot_indices = plot_indices,
-    ylevels = ylevel_names,
+    y_levels = ylevel_names,
     absorb = absorb,
     time_var = time_var
   )
@@ -106,10 +109,10 @@ plot_model_trace_summaries <- function(
   model,
   setup,
   facet_var,
-  pvarname,
-  p2varname,
-  gap,
-  t_covs,
+  p_var,
+  p2_var,
+  gap_var,
+  time_covariates,
   seed,
   n_draws,
   return_kernels,
@@ -123,13 +126,13 @@ plot_model_trace_summaries <- function(
       object = model,
       data = setup$data,
       times = setup$times,
-      ylevels = setup$ylevels,
+      y_levels = setup$y_levels,
       absorb = setup$absorb,
-      tvarname = setup$time_var,
-      pvarname = pvarname,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      time_var = setup$time_var,
+      p_var = p_var,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       return_kernels = return_kernels
     )
     return(summarize_trace(trace, draw = FALSE))
@@ -152,13 +155,13 @@ plot_model_trace_summaries <- function(
       object = model,
       data = setup$data,
       times = setup$times,
-      ylevels = setup$ylevels,
+      y_levels = setup$y_levels,
       absorb = setup$absorb,
-      tvarname = setup$time_var,
-      pvarname = pvarname,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      time_var = setup$time_var,
+      p_var = p_var,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       id_var = setup$id_var,
       n_draws = NULL,
       return_kernels = return_kernels,

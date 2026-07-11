@@ -13,7 +13,7 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
     dplyr::mutate(age = stats::rnorm(1, 50, 10)) |>
     dplyr::ungroup()
 
-  t_covs <- data |>
+  time_covariates <- data |>
     dplyr::select(time_lin, time_nlin_1) |>
     dplyr::distinct() |>
     as.data.frame()
@@ -21,7 +21,7 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
   baseline_data <- data[data$time == 1, ]
 
   absorb <- 6
-  ylevels <- factor(sort(unique(data$y)), ordered = FALSE)
+  y_levels <- factor(sort(unique(data$y)), ordered = FALSE)
   times <- 1:follow_up
 
   fit.b <- VGAM::vglm(
@@ -49,19 +49,19 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
     fit.b,
     baseline_data[1, ],
     times = times,
-    ylevels = ylevels,
+    ylevels = y_levels,
     absorb = absorb
   )
 
   b <- soprob_markov(
-    object = fit.a,
-    data = baseline_data[1, ],
+    model = fit.a,
+    newdata = baseline_data[1, ],
     times = times,
-    ylevels = ylevels,
+    y_levels = y_levels,
     absorb = absorb,
-    tvarname = "time_lin",
-    pvarname = "yprev",
-    t_covs = t_covs
+    time_var = "time_lin",
+    p_var = "yprev",
+    time_covariates = time_covariates
   )[1, , ]
 
   expect_equal(a, b, tolerance = 1e-15)
@@ -82,7 +82,7 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
     dplyr::mutate(age = stats::rnorm(1, 50, 10)) |>
     dplyr::ungroup()
 
-  t_covs <- data |>
+  time_covariates <- data |>
     dplyr::select(time_lin, time_nlin_1) |>
     dplyr::distinct() |>
     as.data.frame()
@@ -90,7 +90,7 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
   baseline_data <- data[data$time == 1, ]
 
   absorb <- 6
-  ylevels <- factor(sort(unique(data$y)), ordered = FALSE)
+  y_levels <- factor(sort(unique(data$y)), ordered = FALSE)
   times <- 1:follow_up
 
   fit.b <- VGAM::vglm(
@@ -118,19 +118,19 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
     fit.b,
     baseline_data[1, ],
     times = times,
-    ylevels = ylevels,
+    ylevels = y_levels,
     absorb = absorb
   )
 
   b <- soprob_markov(
-    object = fit.a,
-    data = baseline_data[1, ],
+    model = fit.a,
+    newdata = baseline_data[1, ],
     times = times,
-    ylevels = ylevels,
+    y_levels = y_levels,
     absorb = absorb,
-    tvarname = "time_lin",
-    pvarname = "yprev",
-    t_covs = t_covs
+    time_var = "time_lin",
+    p_var = "yprev",
+    time_covariates = time_covariates
   )[1, , ]
 
   expect_equal(a, b, tolerance = 1e-15)
@@ -151,13 +151,13 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - all pati
     dplyr::mutate(age = stats::rnorm(1, 50, 10)) |>
     dplyr::ungroup()
 
-  t_covs <- data |>
+  time_covariates <- data |>
     dplyr::select(time_lin, time_nlin_1) |>
     dplyr::distinct() |>
     as.data.frame()
 
   baseline_data <- data[data$time == 1, ]
-  ylevels <- factor(sort(unique(data$y)), ordered = FALSE)
+  y_levels <- factor(sort(unique(data$y)), ordered = FALSE)
   times <- 1:follow_up
   absorb <- 6
 
@@ -184,8 +184,8 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - all pati
   # Test ALL patients
   # Get results from soprobMarkovOrdm (one patient at a time)
   results_hmisc <- array(
-    dim = c(nrow(baseline_data), length(times), length(ylevels)),
-    dimnames = list(NULL, NULL, levels(ylevels))
+    dim = c(nrow(baseline_data), length(times), length(y_levels)),
+    dimnames = list(NULL, NULL, levels(y_levels))
   )
 
   for (i in seq_len(nrow(baseline_data))) {
@@ -193,21 +193,21 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - all pati
       fit.b,
       baseline_data[i, ],
       times = times,
-      ylevels = ylevels,
+      ylevels = y_levels,
       absorb = absorb
     )
   }
 
   # Get results from soprob_markov (all at once)
   results_new <- soprob_markov(
-    object = fit.a,
-    data = baseline_data,
+    model = fit.a,
+    newdata = baseline_data,
     times = times,
-    ylevels = ylevels,
+    y_levels = y_levels,
     absorb = absorb,
-    tvarname = "time_lin",
-    pvarname = "yprev",
-    t_covs = t_covs
+    time_var = "time_lin",
+    p_var = "yprev",
+    time_covariates = time_covariates
   )
 
   # Strip dimnames for fair comparison (soprob_markov adds them, manual loop doesn't)
@@ -231,13 +231,13 @@ test_that("Fast path yields same results as slow path for constrained PPO", {
     dplyr::mutate(age = stats::rnorm(1, 50, 10)) |>
     dplyr::ungroup()
 
-  t_covs <- data |>
+  time_covariates <- data |>
     dplyr::select(time_lin, time_nlin_1) |>
     dplyr::distinct() |>
     as.data.frame()
 
   absorb <- 6
-  ylevels <- factor(sort(unique(data$y)), ordered = FALSE)
+  y_levels <- factor(sort(unique(data$y)), ordered = FALSE)
   times <- 1:follow_up
 
   # Define the constraint list
@@ -282,23 +282,23 @@ test_that("Fast path yields same results as slow path for constrained PPO", {
 
   # --- SLOW PATH (soprob_markov) ---
   res_slow <- soprob_markov(
-    object = fit2,
-    data = newdata,
+    model = fit2,
+    newdata = newdata,
     times = times,
-    ylevels = ylevels,
+    y_levels = y_levels,
     absorb = absorb,
-    tvarname = "time_lin",
-    pvarname = "yprev",
-    t_covs = t_covs
+    time_var = "time_lin",
+    p_var = "yprev",
+    time_covariates = time_covariates
   )
 
   # --- FAST PATH (markov_msm_build + run) ---
   components <- markov_msm_build(
     model = fit2,
     data = newdata,
-    t_covs = t_covs,
-    ylevels = ylevels,
-    pvarname = "yprev"
+    time_covariates = time_covariates,
+    y_levels = y_levels,
+    p_var = "yprev"
   )
 
   # Get Gamma (Effective coefficients)
@@ -336,7 +336,7 @@ test_that("Fast path yields same results as slow path for PPO", {
     dplyr::mutate(age = stats::rnorm(1, 50, 10)) |>
     dplyr::ungroup()
 
-  t_covs <- data |>
+  time_covariates <- data |>
     dplyr::select(time_lin, time_nlin_1) |>
     dplyr::distinct() |>
     as.data.frame()
@@ -361,28 +361,28 @@ test_that("Fast path yields same results as slow path for PPO", {
   # Setup comparison
   newdata <- data[data$time == 1, ] # Baseline rows
   times <- 1:follow_up
-  ylevels <- factor(sort(unique(data$y)), ordered = FALSE)
+  y_levels <- factor(sort(unique(data$y)), ordered = FALSE)
   absorb <- 6
 
   # --- SLOW PATH (soprob_markov) ---
   res_slow <- soprob_markov(
-    object = fit,
-    data = newdata,
+    model = fit,
+    newdata = newdata,
     times = times,
-    ylevels = ylevels,
+    y_levels = y_levels,
     absorb = absorb,
-    tvarname = "time_lin",
-    pvarname = "yprev",
-    t_covs = t_covs
+    time_var = "time_lin",
+    p_var = "yprev",
+    time_covariates = time_covariates
   )
 
   # --- FAST PATH (markov_msm_build + run) ---
   components <- markov_msm_build(
     model = fit,
     data = newdata,
-    t_covs = t_covs,
-    ylevels = ylevels,
-    pvarname = "yprev"
+    time_covariates = time_covariates,
+    y_levels = y_levels,
+    p_var = "yprev"
   )
 
   # Get Gamma (Effective coefficients)

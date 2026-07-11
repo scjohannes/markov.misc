@@ -103,7 +103,7 @@ test_that("calc_time_in_state_diff supports custom columns and multi-level treat
 
   result <- calc_time_in_state_diff(
     data,
-    tvarname = "day",
+    time_var = "day",
     txvarname = "arm"
   )
 
@@ -166,7 +166,7 @@ test_that("calc_time_in_state_diff allows an explicit reference level", {
   result <- calc_time_in_state_diff(
     data,
     target_state = 1,
-    tvarname = "day",
+    time_var = "day",
     txvarname = "arm",
     reference_level = "B"
   )

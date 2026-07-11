@@ -39,7 +39,7 @@ library(rms)
 
 N_PATIENTS <- 200
 FOLLOW_UP <- 10
-N_SIM <- 50
+N_DRAWS <- 50
 SEED <- 20260602
 STATE_LEVELS <- as.character(1:8)
 ABSORB <- "8"
@@ -73,8 +73,8 @@ fit_orm <- orm_markov(
   maxit = 100
 )
 
-# robust_vcov <- as.matrix(fit_orm$var)
-# robust_vcov <- (robust_vcov + t(robust_vcov)) / 2
+robust_vcov <- as.matrix(fit_orm$var)
+robust_vcov <- (robust_vcov + t(robust_vcov)) / 2
 ```
 
 ## Create SOP Targets
@@ -88,7 +88,7 @@ avg <- avg_sops(
   fit_orm,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_orm$yunique,
+  y_levels = fit_orm$yunique,
   absorb = ABSORB
 )
 
@@ -96,7 +96,7 @@ avg <- avg_sops(
 #   fit_orm,
 #   variables = list(tx = c(0, 1)),
 #   times = seq_len(FOLLOW_UP),
-#   ylevels = fit_orm$yunique,
+#   y_levels = fit_orm$yunique,
 #   absorb = ABSORB
 # )
 ```
@@ -107,9 +107,8 @@ avg <- avg_sops(
 set.seed(SEED)
 sop_mvn <- inferences(
   avg,
-  method = "simulation",
-  engine = "mvn",
-  n_sim = N_SIM,
+  method = "mvn",
+  n_draws = N_DRAWS,
   vcov = robust_vcov,
   workers = 1,
   return_draws = TRUE
@@ -119,7 +118,7 @@ set.seed(SEED)
 sop_boot <- inferences(
   avg,
   method = "bootstrap",
-  n_sim = N_SIM,
+  n_draws = N_DRAWS,
   workers = 1,
   return_draws = TRUE
 )

@@ -22,14 +22,14 @@ validate_avg_comparison_variables <- function(variables) {
   variables
 }
 
-validate_avg_comparison_metric <- function(metric, states, comparison) {
-  if (metric == "time_benefit") {
-    if (!is.null(states)) {
-      stop("`states` is not used with `metric = \"time_benefit\"`.")
+validate_avg_comparison_estimand <- function(estimand, state_sets, comparison) {
+  if (estimand == "time_benefit") {
+    if (!is.null(state_sets)) {
+      stop("`state_sets` is not used with `estimand = \"time_benefit\"`.")
     }
     if (comparison != "difference") {
       stop(
-        "`metric = \"time_benefit\"` only supports `comparison = \"difference\"`."
+        "`estimand = \"time_benefit\"` only supports `comparison = \"difference\"`."
       )
     }
   }
@@ -43,14 +43,14 @@ avg_comparison_setup <- function(
   variables,
   by,
   times,
-  ylevels,
+  y_levels,
   absorb,
-  tvarname,
-  pvarname,
+  time_var,
+  p_var,
   id_var,
-  p2varname,
-  gap,
-  t_covs,
+  p2_var,
+  gap_var,
+  time_covariates,
   include_re,
   ...
 ) {
@@ -86,7 +86,7 @@ avg_comparison_setup <- function(
     resolve_markov_prediction_data(
       newdata_orig,
       id_var = id_var,
-      tvarname = tvarname
+      time_var = time_var
     )
   }
   validate_sops_by(by, baseline_data)
@@ -99,14 +99,14 @@ avg_comparison_setup <- function(
     variables = variables,
     by = by,
     times = times,
-    tvarname = tvarname,
-    pvarname = pvarname,
+    time_var = time_var,
+    p_var = p_var,
     id_var = id_var,
-    p2varname = p2varname,
-    ylevels = ylevels,
+    p2_var = p2_var,
+    y_levels = y_levels,
     absorb = absorb,
-    gap = gap,
-    t_covs = t_covs,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     newdata_orig = newdata_orig,
     refit_data = refit_data,
     newdata_supplied = newdata_supplied,
@@ -147,13 +147,13 @@ avg_comparison_setup_from_sops <- function(x) {
     n_cf = nrow(grid),
     n_each = as.integer(n_each),
     call_args = attr(x, "call_args"),
-    tvarname = attr(x, "tvarname"),
-    pvarname = attr(x, "pvarname"),
-    p2varname = attr(x, "p2varname"),
-    ylevels = attr(x, "ylevels"),
+    time_var = attr(x, "time_var"),
+    p_var = attr(x, "p_var"),
+    p2_var = attr(x, "p2_var"),
+    y_levels = attr(x, "y_levels"),
     absorb = attr(x, "absorb"),
-    gap = attr(x, "gap"),
-    t_covs = attr(x, "t_covs")
+    gap_var = attr(x, "gap_var"),
+    time_covariates = attr(x, "time_covariates")
   )
 }
 
@@ -164,14 +164,14 @@ avg_comparison_replay_avg_sops <- function(
   variables,
   by,
   times,
-  ylevels,
+  y_levels,
   absorb,
-  tvarname,
-  pvarname,
+  time_var,
+  p_var,
   id_var,
-  p2varname,
-  gap,
-  t_covs,
+  p2_var,
+  gap_var,
+  time_covariates,
   include_re,
   n_draws,
   seed,
@@ -188,14 +188,14 @@ avg_comparison_replay_avg_sops <- function(
       variables = variables,
       by = by,
       times = times,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
-      tvarname = tvarname,
-      pvarname = pvarname,
+      time_var = time_var,
+      p_var = p_var,
       id_var = id_var,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       include_re = include_re,
       n_draws = n_draws,
       seed = seed,
@@ -208,8 +208,8 @@ avg_comparison_replay_avg_sops <- function(
   do.call(avg_sops, args)
 }
 
-normalize_comparison_state_sets <- function(states, ylevels) {
-  state_labels <- as_state_labels(ylevels)
+normalize_comparison_state_sets <- function(states, y_levels) {
+  state_labels <- as_state_labels(y_levels)
   if (is.null(states)) {
     out <- as.list(state_labels)
     names(out) <- state_labels
@@ -249,8 +249,8 @@ set_avg_comparison_attrs <- function(
   result,
   model,
   setup,
-  metric,
-  states,
+  estimand,
+  state_sets,
   comparison,
   include_re,
   n_draws,
@@ -259,11 +259,12 @@ set_avg_comparison_attrs <- function(
   conf_level,
   time_map,
   origin_time,
-  xout,
+  target_times,
   origin,
   time_unit,
   extra_args
 ) {
+  result <- as.data.frame(result)
   attrs <- list(
     model = model,
     avg_args = list(
@@ -273,8 +274,8 @@ set_avg_comparison_attrs <- function(
       id_var = setup$id_var
     ),
     comparison_args = list(
-      metric = metric,
-      states = states,
+      estimand = estimand,
+      state_sets = state_sets,
       comparison = comparison,
       include_re = include_re,
       n_draws = n_draws,
@@ -283,7 +284,7 @@ set_avg_comparison_attrs <- function(
       conf_level = conf_level,
       time_map = time_map,
       origin_time = origin_time,
-      xout = xout,
+      target_times = target_times,
       origin = origin,
       time_unit = time_unit,
       extra_args = extra_args
@@ -306,13 +307,13 @@ set_avg_comparison_attrs <- function(
 
   for (nm in c(
     "call_args",
-    "tvarname",
-    "pvarname",
-    "p2varname",
-    "ylevels",
+    "time_var",
+    "p_var",
+    "p2_var",
+    "y_levels",
     "absorb",
-    "gap",
-    "t_covs"
+    "gap_var",
+    "time_covariates"
   )) {
     if (!is.null(setup[[nm]])) {
       attr(result, nm) <- setup[[nm]]
@@ -326,9 +327,7 @@ set_avg_comparison_attrs <- function(
     attr(result, "posterior_summary") <- posterior_summary
   }
 
-  class(result) <- c(
-    "markov_avg_comparisons",
-    setdiff(class(result), "markov_avg_comparisons")
-  )
+  result <- order_estimate_columns(result)
+  class(result) <- c("markov_avg_comparisons", "data.frame")
   result
 }

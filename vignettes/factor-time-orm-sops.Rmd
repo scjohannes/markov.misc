@@ -106,10 +106,10 @@ sop_visit <- avg_sops(
   fit_visit,
   variables = list(tx = c(0, 1)),
   times = names(VISIT_DAYS),
-  ylevels = fit_visit$yunique,
+  y_levels = fit_visit$yunique,
   absorb = as.character(ABSORB)
 ) |> 
-  inferences(n_sim = 100)
+  inferences(n_draws = 100)
 
 attr(sop_visit, "avg_args")$times
 ```
@@ -124,7 +124,7 @@ interpolates probabilities between observed visits.
 sop_days <- interpolate_sops(
   sop_visit,
   time_map = VISIT_DAYS,
-  xout = 0:max(VISIT_DAYS),
+  target_times = 0:max(VISIT_DAYS),
   origin_time = 0
 )
 
@@ -148,18 +148,18 @@ plot_sops(
 cmp_days <- avg_comparisons(
   fit_visit,
   variables = list(tx = c(0, 1)),
-  metric = "time_in_state",
-  states = NULL, 
+  estimand = "time_in_state",
+  state_sets = NULL,
   comparison = "difference",
   times = names(VISIT_DAYS),
-  ylevels = fit_visit$yunique,
+  y_levels = fit_visit$yunique,
   absorb = as.character(ABSORB),
   time_map = VISIT_DAYS,
-  xout = 0:max(VISIT_DAYS),
+  target_times = 0:max(VISIT_DAYS),
   origin_time = 0,
   time_unit = "days"
 ) |>
-  inferences(n_sim = 100)
+  inferences(n_draws = 100)
 
 plot_comparisons(cmp_days) +
   labs(y = "Difference in time in state (days)")

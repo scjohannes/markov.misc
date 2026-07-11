@@ -5,13 +5,13 @@
 \title{Plot State Occupancy Probabilities Over Time}
 \usage{
 plot_sops(
-  data,
+  x,
   time_var = "time",
   y_var = "y",
   facet_var = "tx",
   linetype_var = NULL,
   geom = c("line", "bar"),
-  prob_var = NULL,
+  estimate_var = NULL,
   n_draws = 50,
   draw_alpha = 0.06,
   ribbon_alpha = 0.12,
@@ -19,7 +19,7 @@ plot_sops(
 )
 }
 \arguments{
-\item{data}{A data frame containing trajectory data, typically from
+\item{x}{A data frame containing trajectory data, typically from
 \code{sim_trajectories_markov()} or \code{sim_trajectories_brownian()}, or a
 model-derived SOP summary such as a \code{markov_avg_sops} object from
 \code{avg_sops()} and \code{inferences()}.}
@@ -41,7 +41,7 @@ Set to NULL to disable faceting.}
 \item{geom}{Character string. Type of plot: "line" for line plot (default)
 or "bar" for stacked bar chart.}
 
-\item{prob_var}{Character string or NULL. Name of the probability column for
+\item{estimate_var}{Character string or NULL. Name of the probability column for
 model-derived SOP summary data. Defaults to \code{"estimate"} when present.}
 
 \item{n_draws}{Integer. Maximum number of stored inference draws to overlay

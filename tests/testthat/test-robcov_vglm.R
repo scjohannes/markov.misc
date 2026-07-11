@@ -636,7 +636,7 @@ describe("Score bootstrap compatibility", {
       robust,
       baseline_data = baseline_data,
       id_var = "id",
-      n_sim = 1
+      n_draws = 1
     )
 
     expect_equal(unname(draws$beta_draws[1, ]), unname(expected_beta))

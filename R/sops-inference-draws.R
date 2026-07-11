@@ -4,7 +4,7 @@ generate_sop_coefficient_draws <- function(
   model,
   engine,
   score_weight_dist,
-  n_sim,
+  n_draws,
   vcov,
   cluster,
   baseline_data,
@@ -38,7 +38,7 @@ generate_sop_coefficient_draws <- function(
     } else {
       validate_coef_vcov(beta_hat, get_vcov_robust(model), arg = "model vcov")
     }
-    out$beta_draws <- mvtnorm::rmvnorm(n_sim, mean = beta_hat, sigma = Sigma)
+    out$beta_draws <- mvtnorm::rmvnorm(n_draws, mean = beta_hat, sigma = Sigma)
     return(out)
   }
 
@@ -61,7 +61,7 @@ generate_sop_coefficient_draws <- function(
     model = model,
     baseline_data = if (return_baseline_weights) baseline_data else NULL,
     id_var = id_var,
-    n_sim = n_sim,
+    n_draws = n_draws,
     score_weight_dist = score_weight_dist,
     cluster = cluster,
     return_baseline_weights = return_baseline_weights

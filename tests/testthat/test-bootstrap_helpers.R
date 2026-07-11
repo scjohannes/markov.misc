@@ -272,7 +272,7 @@ test_that("bootstrap_analysis_wrapper relevels data and refits models", {
     model = model,
     factor_cols = "y",
     original_data = original_data,
-    ylevels = 1:3,
+    y_levels = 1:3,
     absorb = 3,
     update_datadist = FALSE
   )
@@ -298,7 +298,7 @@ test_that("relevel_factors_consecutive preserves numeric previous state", {
     data = boot_data,
     factor_cols = c("y", "yprev"),
     original_data = original_data,
-    ylevels = 1:4,
+    y_levels = 1:4,
     absorb = 4
   )
 

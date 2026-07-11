@@ -42,8 +42,8 @@ describe("avg_sops() and inferences() pipeline", {
     list(
       data = data,
       baseline = data[data$time == 1, , drop = FALSE],
-      t_covs = get_time_covariates(data),
-      ylevels = 1:6,
+      time_covariates = get_time_covariates(data),
+      y_levels = 1:6,
       absorb = "6"
     )
   }
@@ -69,7 +69,7 @@ describe("avg_sops() and inferences() pipeline", {
     list(
       data = data,
       baseline = data[data$time == 1, , drop = FALSE],
-      ylevels = 1:10,
+      y_levels = 1:10,
       absorb = "10"
     )
   }
@@ -171,7 +171,7 @@ describe("avg_sops() and inferences() pipeline", {
       sops_array = sops_array,
       grid = grid,
       times = c(1, 2),
-      ylevels = 1:3,
+      y_levels = 1:3,
       variables = list(tx = c(0, 1)),
       n_cf = 2,
       n_each = 2
@@ -209,7 +209,7 @@ describe("avg_sops() and inferences() pipeline", {
       sops_array = sops_array,
       grid = data.frame(tx = 0),
       times = c(1, 2),
-      ylevels = 1:3,
+      y_levels = 1:3,
       variables = list(tx = 0),
       n_cf = 1,
       n_each = 2,
@@ -225,7 +225,7 @@ describe("avg_sops() and inferences() pipeline", {
         sops_array = sops_array,
         grid = data.frame(tx = 0),
         times = c(1, 2),
-        ylevels = 1:3,
+        y_levels = 1:3,
         variables = list(tx = 0),
         n_cf = 1,
         n_each = 2,
@@ -247,7 +247,7 @@ describe("avg_sops() and inferences() pipeline", {
       sops_array = sops_array,
       grid = data.frame(tx = 0),
       times = 1,
-      ylevels = 1,
+      y_levels = 1,
       variables = list(tx = 0),
       n_cf = 1,
       n_each = 4,
@@ -272,7 +272,7 @@ describe("avg_sops() and inferences() pipeline", {
     out <- markov.misc:::array_to_df_individual(
       sops_array = sops_array,
       times = c(1, 2),
-      ylevels = 1:2,
+      y_levels = 1:2,
       newdata = newdata
     )
 
@@ -283,7 +283,7 @@ describe("avg_sops() and inferences() pipeline", {
     stratified <- markov.misc:::array_to_df_individual(
       sops_array = sops_array,
       times = c(1, 2),
-      ylevels = 1:2,
+      y_levels = 1:2,
       newdata = newdata,
       by = "tx"
     )
@@ -315,7 +315,7 @@ describe("avg_sops() and inferences() pipeline", {
     individual <- markov.misc:::array_to_df_individual(
       sops_array = sops_array,
       times = 1,
-      ylevels = 1,
+      y_levels = 1,
       newdata = newdata,
       weights = weights,
       weight_col = "fwb_weight"
@@ -325,7 +325,7 @@ describe("avg_sops() and inferences() pipeline", {
     stratified <- markov.misc:::array_to_df_individual(
       sops_array = sops_array,
       times = 1,
-      ylevels = 1,
+      y_levels = 1,
       newdata = newdata,
       by = "subgroup",
       weights = weights
@@ -348,7 +348,7 @@ describe("avg_sops() and inferences() pipeline", {
       markov.misc:::array_to_df_individual(
         sops_array = sops_array,
         times = 1,
-        ylevels = 1,
+        y_levels = 1,
         newdata = newdata,
         weights = c(1, 3),
         weight_col = "fwb_weight"
@@ -465,12 +465,12 @@ describe("avg_sops() and inferences() pipeline", {
 
     components <- markov.misc:::markov_msm_build(
       model = model,
-      data = baseline,
-      t_covs = case$t_covs,
+      newdata = baseline,
+      time_covariates = case$time_covariates,
       times = 1:8,
-      ylevels = case$ylevels,
-      tvarname = "time_lin",
-      pvarname = "yprev"
+      y_levels = case$y_levels,
+      time_var = "time_lin",
+      p_var = "yprev"
     )
     gamma <- markov.misc:::compute_Gamma(
       stats::coef(model),
@@ -483,14 +483,14 @@ describe("avg_sops() and inferences() pipeline", {
       absorb = case$absorb
     )
     slow <- markov.misc::soprob_markov(
-      object = model,
-      data = baseline,
+      model = model,
+      newdata = baseline,
       times = 1:8,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates
     )
 
     expect_equal(dim(fast), dim(slow))
@@ -512,10 +512,10 @@ describe("avg_sops() and inferences() pipeline", {
 
     components <- markov.misc:::markov_msm_build(
       model = model,
-      data = baseline,
+      newdata = baseline,
       times = 1:8,
-      ylevels = case$ylevels,
-      pvarname = "yprev"
+      y_levels = case$y_levels,
+      p_var = "yprev"
     )
     gamma <- markov.misc:::compute_Gamma(
       stats::coef(model),
@@ -528,12 +528,12 @@ describe("avg_sops() and inferences() pipeline", {
       absorb = case$absorb
     )
     slow <- markov.misc::soprob_markov(
-      object = model,
-      data = baseline,
+      model = model,
+      newdata = baseline,
       times = 1:8,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      pvarname = "yprev"
+      p_var = "yprev"
     )
 
     expect_equal(dim(fast), dim(slow))
@@ -550,10 +550,10 @@ describe("avg_sops() and inferences() pipeline", {
 
     components <- markov.misc:::markov_msm_build(
       model = model,
-      data = baseline,
+      newdata = baseline,
       times = 1:7,
-      ylevels = case$ylevels,
-      pvarname = "yprev"
+      y_levels = case$y_levels,
+      p_var = "yprev"
     )
     gamma <- markov.misc:::compute_Gamma(
       stats::coef(model),
@@ -566,12 +566,12 @@ describe("avg_sops() and inferences() pipeline", {
       absorb = case$absorb
     )
     slow <- markov.misc::soprob_markov(
-      object = model,
-      data = baseline,
+      model = model,
+      newdata = baseline,
       times = 1:7,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      pvarname = "yprev"
+      p_var = "yprev"
     )
 
     expect_equal(dim(fast), dim(slow))
@@ -591,27 +591,25 @@ describe("avg_sops() and inferences() pipeline", {
       newdata = case$baseline,
       variables = "tx",
       times = 1:8,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates
     )
     expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$baseline))
 
     withr::local_seed(4401)
     inferred <- markov.misc::inferences(
       avg,
-      method = "simulation",
-      engine = "mvn",
-      n_sim = 3,
+      method = "mvn",
+      n_draws = 3,
       return_draws = TRUE
     )
 
     draws <- markov.misc::get_draws(inferred)
 
-    expect_equal(attr(inferred, "method"), "simulation")
-    expect_equal(attr(inferred, "engine"), "mvn")
+    expect_equal(attr(inferred, "method"), "mvn")
     expect_equal(attr(inferred, "n_successful"), 3L)
     expect_inference_intervals(inferred)
     expect_equal(sort(unique(draws$draw_id)), 1:3)
@@ -639,24 +637,22 @@ describe("avg_sops() and inferences() pipeline", {
       newdata = case$baseline,
       variables = "tx",
       times = 1:7,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      pvarname = "yprev",
+      p_var = "yprev",
       id_var = "id"
     )
 
     withr::local_seed(4413)
     inferred <- markov.misc::inferences(
       avg,
-      method = "simulation",
-      engine = "mvn",
-      n_sim = 2,
+      method = "mvn",
+      n_draws = 2,
       return_draws = TRUE
     )
     draws <- markov.misc::get_draws(inferred)
 
-    expect_equal(attr(inferred, "method"), "simulation")
-    expect_equal(attr(inferred, "engine"), "mvn")
+    expect_equal(attr(inferred, "method"), "mvn")
     expect_equal(attr(inferred, "n_successful"), 2L)
     expect_inference_intervals(inferred)
     expect_equal(sort(unique(draws$draw_id)), 1:2)
@@ -674,11 +670,11 @@ describe("avg_sops() and inferences() pipeline", {
       refit_data = case$data,
       variables = "tx",
       times = 1:8,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs,
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates,
       id_var = "id"
     )
     expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$data))
@@ -687,7 +683,7 @@ describe("avg_sops() and inferences() pipeline", {
     inferred <- markov.misc::inferences(
       avg,
       method = "bootstrap",
-      n_sim = 2,
+      n_draws = 2,
       return_draws = TRUE
     )
 
@@ -721,27 +717,25 @@ describe("avg_sops() and inferences() pipeline", {
       refit_data = case$data,
       variables = "tx",
       times = 1:8,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs,
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates,
       id_var = "id"
     )
 
     withr::local_seed(4404)
     inferred <- markov.misc::inferences(
       avg,
-      method = "bootstrap",
-      engine = "fwb",
-      n_sim = 2,
+      method = "fwb",
+      n_draws = 2,
       return_draws = TRUE
     )
 
     draws <- markov.misc::get_draws(inferred)
 
-    expect_equal(attr(inferred, "method"), "bootstrap")
-    expect_equal(attr(inferred, "engine"), "fwb")
+    expect_equal(attr(inferred, "method"), "fwb")
     expect_equal(attr(inferred, "fwb_weight_type"), "exponential")
     expect_equal(attr(inferred, "fwb_weight_scale"), "cluster_mean_1")
     expect_equal(attr(inferred, "n_boot"), 2)
@@ -762,9 +756,9 @@ describe("avg_sops() and inferences() pipeline", {
       refit_data = case$data,
       variables = "tx",
       times = 1:7,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      pvarname = "yprev",
+      p_var = "yprev",
       id_var = "id"
     )
 
@@ -772,7 +766,7 @@ describe("avg_sops() and inferences() pipeline", {
     inferred <- markov.misc::inferences(
       avg,
       method = "bootstrap",
-      n_sim = 1,
+      n_draws = 1,
       return_draws = TRUE
     )
 
@@ -794,11 +788,11 @@ describe("avg_sops() and inferences() pipeline", {
       refit_data = case$data,
       variables = "tx",
       times = 1:8,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs,
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates,
       id_var = "id"
     )
     expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$data))
@@ -806,17 +800,14 @@ describe("avg_sops() and inferences() pipeline", {
     withr::local_seed(4403)
     inferred <- markov.misc::inferences(
       avg,
-      method = "simulation",
-      engine = "score_bootstrap",
-      n_sim = 3,
+      method = "score_bootstrap",
+      n_draws = 3,
       return_draws = TRUE
     )
 
     draws <- markov.misc::get_draws(inferred)
 
-    expect_equal(attr(inferred, "method"), "simulation")
-    expect_equal(attr(inferred, "engine"), "score_bootstrap")
-    expect_equal(attr(inferred, "score_weight_dist"), "exponential")
+    expect_equal(attr(inferred, "method"), "score_bootstrap")
     expect_equal(attr(inferred, "n_successful"), 3L)
     expect_inference_intervals(inferred, require_positive_std_error = TRUE)
     expect_equal(sort(unique(draws$draw_id)), 1:3)
@@ -844,23 +835,21 @@ describe("avg_sops() and inferences() pipeline", {
       refit_data = case$data,
       variables = "tx",
       times = 1:7,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      pvarname = "yprev",
+      p_var = "yprev",
       id_var = "id"
     )
 
     withr::local_seed(4415)
     inferred <- markov.misc::inferences(
       avg,
-      method = "simulation",
-      engine = "score_bootstrap",
-      n_sim = 2,
+      method = "score_bootstrap",
+      n_draws = 2,
       return_draws = FALSE
     )
 
-    expect_equal(attr(inferred, "method"), "simulation")
-    expect_equal(attr(inferred, "engine"), "score_bootstrap")
+    expect_equal(attr(inferred, "method"), "score_bootstrap")
     expect_equal(attr(inferred, "n_successful"), 2L)
     expect_inference_intervals(inferred)
   })
@@ -879,20 +868,20 @@ describe("avg_sops() and inferences() pipeline", {
       newdata = case$baseline,
       variables = "tx",
       times = 1:8,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates
     )
     inline_avg <- markov.misc::avg_sops(
       model = inline_model,
       newdata = case$baseline,
       variables = "tx",
       times = 1:8,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      pvarname = "yprev"
+      p_var = "yprev"
     )
 
     expect_equal(inline_avg$estimate, explicit_avg$estimate, tolerance = 1e-10)
@@ -900,17 +889,15 @@ describe("avg_sops() and inferences() pipeline", {
     withr::local_seed(4411)
     explicit_inferred <- markov.misc::inferences(
       explicit_avg,
-      method = "simulation",
-      engine = "mvn",
-      n_sim = 3,
+      method = "mvn",
+      n_draws = 3,
       return_draws = TRUE
     )
     withr::local_seed(4411)
     inline_inferred <- markov.misc::inferences(
       inline_avg,
-      method = "simulation",
-      engine = "mvn",
-      n_sim = 3,
+      method = "mvn",
+      n_draws = 3,
       return_draws = TRUE
     )
 
@@ -956,11 +943,11 @@ describe("avg_sops() and inferences() pipeline", {
       refit_data = case$data,
       variables = "tx",
       times = 1:8,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs,
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates,
       id_var = "id"
     )
     inline_avg <- markov.misc::avg_sops(
@@ -968,9 +955,9 @@ describe("avg_sops() and inferences() pipeline", {
       refit_data = case$data,
       variables = "tx",
       times = 1:8,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      pvarname = "yprev",
+      p_var = "yprev",
       id_var = "id"
     )
 
@@ -979,17 +966,15 @@ describe("avg_sops() and inferences() pipeline", {
     withr::local_seed(4412)
     explicit_inferred <- markov.misc::inferences(
       explicit_avg,
-      method = "simulation",
-      engine = "score_bootstrap",
-      n_sim = 3,
+      method = "score_bootstrap",
+      n_draws = 3,
       return_draws = TRUE
     )
     withr::local_seed(4412)
     inline_inferred <- markov.misc::inferences(
       inline_avg,
-      method = "simulation",
-      engine = "score_bootstrap",
-      n_sim = 3,
+      method = "score_bootstrap",
+      n_draws = 3,
       return_draws = TRUE
     )
 
@@ -1116,14 +1101,13 @@ describe("avg_sops() and inferences() pipeline", {
       newdata = baseline,
       variables = "tx",
       times = 1:4,
-      ylevels = 1:6,
+      y_levels = 1:6,
       absorb = "6",
       id_var = "id"
     ) |>
       markov.misc::inferences(
-        method = "simulation",
-        engine = "mvn",
-        n_sim = 2,
+        method = "mvn",
+        n_draws = 2,
         workers = 1
       )
 
@@ -1161,9 +1145,9 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(inline_basis, explicit_basis, tolerance = 1e-14)
 
     baseline <- data[data$time == 1, , drop = FALSE]
-    t_covs <- get_time_covariates(data)
-    ylevels <- 1:6
-    n_thresholds <- length(ylevels) - 1
+    time_covariates <- get_time_covariates(data)
+    y_levels <- 1:6
+    n_thresholds <- length(y_levels) - 1
 
     explicit_constraints <- list(
       "(Intercept)" = diag(n_thresholds),
@@ -1241,11 +1225,11 @@ describe("avg_sops() and inferences() pipeline", {
       newdata = baseline,
       variables = "tx",
       times = 1:12,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = "6",
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = t_covs,
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = time_covariates,
       id_var = "id"
     )
     inline_sops <- markov.misc::avg_sops(
@@ -1253,9 +1237,9 @@ describe("avg_sops() and inferences() pipeline", {
       newdata = baseline,
       variables = "tx",
       times = 1:12,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = "6",
-      pvarname = "yprev",
+      p_var = "yprev",
       id_var = "id"
     )
 

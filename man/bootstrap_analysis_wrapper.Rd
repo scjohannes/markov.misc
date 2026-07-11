@@ -9,7 +9,7 @@ bootstrap_analysis_wrapper(
   model,
   factor_cols,
   original_data,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   update_datadist = TRUE,
   use_coefstart = FALSE,
@@ -26,7 +26,7 @@ c("y", "yprev"))}
 
 \item{original_data}{Original data frame before bootstrap sampling}
 
-\item{ylevels}{Original state levels (e.g., 1:6)}
+\item{y_levels}{Original state levels (e.g., 1:6)}
 
 \item{absorb}{Absorbing state in original levels}
 
@@ -43,7 +43,7 @@ A list with components:
 \itemize{
 \item model: Refitted model on bootstrap data (or NULL if fitting failed)
 \item data: Bootstrap data with releveled factors
-\item ylevels: Updated ylevels (or NULL if not provided)
+\item y_levels: Updated y_levels (or NULL if not provided)
 \item absorb: Updated absorb (or NULL if not provided)
 \item missing_states: Character vector of missing state levels
 }

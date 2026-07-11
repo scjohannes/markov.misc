@@ -153,7 +153,7 @@ J_{it}(k,k) \leftarrow
   J_{it}(k,k) + \sum_{h=1}^{K} J_{i,t-1}(h,k).
 $$
 
-`avg_sops(..., p2varname = "ypprev")` uses this array recursion instead of
+`avg_sops(..., p2_var = "ypprev")` uses this array recursion instead of
 simulating individual trajectories.
 
 ## Fit And Predict
@@ -179,11 +179,11 @@ sop_second <- avg_sops(
   fit_second,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_second$yunique,
+  y_levels = fit_second$yunique,
   absorb = ABSORB,
-  p2varname = "ypprev"
+  p2_var = "ypprev"
 ) |> 
-  inferences(n_sim = 50)
+  inferences(n_draws = 50)
 
 head(sop_second)
 ```
@@ -205,7 +205,7 @@ plot_sops(
 
 These diagnostics compare empirical trajectory features with the corresponding
 features implied by the second-order transition model. The model-based plots
-pass `p2varname = "ypprev"` so the deterministic recursions condition on both
+pass `p2_var = "ypprev"` so the deterministic recursions condition on both
 previous states.
 
 ```{r diagnostics-transitions-observed}
@@ -214,7 +214,7 @@ diagnostic_times <- c(1, 3, 5, 7, 11, 13)
 plot_transitions(
   raw_data,
   times = diagnostic_times,
-  ylevels = STATE_LEVELS,
+  y_levels = STATE_LEVELS,
   show_values = FALSE
 ) +
   labs(title = "Observed transition proportions")
@@ -224,9 +224,9 @@ plot_transitions(
 plot_transitions(
   fit_second,
   times = diagnostic_times,
-  ylevels = fit_second$yunique,
+  y_levels = fit_second$yunique,
   absorb = ABSORB,
-  p2varname = "ypprev",
+  p2_var = "ypprev",
   show_values = FALSE
 ) +
   labs(title = "Model-based transition proportions")
@@ -245,9 +245,9 @@ plot_correlation(
 plot_correlation(
   fit_second,
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_second$yunique,
+  y_levels = fit_second$yunique,
   absorb = ABSORB,
-  p2varname = "ypprev",
+  p2_var = "ypprev",
   show_values = FALSE
 ) +
   labs(title = "Model-based state correlations")
@@ -265,9 +265,9 @@ plot_variogram(
 plot_variogram(
   fit_second,
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_second$yunique,
+  y_levels = fit_second$yunique,
   absorb = ABSORB,
-  p2varname = "ypprev"
+  p2_var = "ypprev"
 ) +
   labs(title = "Model-based correlation variogram")
 ```
@@ -277,15 +277,15 @@ plot_variogram(
 ```{r}
 c <- avg_comparisons(
   fit_second,
-  metric = "time_in_state",
-  states = list(1:2, 3:5, 6:7, 8),
+  estimand = "time_in_state",
+  state_sets = list(1:2, 3:5, 6:7, 8),
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_second$yunique,
+  y_levels = fit_second$yunique,
   absorb = ABSORB,
-  p2varname = "ypprev"
+  p2_var = "ypprev"
 ) |> 
-  inferences(n_sim = 100)
+  inferences(n_draws = 100)
 
 plot_comparisons(c)
 ```

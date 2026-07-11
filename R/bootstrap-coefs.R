@@ -156,7 +156,7 @@ bootstrap_model_coefs <- function(
       model = model,
       factor_cols = factor_cols,
       original_data = data,
-      ylevels = NULL,
+      y_levels = NULL,
       absorb = NULL,
       update_datadist = inherits(model, "orm"),
       use_coefstart = use_coefstart

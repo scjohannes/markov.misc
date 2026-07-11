@@ -153,7 +153,7 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 #'     sample.
 #' }
 #'
-#' @param sops Input object.
+#' @param x Input object.
 #'   \itemize{
 #'     \item **Array:** `[Patients x Time x States]` (Frequentist) or `[Draws x Patients x Time x States]` (Bayes).
 #'     \item **Data Frame:** Legacy wide bootstrap SOP data containing columns
@@ -168,9 +168,9 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 #' @param origin_time Optional real time for an empirical baseline anchor. For
 #'   tidy outputs from [sops()] or [avg_sops()], this is passed to
 #'   [interpolate_sops()].
-#' @param xout Optional numeric real-time grid for tidy SOP outputs when
+#' @param target_times Optional numeric real-time grid for tidy SOP outputs when
 #'   `time_map` is supplied. This controls the interpolation grid used for AUC,
-#'   for example `xout = 1:28` with `origin_time = 0` uses day 0 as an anchor
+#'   for example `target_times = 1:28` with `origin_time = 0` uses day 0 as an anchor
 #'   but starts the AUC at day 1.
 #' @param origin Origin handling for tidy SOP outputs when `origin_time` is
 #'   supplied. See [interpolate_sops()].
@@ -191,7 +191,7 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 #' @examples
 #' \dontrun{
 #' # --- Scenario 1: Patient-Level Estimates ---
-#' sops_arr <- soprob_markov(model, data, times = 1:30, ylevels = 1:6)
+#' sops_arr <- soprob_markov(model, data, times = 1:30, y_levels = 1:6)
 #' days_home <- time_in_state(sops_arr, target_states = 1)
 #'
 #' # Real-time AUC after fitting on factor visit indices
@@ -200,7 +200,7 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 #'   target_states = 1,
 #'   time_map = c("1" = 3, "2" = 7, "3" = 14, "4" = 28),
 #'   origin_time = 0,
-#'   xout = 1:28
+#'   target_times = 1:28
 #' )
 #'
 #' # --- Scenario 2: Bootstrap Inference ---
@@ -208,23 +208,24 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 #'   model,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:30,
-#'   ylevels = 1:6,
+#'   y_levels = 1:6,
 #'   id_var = "id"
 #' ) |>
-#'   inferences(method = "bootstrap", n_sim = 100)
+#'   inferences(method = "bootstrap", n_draws = 100)
 #' boot_effects <- time_in_state(avg_boot, target_states = 1)
 #' }
 #'
 #' @keywords time-in-state auc bootstrap
 #' @export
 time_in_state <- function(
-  sops,
+  x,
   target_states = 1,
   time_map = NULL,
   origin_time = NULL,
-  xout = NULL,
+  target_times = NULL,
   origin = c("empirical_baseline", "none")
 ) {
+  sops <- x
   origin <- match.arg(origin)
   use_real_time <- !is.null(time_map) || !is.null(origin_time)
 
@@ -235,23 +236,29 @@ time_in_state <- function(
         "omit `time_map` and `origin_time`."
       )
     }
-    if (!is.null(xout)) {
-      xout <- validate_sop_xout(xout, min(sops$time), max(sops$time))
-      missing_xout <- setdiff(xout, unique(sops$time))
+    if (!is.null(target_times)) {
+      target_times <- validate_sop_xout(
+        target_times,
+        min(sops$time),
+        max(sops$time)
+      )
+      missing_xout <- setdiff(target_times, unique(sops$time))
       if (length(missing_xout) > 0) {
         stop(
-          "`xout` for already interpolated SOPs must be contained in ",
+          "`target_times` for already interpolated SOPs must be contained in ",
           "the existing `time` values."
         )
       }
-      sops <- sops[sops$time %in% xout, , drop = FALSE]
+      sops <- sops[sops$time %in% target_times, , drop = FALSE]
     }
     return(time_in_state_tidy(sops, target_states, real_time = TRUE))
   }
 
   if (inherits(sops, c("markov_sops", "markov_avg_sops"))) {
-    if (!is.null(xout) && !use_real_time) {
-      stop("`xout` requires `time_map` or an already interpolated SOP object.")
+    if (!is.null(target_times) && !use_real_time) {
+      stop(
+        "`target_times` requires `time_map` or an already interpolated SOP object."
+      )
     }
     if (use_real_time) {
       if (is.null(time_map)) {
@@ -260,7 +267,7 @@ time_in_state <- function(
       sops <- interpolate_sops(
         sops,
         time_map = time_map,
-        xout = xout,
+        target_times = target_times,
         origin_time = origin_time,
         origin = origin
       )
@@ -273,8 +280,8 @@ time_in_state <- function(
   # BRANCH 1: Bootstrap Data Frame Input
   # =========================================================================
   if (inherits(sops, "data.frame")) {
-    if (!is.null(xout)) {
-      stop("`xout` is only supported for tidy SOP outputs.")
+    if (!is.null(target_times)) {
+      stop("`target_times` is only supported for tidy SOP outputs.")
     }
     if (use_real_time) {
       if (is.null(time_map)) {
@@ -294,8 +301,8 @@ time_in_state <- function(
   # BRANCH 2: Array Input (Original Logic)
   # =========================================================================
 
-  if (!is.null(xout)) {
-    stop("`xout` is only supported for tidy SOP outputs.")
+  if (!is.null(target_times)) {
+    stop("`target_times` is only supported for tidy SOP outputs.")
   }
 
   # --- 1. Detect Dimensions ---

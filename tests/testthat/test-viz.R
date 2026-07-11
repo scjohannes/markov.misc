@@ -83,7 +83,7 @@ make_avg_sops_plot_data <- function(with_draws = TRUE) {
     draws$estimate <- c("1" = 0.18, "2" = 0.31, "3" = 0.51)[
       as.character(draws$state)
     ]
-    attr(data, "simulation_draws") <- draws
+    attr(data, "draws") <- draws
   }
 
   data
@@ -101,7 +101,7 @@ test_that("plot_sops creates model-derived line plots with ribbons", {
   expect_equal(nrow(built$data[[1]]), nrow(data))
 })
 
-test_that("plot_sops respects stored ylevels for model-derived state order", {
+test_that("plot_sops respects stored y_levels for model-derived state order", {
   state_levels <- as.character(1:12)
   data <- expand.grid(
     time = 1,
@@ -110,7 +110,7 @@ test_that("plot_sops respects stored ylevels for model-derived state order", {
   )
   data$estimate <- 1 / length(state_levels)
   class(data) <- c("markov_avg_sops", class(data))
-  attr(data, "ylevels") <- state_levels
+  attr(data, "y_levels") <- state_levels
 
   plot <- plot_sops(data, geom = "bar", facet_var = NULL, n_draws = 0)
   built <- ggplot2::ggplot_build(plot)
@@ -208,7 +208,7 @@ test_that("plot_sops rejects ambiguous summary groups", {
 
 test_that("plot_sops supports summary data frames and grid facets", {
   data <- make_avg_sops_plot_data()
-  attr(data, "simulation_draws") <- NULL
+  attr(data, "draws") <- NULL
   class(data) <- "data.frame"
   data$source <- rep(c("a", "b"), length.out = nrow(data))
 
@@ -229,12 +229,12 @@ make_comparison_plot_data <- function(
       contrast = c("1 - 0", "2 - 0"),
       KEEP.OUT.ATTRS = FALSE
     )
-    data$metric <- "sop"
+    data$estimand <- "sop"
   } else {
     data <- data.frame(
       state_set = c("1", "2"),
       contrast = c("1 / 0", "1 / 0"),
-      metric = "time_in_state"
+      estimand = "time_in_state"
     )
   }
   data$variable <- "tx"
@@ -295,7 +295,7 @@ test_that("plot_comparisons orders numeric state sets naturally", {
   data <- data.frame(
     state_set = c("1", "10", "11", "2", "3"),
     contrast = "1 / 0",
-    metric = "time_in_state",
+    estimand = "time_in_state",
     variable = "tx",
     reference_level = 0,
     comparison_level = 1,
@@ -305,7 +305,7 @@ test_that("plot_comparisons orders numeric state sets naturally", {
   data$conf.low <- data$estimate - 0.05
   data$conf.high <- data$estimate + 0.05
   class(data) <- c("markov_avg_comparisons", class(data))
-  attr(data, "ylevels") <- as.character(1:11)
+  attr(data, "y_levels") <- as.character(1:11)
 
   plot <- plot_comparisons(data)
   built <- ggplot2::ggplot_build(plot)
@@ -341,20 +341,20 @@ test_that("plot_results validates grouping and x variables", {
   )
 
   expect_error(
-    plot_results(data, power, x = missing_x, group = analysis),
-    "Variable 'analysis' must be a factor",
+    plot_operchar(data, "power", "sample_size", "analysis"),
+    "`group_var` must identify a factor column",
     fixed = TRUE
   )
 
   data$analysis <- factor(data$analysis)
   expect_error(
-    plot_results(data, power, x = missing_x, group = analysis),
-    "Variable 'missing_x' not found in data",
+    plot_operchar(data, "power", "missing_x", "analysis"),
+    "Columns not found in `x`: missing_x",
     fixed = TRUE
   )
 })
 
-test_that("plot_results returns individual and combined plots", {
+test_that("plot_operchar returns individual and combined plots", {
   data <- data.frame(
     analysis = factor(rep(c("a", "b"), each = 2)),
     sample_size = rep(c(50, 100), 2),
@@ -362,38 +362,41 @@ test_that("plot_results returns individual and combined plots", {
     coverage = c(0.9, 0.91, 0.92, 0.93)
   )
 
-  result <- plot_results(
+  result <- plot_operchar(
     data,
-    power,
-    coverage,
-    x = sample_size,
-    group = analysis
+    outcomes = c("power", "coverage"),
+    x_var = "sample_size",
+    group_var = "analysis"
   )
 
-  expect_named(result, c("single_plots", "grid"))
-  expect_length(result$single_plots, 2)
-  expect_s3_class(result$single_plots[[1]], "ggplot")
-  expect_s3_class(result$grid, "patchwork")
+  expect_s3_class(result, "patchwork")
 
-  separate <- plot_results(
+  separate <- plot_operchar(
     data,
-    power,
-    x = sample_size,
-    group = analysis,
+    outcomes = "power",
+    x_var = "sample_size",
+    group_var = "analysis",
     combine = FALSE
   )
-  expect_null(separate$grid)
+  expect_named(separate, "power")
+  expect_s3_class(separate[[1]], "ggplot")
 })
 
-test_that("plot_results uses summary geoms for factor x variables", {
+test_that("plot_operchar uses summary geoms for factor x variables", {
   data <- data.frame(
     analysis = factor(rep(c("a", "b"), each = 2)),
     scenario = factor(rep(c("low", "high"), 2)),
     power = c(0.6, 0.7, 0.5, 0.8)
   )
 
-  result <- plot_results(data, power, x = scenario, group = analysis)
+  result <- plot_operchar(
+    data,
+    "power",
+    "scenario",
+    "analysis",
+    combine = FALSE
+  )
 
-  expect_length(result$single_plots[[1]]$layers, 2)
-  expect_equal(result$single_plots[[1]]$labels$y, "power")
+  expect_length(result[[1]]$layers, 2)
+  expect_equal(result[[1]]$labels$y, "power")
 })

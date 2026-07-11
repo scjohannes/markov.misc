@@ -19,14 +19,18 @@ describe("SOP regression baselines", {
   }
 
   get_time_covariates <- function(data) {
-    t_covs <- unique(data[, c(
+    time_covariates <- unique(data[, c(
       "time",
       "time_lin",
       "time_nlin_1",
       "time_nlin_2"
     )])
-    t_covs <- t_covs[order(t_covs$time), , drop = FALSE]
-    as.data.frame(t_covs[,
+    time_covariates <- time_covariates[
+      order(time_covariates$time),
+      ,
+      drop = FALSE
+    ]
+    as.data.frame(time_covariates[,
       c("time_lin", "time_nlin_1", "time_nlin_2"),
       drop = FALSE
     ])
@@ -130,8 +134,8 @@ describe("SOP regression baselines", {
     list(
       data = data,
       baseline = subset(data, time == 1),
-      t_covs = get_time_covariates(data),
-      ylevels = 1:6,
+      time_covariates = get_time_covariates(data),
+      y_levels = 1:6,
       absorb = "6"
     )
   }
@@ -153,8 +157,8 @@ describe("SOP regression baselines", {
     list(
       data = data,
       baseline = subset(data, time == 1),
-      t_covs = get_time_covariates(data),
-      ylevels = 1:6,
+      time_covariates = get_time_covariates(data),
+      y_levels = 1:6,
       absorb = "6"
     )
   }
@@ -179,8 +183,8 @@ describe("SOP regression baselines", {
     list(
       data = data,
       baseline = subset(data, time == 1),
-      t_covs = get_time_covariates(data),
-      ylevels = 1:6,
+      time_covariates = get_time_covariates(data),
+      y_levels = 1:6,
       absorb = "6"
     )
   }
@@ -194,14 +198,14 @@ describe("SOP regression baselines", {
     model <- suppressWarnings(fit_explicit_spline_model(case$data))
 
     sops_result <- markov.misc::soprob_markov(
-      object = model,
-      data = case$baseline,
+      model = model,
+      newdata = case$baseline,
       times = 1:10,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates
     )
 
     avg_result <- markov.misc::avg_sops(
@@ -209,18 +213,18 @@ describe("SOP regression baselines", {
       newdata = case$baseline,
       variables = "tx",
       times = 1:10,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates
     )
 
     withr::local_seed(5001)
     sim_result <- markov.misc::inferences(
       avg_result,
-      method = "simulation",
-      n_sim = 2,
+      method = "mvn",
+      n_draws = 2,
       return_draws = TRUE
     )
 
@@ -243,14 +247,14 @@ describe("SOP regression baselines", {
     model <- suppressWarnings(fit_explicit_spline_model(case$data))
 
     sops_result <- markov.misc::soprob_markov(
-      object = model,
-      data = case$baseline,
+      model = model,
+      newdata = case$baseline,
       times = 1:10,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates
     )
 
     avg_result <- markov.misc::avg_sops(
@@ -258,11 +262,11 @@ describe("SOP regression baselines", {
       newdata = case$baseline,
       variables = "tx",
       times = 1:10,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates
     )
 
     expect_snapshot_value(
@@ -283,14 +287,14 @@ describe("SOP regression baselines", {
     model <- suppressWarnings(fit_explicit_spline_model(case$data))
 
     sops_result <- markov.misc::soprob_markov(
-      object = model,
-      data = case$baseline,
+      model = model,
+      newdata = case$baseline,
       times = 1:10,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates
     )
 
     avg_result <- markov.misc::avg_sops(
@@ -298,11 +302,11 @@ describe("SOP regression baselines", {
       newdata = case$baseline,
       variables = "tx",
       times = 1:10,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates
     )
 
     expect_snapshot_value(
@@ -324,21 +328,21 @@ describe("SOP regression baselines", {
     inline_model <- fit_inline_spline_model(case$data)
 
     explicit_sops <- markov.misc::soprob_markov(
-      object = explicit_model,
-      data = case$baseline[1:10, , drop = FALSE],
+      model = explicit_model,
+      newdata = case$baseline[1:10, , drop = FALSE],
       times = 1:10,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates
     )
 
     inline_sops <- markov.misc::soprob_markov(
-      object = inline_model,
-      data = case$baseline[1:10, , drop = FALSE],
+      model = inline_model,
+      newdata = case$baseline[1:10, , drop = FALSE],
       times = 1:10,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb
     )
 
@@ -347,11 +351,11 @@ describe("SOP regression baselines", {
       newdata = case$baseline,
       variables = "tx",
       times = 1:10,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb,
-      tvarname = "time_lin",
-      pvarname = "yprev",
-      t_covs = case$t_covs
+      time_var = "time_lin",
+      p_var = "yprev",
+      time_covariates = case$time_covariates
     )
 
     inline_avg <- markov.misc::avg_sops(
@@ -359,7 +363,7 @@ describe("SOP regression baselines", {
       newdata = case$baseline,
       variables = "tx",
       times = 1:10,
-      ylevels = case$ylevels,
+      y_levels = case$y_levels,
       absorb = case$absorb
     )
 

@@ -5,16 +5,16 @@
 \title{Compute Total Time in Target State(s)}
 \usage{
 time_in_state(
-  sops,
+  x,
   target_states = 1,
   time_map = NULL,
   origin_time = NULL,
-  xout = NULL,
+  target_times = NULL,
   origin = c("empirical_baseline", "none")
 )
 }
 \arguments{
-\item{sops}{Input object.
+\item{x}{Input object.
 \itemize{
 \item \strong{Array:} \verb{[Patients x Time x States]} (Frequentist) or \verb{[Draws x Patients x Time x States]} (Bayes).
 \item \strong{Data Frame:} Legacy wide bootstrap SOP data containing columns
@@ -33,9 +33,9 @@ inputs to trapezoidal real-time AUC.}
 tidy outputs from \code{\link[=sops]{sops()}} or \code{\link[=avg_sops]{avg_sops()}}, this is passed to
 \code{\link[=interpolate_sops]{interpolate_sops()}}.}
 
-\item{xout}{Optional numeric real-time grid for tidy SOP outputs when
+\item{target_times}{Optional numeric real-time grid for tidy SOP outputs when
 \code{time_map} is supplied. This controls the interpolation grid used for AUC,
-for example \code{xout = 1:28} with \code{origin_time = 0} uses day 0 as an anchor
+for example \code{target_times = 1:28} with \code{origin_time = 0} uses day 0 as an anchor
 but starts the AUC at day 1.}
 
 \item{origin}{Origin handling for tidy SOP outputs when \code{origin_time} is
@@ -72,7 +72,7 @@ sample.
 \examples{
 \dontrun{
 # --- Scenario 1: Patient-Level Estimates ---
-sops_arr <- soprob_markov(model, data, times = 1:30, ylevels = 1:6)
+sops_arr <- soprob_markov(model, data, times = 1:30, y_levels = 1:6)
 days_home <- time_in_state(sops_arr, target_states = 1)
 
 # Real-time AUC after fitting on factor visit indices
@@ -81,7 +81,7 @@ real_days_home <- time_in_state(
   target_states = 1,
   time_map = c("1" = 3, "2" = 7, "3" = 14, "4" = 28),
   origin_time = 0,
-  xout = 1:28
+  target_times = 1:28
 )
 
 # --- Scenario 2: Bootstrap Inference ---
@@ -89,10 +89,10 @@ avg_boot <- avg_sops(
   model,
   variables = list(tx = c(0, 1)),
   times = 1:30,
-  ylevels = 1:6,
+  y_levels = 1:6,
   id_var = "id"
 ) |>
-  inferences(method = "bootstrap", n_sim = 100)
+  inferences(method = "bootstrap", n_draws = 100)
 boot_effects <- time_in_state(avg_boot, target_states = 1)
 }
 

@@ -61,20 +61,24 @@ map_sop_time_values <- function(times, time_map) {
   time_map$real_time[idx]
 }
 
-validate_sop_xout <- function(xout, lower, upper) {
-  if (!is.numeric(xout) || anyNA(xout) || any(!is.finite(xout))) {
-    stop("`xout` must be a finite numeric vector.")
+validate_sop_xout <- function(target_times, lower, upper) {
+  if (
+    !is.numeric(target_times) ||
+      anyNA(target_times) ||
+      any(!is.finite(target_times))
+  ) {
+    stop("`target_times` must be a finite numeric vector.")
   }
-  if (any(xout < lower | xout > upper)) {
+  if (any(target_times < lower | target_times > upper)) {
     stop(
-      "`xout` must stay within the supported time range [",
+      "`target_times` must stay within the supported time range [",
       lower,
       ", ",
       upper,
       "]."
     )
   }
-  sort(unique(xout))
+  sort(unique(target_times))
 }
 
 sop_measure_cols <- function(x) {
@@ -138,7 +142,7 @@ baseline_rows_for_anchor <- function(x, id_var) {
     return(resolve_markov_prediction_data(
       newdata_orig,
       id_var = id_var,
-      tvarname = attr(x, "tvarname") %||% "time"
+      time_var = attr(x, "time_var") %||% "time"
     ))
   }
 
@@ -157,7 +161,7 @@ state_distribution_anchor <- function(
   states,
   origin_time,
   baseline,
-  pvarname
+  p_var
 ) {
   n_out <- max(1L, nrow(combos)) * length(states)
   anchor <- x[rep(NA_integer_, n_out), , drop = FALSE]
@@ -183,7 +187,7 @@ state_distribution_anchor <- function(
       stop("No baseline rows are available for an empirical origin anchor.")
     }
 
-    state_idx <- match(as.character(baseline_i[[pvarname]]), states)
+    state_idx <- match(as.character(baseline_i[[p_var]]), states)
     probs <- tabulate(state_idx, nbins = length(states)) / nrow(baseline_i)
     rows <- row:(row + length(states) - 1L)
 
@@ -212,7 +216,7 @@ state_distribution_anchor <- function(
 }
 
 empirical_baseline_anchor <- function(x, origin_time) {
-  pvarname <- attr(x, "pvarname") %||% "yprev"
+  p_var <- attr(x, "p_var") %||% "yprev"
   if (!"state" %in% names(x)) {
     stop("SOP output must contain a `state` column.")
   }
@@ -220,7 +224,7 @@ empirical_baseline_anchor <- function(x, origin_time) {
     stop("SOP output must contain an `estimate` column.")
   }
 
-  states <- as_state_labels(attr(x, "ylevels") %||% unique(x$state))
+  states <- as_state_labels(attr(x, "y_levels") %||% unique(x$state))
 
   if (inherits(x, "markov_avg_sops")) {
     avg_args <- attr(x, "avg_args")
@@ -232,10 +236,10 @@ empirical_baseline_anchor <- function(x, origin_time) {
     } else {
       data.frame(.dummy = 1L)
     }
-    if (!pvarname %in% names(attr(x, "newdata_orig"))) {
+    if (!p_var %in% names(attr(x, "newdata_orig"))) {
       stop(
         "Previous-state variable `",
-        pvarname,
+        p_var,
         "` not found in `newdata_orig`."
       )
     }
@@ -248,11 +252,11 @@ empirical_baseline_anchor <- function(x, origin_time) {
       states = states,
       origin_time = origin_time,
       baseline = baseline,
-      pvarname = pvarname
+      p_var = p_var
     ))
   }
 
-  if (pvarname %in% names(x)) {
+  if (p_var %in% names(x)) {
     value_cols <- sop_measure_cols(x)
     meta_cols <- setdiff(names(x), c("time", value_cols, ".sop_real_time"))
     anchor_meta <- unique(x[, meta_cols, drop = FALSE])
@@ -261,7 +265,7 @@ empirical_baseline_anchor <- function(x, origin_time) {
       anchor[[nm]] <- anchor_meta[[nm]]
     }
     anchor$estimate <- as.numeric(
-      as.character(anchor$state) == as.character(anchor[[pvarname]])
+      as.character(anchor$state) == as.character(anchor[[p_var]])
     )
     if ("conf.low" %in% names(anchor)) {
       anchor$conf.low <- anchor$estimate
@@ -287,10 +291,10 @@ empirical_baseline_anchor <- function(x, origin_time) {
     data.frame(.dummy = 1L)
   }
   baseline <- baseline_rows_for_anchor(x, NULL)
-  if (!pvarname %in% names(baseline)) {
+  if (!p_var %in% names(baseline)) {
     stop(
       "Previous-state variable `",
-      pvarname,
+      p_var,
       "` not found in `newdata_orig`."
     )
   }
@@ -302,31 +306,31 @@ empirical_baseline_anchor <- function(x, origin_time) {
     states = states,
     origin_time = origin_time,
     baseline = baseline,
-    pvarname = pvarname
+    p_var = p_var
   )
 }
 
-interpolate_numeric_column <- function(time, value, xout) {
+interpolate_numeric_column <- function(time, value, target_times) {
   ok <- !is.na(time) & !is.na(value)
   time <- time[ok]
   value <- value[ok]
 
   if (length(time) == 0) {
-    return(rep(NA_real_, length(xout)))
+    return(rep(NA_real_, length(target_times)))
   }
 
   agg <- stats::aggregate(value ~ time, FUN = mean)
   agg <- agg[order(agg$time), , drop = FALSE]
   if (nrow(agg) == 1L) {
-    out <- rep(NA_real_, length(xout))
-    out[xout == agg$time] <- agg$value
+    out <- rep(NA_real_, length(target_times))
+    out[target_times == agg$time] <- agg$value
     return(out)
   }
 
   stats::approx(
     x = agg$time,
     y = agg$value,
-    xout = xout,
+    xout = target_times,
     rule = 1,
     ties = "ordered"
   )$y
@@ -350,10 +354,8 @@ normalize_interpolated_sops <- function(x) {
 }
 
 sop_draw_attr_name <- function(x) {
-  for (nm in c("simulation_draws", "bootstrap_draws", "draws")) {
-    if (!is.null(attr(x, nm))) {
-      return(nm)
-    }
+  if (!is.null(attr(x, "draws"))) {
+    return("draws")
   }
   NULL
 }
@@ -419,7 +421,7 @@ repeat_anchor_for_draws <- function(anchor, draws, value_col) {
 interpolate_sop_draws <- function(
   draws,
   time_map,
-  xout,
+  target_times,
   anchor,
   normalize
 ) {
@@ -444,12 +446,12 @@ interpolate_sop_draws <- function(
   pieces <- lapply(groups, function(idx) {
     group <- work[idx, , drop = FALSE]
     meta <- group[1, group_cols, drop = FALSE]
-    out <- meta[rep(1L, length(xout)), , drop = FALSE]
-    out$time <- xout
+    out <- meta[rep(1L, length(target_times)), , drop = FALSE]
+    out$time <- target_times
     out[[value_col]] <- interpolate_numeric_column(
       time = group$.sop_real_time,
       value = group[[value_col]],
-      xout = xout
+      target_times = target_times
     )
     out
   })
@@ -505,7 +507,7 @@ interpolated_ci_from_draws <- function(draws, result, conf_level, conf_type) {
 #' @param time_map A named numeric vector mapping visit labels to real times, or
 #'   a data frame with visit and real-time columns. Data frames may use columns
 #'   `visit` and `real_time`, `visit` and `time`, or their first two columns.
-#' @param xout Optional numeric real-time grid. If `NULL`, uses mapped visit
+#' @param target_times Optional numeric real-time grid. If `NULL`, uses mapped visit
 #'   times, plus `origin_time` when an empirical origin anchor is requested.
 #' @param origin_time Optional real time for an empirical baseline anchor.
 #' @param origin Origin handling. `"empirical_baseline"` adds an anchor from the
@@ -545,7 +547,7 @@ interpolated_ci_from_draws <- function(draws, result, conf_level, conf_type) {
 #' interpolate_sops(
 #'   avg,
 #'   time_map = c("1" = 3, "2" = 7, "3" = 14, "4" = 28),
-#'   xout = 0:28,
+#'   target_times = 0:28,
 #'   origin_time = 0
 #' )
 #' }
@@ -554,7 +556,7 @@ interpolated_ci_from_draws <- function(draws, result, conf_level, conf_type) {
 interpolate_sops <- function(
   x,
   time_map,
-  xout = NULL,
+  target_times = NULL,
   origin_time = NULL,
   origin = c("empirical_baseline", "none"),
   normalize = TRUE
@@ -589,10 +591,13 @@ interpolate_sops <- function(
     stop("`origin_time` must not be greater than the largest mapped time.")
   }
 
-  if (is.null(xout)) {
-    xout <- sort(unique(c(if (use_origin) origin_time else NULL, real_time)))
+  if (is.null(target_times)) {
+    target_times <- sort(unique(c(
+      if (use_origin) origin_time else NULL,
+      real_time
+    )))
   }
-  xout <- validate_sop_xout(xout, lower, upper)
+  target_times <- validate_sop_xout(target_times, lower, upper)
 
   work <- x
   work$.sop_real_time <- real_time
@@ -615,13 +620,13 @@ interpolate_sops <- function(
   pieces <- lapply(groups, function(idx) {
     group <- work[idx, , drop = FALSE]
     meta <- group[1, group_cols, drop = FALSE]
-    out <- meta[rep(1L, length(xout)), , drop = FALSE]
-    out$time <- xout
+    out <- meta[rep(1L, length(target_times)), , drop = FALSE]
+    out$time <- target_times
     for (nm in value_cols) {
       out[[nm]] <- interpolate_numeric_column(
         time = group$.sop_real_time,
         value = group[[nm]],
-        xout = xout
+        target_times = target_times
       )
     }
     out
@@ -641,7 +646,7 @@ interpolate_sops <- function(
     interpolate_sop_draws(
       draws = attr(x, draw_attr),
       time_map = time_map,
-      xout = xout,
+      target_times = target_times,
       anchor = anchor,
       normalize = normalize
     )

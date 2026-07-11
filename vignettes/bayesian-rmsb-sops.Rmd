@@ -92,7 +92,7 @@ sop_blrm <- avg_sops(
   fit_blrm,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_blrm$ylevels,
+  y_levels = fit_blrm$ylevels,
   absorb = ABSORB,
   include_re = TRUE,
   n_draws = NULL,
@@ -131,7 +131,7 @@ diagnostic_times <- c(1, 7, FOLLOW_UP)
 plot_transitions(
   raw_data,
   times = diagnostic_times,
-  ylevels = STATE_LEVELS,
+  y_levels = STATE_LEVELS,
   show_values = FALSE
 ) +
   labs(title = "Observed transition proportions")
@@ -141,7 +141,7 @@ plot_transitions(
 plot_transitions(
   fit_blrm,
   times = diagnostic_times,
-  ylevels = fit_blrm$ylevels,
+  y_levels = fit_blrm$ylevels,
   absorb = ABSORB,
   seed = SEED,
   show_values = FALSE
@@ -162,7 +162,7 @@ plot_correlation(
 plot_correlation(
   fit_blrm,
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_blrm$ylevels,
+  y_levels = fit_blrm$ylevels,
   absorb = ABSORB,
   seed = SEED,
   show_values = FALSE
@@ -182,7 +182,7 @@ plot_variogram(
 plot_variogram(
   fit_blrm,
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_blrm$ylevels,
+  y_levels = fit_blrm$ylevels,
   absorb = ABSORB,
   seed = SEED
 ) +

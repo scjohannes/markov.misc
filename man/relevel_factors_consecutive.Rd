@@ -8,7 +8,7 @@ relevel_factors_consecutive(
   data,
   factor_cols = c("y", "yprev"),
   original_data = NULL,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL
 )
 }
@@ -22,7 +22,7 @@ columns stay numeric after releveling.}
 \item{original_data}{Optional data frame containing the original data before
 subsetting. Used to determine which levels are present in the full dataset.}
 
-\item{ylevels}{Optional integer vector of original state levels (e.g., 1:6).
+\item{y_levels}{Optional integer vector of original state levels (e.g., 1:6).
 If provided along with absorb, these will be updated to match the new levels.}
 
 \item{absorb}{Optional integer specifying the absorbing state in the original
@@ -32,7 +32,7 @@ levels. Will be updated to the new position if provided.}
 A list with components:
 \itemize{
 \item data: The data frame with releveled factors
-\item ylevels: Updated ylevels (if provided as input), or NULL
+\item y_levels: Updated y_levels (if provided as input), or NULL
 \item absorb: Updated absorb (if provided as input), or NULL
 \item missing_levels: Character vector of levels that were missing
 }
@@ -50,7 +50,7 @@ samples), this function:
 \item Creates a mapping from old to new consecutive integers
 \item Relevels the specified state columns while preserving factor vs numeric
 type
-\item Updates ylevels and absorb parameters if provided
+\item Updates y_levels and absorb parameters if provided
 }
 
 This is particularly useful for ordered factors representing health states
@@ -64,7 +64,7 @@ releveled <- relevel_factors_consecutive(
   data = boot_data,
   factor_cols = c("y", "yprev"),
   original_data = full_data,
-  ylevels = 1:6,
+  y_levels = 1:6,
   absorb = 6
 )
 

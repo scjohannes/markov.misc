@@ -3,45 +3,32 @@
 #' Inference for State Occupation Probabilities
 #'
 #' Adds confidence intervals to SOP objects using simulation-based or bootstrap
-#' methods. The default method is simulation. For objects produced from
+#' methods. The default method is multivariate-normal coefficient simulation.
+#' For objects produced from
 #' `rmsb::blrm()` models, posterior uncertainty is already computed by
 #' `sops()`/`avg_sops()`, so `inferences()` ignores `method` and returns the
 #' object unchanged.
 #'
-#' @param object A `markov_avg_sops` object from `avg_sops()`, a
+#' @param x A `markov_avg_sops` object from `avg_sops()`, a
 #'   `markov_sops` object from `sops()`, or a `markov_avg_comparisons` object
 #'   from [avg_comparisons()].
 #' @param method Character. Inference method:
 #'   \itemize{
-#'     \item `"simulation"` (default): Uses simulation engines that do not
-#'       refit models. Works for both individual and averaged SOPs.
-#'     \item `"bootstrap"`: Refits the model on resampled or weighted patient
-#'       data. Standard resampling works for `markov_avg_sops`; fractional
-#'       weighted bootstrap also works for individual `markov_sops`.
+#'     \item `"mvn"`: Multivariate-normal coefficient draws.
+#'     \item `"score_bootstrap"`: One-step score perturbation using fixed
+#'       exponential cluster weights.
+#'     \item `"bootstrap"`: Ordinary patient-level refit bootstrap.
+#'     \item `"fwb"`: Fractional weighted refits using fixed exponential
+#'       patient weights.
 #'   }
-#' @param engine Character. Inference engine. For `method = "simulation"`:
-#'   \itemize{
-#'     \item `"mvn"` (default): Draws coefficients from MVN(beta_hat, Sigma).
-#'     \item `"score_bootstrap"`: Uses one-step score perturbation with
-#'       cluster-level exponential multipliers. Requires a `robcov_vglm` model
-#'       or an `orm` model with `cluster`.
-#'   }
-#'   For `method = "bootstrap"`, use `"standard"` for ordinary patient
-#'   resampling with replacement or `"fwb"` for fractional weighted bootstrap
-#'   refits using exponential patient-level weights. `engine = "fwb"` is the
-#'   only refit-bootstrap engine supported for individual `sops()` objects. The
-#'   legacy default `"mvn"` maps to `"standard"` when
-#'   `method = "bootstrap"`.
-#' @param score_weight_dist Character. Cluster weight distribution for
-#'   `engine = "score_bootstrap"`. Currently only `"exponential"` is supported.
-#' @param n_sim Number of simulation draws (for simulation) or bootstrap
+#' @param n_draws Number of simulation draws (for simulation) or bootstrap
 #'   iterations (for bootstrap). Default is 1000. For `blrm` SOP objects this
 #'   argument is ignored; rerun `sops()`/`avg_sops()` with `n_draws` and `seed`
 #'   to change posterior draws.
 #' @param vcov Optional custom variance-covariance matrix. If provided,
 #'   overrides the vcov extracted from the model.
-#' @param cluster Optional row-level cluster vector for
-#'   `engine = "score_bootstrap"` with `orm` models. Values should match
+#' @param cluster Optional row-level cluster vector for score bootstrap with
+#'   `orm` models. Values should match
 #'   `id_var` in the baseline data used by `avg_sops()`.
 #' @param workers Number of parallel workers. If NULL (default) or 1, uses
 #'   sequential processing. If > 1, uses parallel processing with that many
@@ -49,12 +36,17 @@
 #' @param conf_level Confidence level for intervals (default 0.95). For `blrm`
 #'   SOP objects this argument is ignored; rerun `sops()`/`avg_sops()` with
 #'   `conf_level` to change posterior intervals.
-#' @param conf_type Type of confidence interval (simulation method only):
+#' @param seed Optional integer seed. The caller's complete RNG state is
+#'   restored on exit.
+#' @param conf_type Type of frequentist confidence interval:
 #'   \itemize{
 #'     \item `"perc"` (default): Percentile-based intervals from the simulation
 #'       distribution.
 #'     \item `"wald"`: Uses simulation standard errors with normal quantiles.
 #'   }
+#' @param null Optional single finite numeric null value. Supplying it adds
+#'   Wald `statistic`, `p.value`, and `s.value` columns. A zero null is rejected
+#'   for known ratio comparisons.
 #' @param return_draws Logical. If TRUE, stores all individual simulation/bootstrap
 #'   draws as an attribute. Extract with `get_draws()`. Default is TRUE
 #' @param update_datadist Logical. Whether to update datadist for rms models
@@ -68,8 +60,8 @@
 #'   \item{conf.high}{Upper confidence bound}
 #'   \item{std.error}{Standard error from simulation/bootstrap}
 #'
-#'   If `return_draws = TRUE`, the object also has a `"simulation_draws"` or
-#'   `"bootstrap_draws"` attribute containing all individual draws. Extract
+#'   If `return_draws = TRUE`, the object also has a `"draws"` attribute
+#'   containing all individual draws. Extract
 #'   with `get_draws()`. For ungrouped `sops()` objects evaluated on the stored
 #'   empirical prediction cohort, score-bootstrap and FWB draws include the
 #'   draw-specific `score_weight` or `fwb_weight` column.
@@ -79,7 +71,7 @@
 #'
 #' The simulation method works as follows:
 #' 1. Extract coefficient vector beta_hat and (robust) variance-covariance Sigma
-#' 2. Generate n_sim coefficient vectors via the selected engine:
+#' 2. Generate n_draws coefficient vectors via the selected engine:
 #'    \itemize{
 #'      \item `engine = "mvn"`: MVN draws from `N(beta_hat, Sigma)`.
 #'      \item `engine = "score_bootstrap"`: one-step score perturbation with
@@ -149,20 +141,20 @@
 #'   model = fit_robust,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
-#'   ylevels = factor(1:6),
+#'   y_levels = factor(1:6),
 #'   absorb = "6"
 #' ) |>
-#'   inferences(method = "simulation", n_sim = 1000)
+#'   inferences(method = "mvn", n_draws = 1000)
 #'
 #' # Step 2a-bis: Score bootstrap simulation (requires robcov_vglm)
 #' result_score <- avg_sops(
 #'   model = fit_robust,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
-#'   ylevels = factor(1:6),
+#'   y_levels = factor(1:6),
 #'   absorb = "6"
 #' ) |>
-#'   inferences(method = "simulation", engine = "score_bootstrap", n_sim = 1000)
+#'   inferences(method = "score_bootstrap", n_draws = 1000)
 #'
 #' # orm_markov() uses rms::robcov() for full robust covariance matrices.
 #' dd <- rms::datadist(data)
@@ -173,18 +165,17 @@
 #'   model = fit_orm,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
-#'   ylevels = factor(1:6),
+#'   y_levels = factor(1:6),
 #'   absorb = "6"
 #' )
 #' result_orm <- avg_orm |>
-#'   inferences(method = "simulation", engine = "mvn", n_sim = 1000)
+#'   inferences(method = "mvn", n_draws = 1000)
 #'
 #' result_orm_score <- avg_orm |>
 #'   inferences(
-#'     method = "simulation",
-#'     engine = "score_bootstrap",
+#'     method = "score_bootstrap",
 #'     cluster = data$id,
-#'     n_sim = 1000
+#'     n_draws = 1000
 #'   )
 #'
 #' # Step 2b: Bootstrap inference reuses stored full data
@@ -192,26 +183,26 @@
 #'   model = fit_robust,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
-#'   ylevels = factor(1:6),
+#'   y_levels = factor(1:6),
 #'   absorb = "6"
 #' ) |>
-#'   inferences(method = "bootstrap", n_sim = 500)
+#'   inferences(method = "bootstrap", n_draws = 500)
 #'
 #' # Individual-level SOPs with simulation inference
 #' ind_result <- sops(
 #'   model = fit_robust,
 #'   times = 1:60,
-#'   ylevels = factor(1:6),
+#'   y_levels = factor(1:6),
 #'   absorb = "6") |>
-#'   inferences(n_sim = 500)
+#'   inferences(n_draws = 500)
 #'
 #' # Individual-level refit bootstrap uses FWB.
 #' ind_boot <- sops(
 #'   model = fit_robust,
 #'   times = 1:60,
-#'   ylevels = factor(1:6),
+#'   y_levels = factor(1:6),
 #'   absorb = "6") |>
-#'   inferences(method = "bootstrap", engine = "fwb", n_sim = 500)
+#'   inferences(method = "fwb", n_draws = 500)
 #'
 #' # Extract draws for custom analyses
 #' get_draws(ind_result)
@@ -232,70 +223,117 @@
 #'
 #' @export
 inferences <- function(
-  object,
-  method = "simulation",
-  engine = "mvn",
-  score_weight_dist = "exponential",
-  n_sim = 1000,
+  x,
+  method = "mvn",
+  n_draws = 1000,
   vcov = NULL,
   cluster = NULL,
   workers = NULL,
+  seed = NULL,
   conf_level = 0.95,
   conf_type = "perc",
+  null = NULL,
   return_draws = TRUE,
   update_datadist = TRUE,
-  use_coefstart = FALSE,
-  ...
+  use_coefstart = FALSE
+) {
+  with_local_seed(seed, {
+    inferences_impl(
+      x = x,
+      method = method,
+      n_draws = n_draws,
+      vcov = vcov,
+      cluster = cluster,
+      workers = workers,
+      conf_level = conf_level,
+      conf_type = conf_type,
+      null = null,
+      return_draws = return_draws,
+      update_datadist = update_datadist,
+      use_coefstart = use_coefstart
+    )
+  })
+}
+
+inferences_impl <- function(
+  x,
+  method,
+  n_draws,
+  vcov,
+  cluster,
+  workers,
+  conf_level,
+  conf_type,
+  null,
+  return_draws,
+  update_datadist,
+  use_coefstart
 ) {
   # --- Input Validation ---
   if (
     !inherits(
-      object,
-      c("markov_avg_sops", "markov_sops", "markov_avg_comparisons")
+      x,
+      c(
+        "markov_avg_sops",
+        "markov_sops",
+        "markov_avg_comparisons"
+      )
     )
   ) {
     stop(
       "inferences() requires a 'markov_avg_sops', 'markov_sops', or ",
       "'markov_avg_comparisons' object. ",
       "Got: ",
-      paste(class(object), collapse = ", ")
+      paste(class(x), collapse = ", ")
     )
   }
 
   conf_level <- validate_conf_level(conf_level)
   conf_type <- match.arg(conf_type, choices = c("perc", "wald"))
 
-  if (inherits(attr(object, "model"), "blrm")) {
-    return(object)
-  }
-
-  method <- match.arg(method, choices = c("simulation", "bootstrap"))
-  engine <- match.arg(
-    engine,
-    choices = c("mvn", "score_bootstrap", "standard", "fwb")
+  method <- match.arg(
+    method,
+    choices = c("mvn", "score_bootstrap", "bootstrap", "fwb")
   )
 
-  if (method == "simulation" && engine %in% c("standard", "fwb")) {
-    stop(
-      "`engine = \"",
-      engine,
-      "\"` is only used when `method = \"bootstrap\"`."
-    )
-  }
-  if (method == "bootstrap" && engine == "score_bootstrap") {
-    stop(
-      "`engine = \"score_bootstrap\"` is only used when ",
-      "`method = \"simulation\"`."
-    )
+  if (inherits(attr(x, "model"), "blrm")) {
+    if (!is.null(null)) {
+      warning(
+        "Wald null tests are not computed for Bayesian posterior outputs.",
+        call. = FALSE
+      )
+    }
+    return(x)
   }
 
-  if (inherits(object, "markov_avg_comparisons")) {
-    return(inferences_avg_comparisons(
-      object = object,
-      method = method,
+  if (
+    inherits(x, "markov_avg_comparisons") &&
+      identical(unique(x$comparison), "ratio") &&
+      identical(null, 0)
+  ) {
+    stop("Ratio comparisons cannot be tested against `null = 0`.")
+  }
+
+  internal_method <- if (method %in% c("mvn", "score_bootstrap")) {
+    "simulation"
+  } else {
+    "bootstrap"
+  }
+  engine <- switch(
+    method,
+    mvn = "mvn",
+    score_bootstrap = "score_bootstrap",
+    bootstrap = "standard",
+    fwb = "fwb"
+  )
+
+  if (inherits(x, "markov_avg_comparisons")) {
+    result <- inferences_avg_comparisons(
+      object = x,
+      method = internal_method,
       engine = engine,
-      score_weight_dist = score_weight_dist,
-      n_sim = n_sim,
+      score_weight_dist = "exponential",
+      n_draws = n_draws,
       vcov = vcov,
       cluster = cluster,
       workers = workers,
@@ -304,16 +342,13 @@ inferences <- function(
       return_draws = return_draws,
       update_datadist = update_datadist,
       use_coefstart = use_coefstart
-    ))
-  }
-
-  # --- Dispatch to Method-Specific Implementation ---
-  if (method == "simulation") {
-    inferences_simulation(
-      object = object,
+    )
+  } else if (internal_method == "simulation") {
+    result <- inferences_simulation(
+      object = x,
       engine = engine,
-      score_weight_dist = score_weight_dist,
-      n_sim = n_sim,
+      score_weight_dist = "exponential",
+      n_draws = n_draws,
       vcov = vcov,
       cluster = cluster,
       conf_level = conf_level,
@@ -321,19 +356,52 @@ inferences <- function(
       workers = workers,
       return_draws = return_draws
     )
-  } else if (method == "bootstrap") {
-    bootstrap_engine <- if (engine == "mvn") "standard" else engine
-    inferences_bootstrap(
-      object = object,
-      engine = bootstrap_engine,
-      n_boot = n_sim,
+  } else {
+    result <- inferences_bootstrap(
+      object = x,
+      engine = engine,
+      n_boot = n_draws,
       workers = workers,
       conf_level = conf_level,
+      conf_type = conf_type,
       return_draws = return_draws,
       update_datadist = update_datadist,
       use_coefstart = use_coefstart
     )
   }
+
+  result <- normalize_inference_result(
+    result,
+    method = method,
+    n_draws = n_draws,
+    conf_level = conf_level,
+    conf_type = conf_type,
+    return_draws = return_draws
+  )
+  add_null_test(result, null)
+}
+
+normalize_inference_result <- function(
+  x,
+  method,
+  n_draws,
+  conf_level,
+  conf_type,
+  return_draws
+) {
+  primary_class <- class(x)[1]
+  draws <- attr(x, "draws")
+  attr(x, "draws") <- NULL
+  attr(x, "engine") <- NULL
+  attr(x, "score_weight_dist") <- NULL
+  attr(x, "method") <- method
+  attr(x, "n_draws") <- n_draws
+  attr(x, "conf_level") <- conf_level
+  attr(x, "conf_type") <- conf_type
+  attr(x, "draws") <- if (isTRUE(return_draws)) draws else NULL
+  x <- order_estimate_columns(x)
+  class(x) <- c(primary_class, "data.frame")
+  x
 }
 
 # =============================================================================
@@ -349,7 +417,7 @@ inferences <- function(
 #' @param object A `markov_avg_sops` or `markov_sops` object.
 #' @param engine Simulation engine (`"mvn"` or `"score_bootstrap"`).
 #' @param score_weight_dist Cluster weight distribution for score bootstrap.
-#' @param n_sim Number of simulation draws.
+#' @param n_draws Number of simulation draws.
 #' @param vcov Custom variance-covariance matrix (optional, overrides model vcov).
 #' @param cluster Row-level cluster vector for orm score bootstrap.
 #' @param conf_level Confidence level.
@@ -365,7 +433,7 @@ inferences_simulation <- function(
   object,
   engine,
   score_weight_dist,
-  n_sim,
+  n_draws,
   vcov,
   cluster,
   conf_level,
@@ -381,13 +449,13 @@ inferences_simulation <- function(
   call_args <- attr(object, "call_args")
   avg_args <- attr(object, "avg_args")
 
-  tvarname <- attr(object, "tvarname")
-  pvarname <- attr(object, "pvarname")
-  p2varname <- attr(object, "p2varname")
-  ylevels <- attr(object, "ylevels")
+  time_var <- attr(object, "time_var")
+  p_var <- attr(object, "p_var")
+  p2_var <- attr(object, "p2_var")
+  y_levels <- attr(object, "y_levels")
   absorb <- attr(object, "absorb")
-  gap <- attr(object, "gap")
-  t_covs <- attr(object, "t_covs")
+  gap_var <- attr(object, "gap_var")
+  time_covariates <- attr(object, "time_covariates")
 
   # For avg_sops objects
   is_avg <- inherits(object, "markov_avg_sops")
@@ -425,7 +493,7 @@ inferences_simulation <- function(
       baseline_data <- resolve_markov_prediction_data(
         newdata_orig,
         id_var = id_var,
-        tvarname = tvarname
+        time_var = time_var
       )
       newdata_pred <- create_counterfactual_data(baseline_data, grid, variables)
       n_each <- nrow(baseline_data)
@@ -444,7 +512,7 @@ inferences_simulation <- function(
     model = model,
     engine = engine,
     score_weight_dist = score_weight_dist,
-    n_sim = n_sim,
+    n_draws = n_draws,
     vcov = vcov,
     cluster = cluster,
     baseline_data = baseline_data,
@@ -463,27 +531,27 @@ inferences_simulation <- function(
     simulation_draws$draw_weight_omission_reason
 
   n_times <- length(times)
-  n_states <- length(ylevels)
+  n_states <- length(y_levels)
 
   # --- 4. Detect Fast Path Eligibility ---
   # The fast path uses pre-computed design matrix decompositions for supported
   # ordinal model backends.
   model_chk <- if (inherits(model, "robcov_vglm")) model$vglm_fit else model
-  use_fast_path <- inherits(model_chk, c("vglm", "orm")) && is.null(p2varname)
+  use_fast_path <- inherits(model_chk, c("vglm", "orm")) && is.null(p2_var)
 
   if (use_fast_path) {
     # --- FAST PATH: Pre-build components once, then run efficient Markov loop ---
     components <- tryCatch(
       markov_msm_build(
         model = model_chk,
-        data = newdata_pred,
-        t_covs = t_covs,
+        newdata = newdata_pred,
+        time_covariates = time_covariates,
         times = times,
-        ylevels = ylevels,
+        y_levels = y_levels,
         absorb = absorb,
-        tvarname = tvarname,
-        pvarname = pvarname,
-        gap = gap
+        time_var = time_var,
+        p_var = p_var,
+        gap_var = gap_var
       ),
       error = function(e) {
         warning(
@@ -524,7 +592,7 @@ inferences_simulation <- function(
             sops_array = sops_array,
             grid = grid,
             times = times,
-            ylevels = ylevels,
+            y_levels = y_levels,
             variables = variables,
             n_cf = n_cf,
             n_each = n_each,
@@ -537,7 +605,7 @@ inferences_simulation <- function(
           result <- array_to_df_individual(
             sops_array,
             times,
-            ylevels,
+            y_levels,
             newdata_pred,
             by = by,
             weights = baseline_weights,
@@ -567,16 +635,16 @@ inferences_simulation <- function(
       # Compute SOPs
       sops_array <- tryCatch(
         soprob_markov(
-          object = model_i,
-          data = newdata_pred,
+          model = model_i,
+          newdata = newdata_pred,
           times = times,
-          ylevels = ylevels,
+          y_levels = y_levels,
           absorb = absorb,
-          tvarname = tvarname,
-          pvarname = pvarname,
-          p2varname = p2varname,
-          gap = gap,
-          t_covs = t_covs
+          time_var = time_var,
+          p_var = p_var,
+          p2_var = p2_var,
+          gap_var = gap_var,
+          time_covariates = time_covariates
         ),
         error = function(e) {
           warning("soprob_markov failed in draw ", i, ": ", e$message)
@@ -594,7 +662,7 @@ inferences_simulation <- function(
           sops_array = sops_array,
           grid = grid,
           times = times,
-          ylevels = ylevels,
+          y_levels = y_levels,
           variables = variables,
           n_cf = n_cf,
           n_each = n_each,
@@ -607,7 +675,7 @@ inferences_simulation <- function(
         result <- array_to_df_individual(
           sops_array,
           times,
-          ylevels,
+          y_levels,
           newdata_pred,
           by = by,
           weights = baseline_weights,
@@ -626,13 +694,13 @@ inferences_simulation <- function(
     "beta_draws",
     "newdata_pred",
     "times",
-    "ylevels",
+    "y_levels",
     "absorb",
-    "tvarname",
-    "pvarname",
-    "p2varname",
-    "gap",
-    "t_covs",
+    "time_var",
+    "p_var",
+    "p2_var",
+    "gap_var",
+    "time_covariates",
     "is_avg",
     "grid",
     "variables",
@@ -686,7 +754,8 @@ inferences_simulation <- function(
     draws_df = draws_df,
     group_cols = group_cols,
     conf_level = conf_level,
-    conf_type = conf_type
+    conf_type = conf_type,
+    point_estimates = as.data.frame(object)
   )
 
   # --- 8. Merge with Original Object ---
@@ -704,12 +773,11 @@ inferences_simulation <- function(
 
   final_result <- restore_sops_attrs(final_result, object)
   # Add metadata
-  attr(final_result, "n_sim") <- n_sim
+  attr(final_result, "n_draws") <- n_draws
   attr(final_result, "n_successful") <- length(sim_results)
   attr(final_result, "conf_level") <- conf_level
   attr(final_result, "conf_type") <- conf_type
-  attr(final_result, "method") <- "simulation"
-  attr(final_result, "engine") <- engine
+  attr(final_result, "method") <- engine
   if (engine == "score_bootstrap") {
     attr(final_result, "score_weight_dist") <- score_weight_dist
     attr(final_result, "draw_weights_attached") <- draw_weights_attached
@@ -721,7 +789,7 @@ inferences_simulation <- function(
   }
 
   if (return_draws) {
-    attr(final_result, "simulation_draws") <- draws_df
+    attr(final_result, "draws") <- draws_df
   }
 
   final_result

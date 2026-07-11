@@ -5,16 +5,16 @@
 \title{Calculate State Occupation Probabilities for First-Order Markov Models}
 \usage{
 soprob_markov(
-  object,
-  data,
+  model,
+  newdata,
   times = NULL,
-  ylevels,
+  y_levels,
   absorb = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  p2varname = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  p2_var = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   include_re = FALSE,
   id_var = NULL,
   n_draws = 100L,
@@ -23,48 +23,39 @@ soprob_markov(
 )
 }
 \arguments{
-\item{object}{A fitted model object. Supported classes include:
-\code{"lrm"}, \code{"orm"} (from package \code{rms}),
-\code{"blrm"} (from package \code{rmsb}), and
-\code{"vglm"}, \code{"vgam"} (from package \code{VGAM}).}
-
-\item{data}{A data frame containing the baseline covariates for the prediction.
-Rows represent unique patients. Columns must contain baseline covariates and
-initial values for time-varying variables.}
-
 \item{times}{Visit-scale time points to iterate over. For numeric time
 variables this is a numeric vector. For factor-valued visit indices,
 values are matched to the fitted factor levels; if \code{NULL}, all fitted
 visit levels are used.}
 
-\item{ylevels}{A character vector defining the names of the outcome levels (states).
+\item{y_levels}{A character vector defining the names of the outcome levels (states).
 These must match the levels used in the fitted \code{object}.}
 
 \item{absorb}{(Optional) A character vector of absorbing states (states from which
 transitions out are impossible). Defaults to \code{NULL}.}
 
-\item{tvarname}{A character string specifying the name of the time variable in the
+\item{time_var}{A character string specifying the name of the time variable in the
 model formula. Defaults to \code{"time"}.}
 
-\item{pvarname}{A character string specifying the name of the previous state variable
+\item{p_var}{A character string specifying the name of the previous state variable
 used in the model formula. Defaults to \code{"yprev"}.}
 
-\item{p2varname}{Optional character string specifying the second previous
+\item{p2_var}{Optional character string specifying the second previous
 state variable. \code{NULL} uses first-order recursion; any non-\code{NULL} value
-uses second-order recursion with histories \verb{(p2varname, pvarname)}.}
+uses second-order recursion with histories \verb{(p2_var, p_var)}.}
 
-\item{gap}{(Optional) A character string specifying the name of the variable representing
-the time gap (delta time) between observations, if used in the model. Defaults to \code{NULL}.}
+\item{gap_var}{(Optional) A character string specifying the name of the variable representing
+the time gap_var (delta time) between observations, if used in the model. Defaults to \code{NULL}.}
 
-\item{t_covs}{(Optional) A data frame used for explicit time-basis columns
+\item{time_covariates}{(Optional) A data frame used for explicit time-basis columns
 or other time-varying covariates.
 \itemize{
-\item \strong{Structure:} The number of rows in \code{t_covs} must exactly match the length of \code{times}.
+\item \strong{Structure:} The number of rows in \code{time_covariates} must exactly match the length of \code{times}.
 \item \strong{Columns:} Column names must match the specific basis variables used in the model formula (e.g., \code{t1}, \code{t2}).
-\item \strong{Usage:} At step \code{i}, the values from the \code{i}-th row of \code{t_covs} are injected into the prediction data.
+\item \strong{Usage:} At step \code{i}, the values from the \code{i}-th row of \code{time_covariates} are injected into the prediction data.
 }
 Inline model terms such as \code{rms::rcs(time, 4)} do not require
-\code{t_covs}; prediction reuses the fitted model's stored transform
+\code{time_covariates}; prediction reuses the fitted model's stored transform
 metadata.}
 
 \item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
@@ -82,6 +73,15 @@ otherwise \code{"id"}.}
 \item{seed}{Optional random seed for reproducible \code{blrm} draw sampling.}
 
 \item{...}{Reserved for internal use.}
+
+\item{object}{A fitted model object. Supported classes include:
+\code{"lrm"}, \code{"orm"} (from package \code{rms}),
+\code{"blrm"} (from package \code{rmsb}), and
+\code{"vglm"}, \code{"vgam"} (from package \code{VGAM}).}
+
+\item{data}{A data frame containing the baseline covariates for the prediction.
+Rows represent unique patients. Columns must contain baseline covariates and
+initial values for time-varying variables.}
 }
 \value{
 An array of state probabilities.
@@ -149,9 +149,9 @@ fit <- rms::orm(
 baseline <- markov_data[!duplicated(markov_data$id), , drop = FALSE]
 probabilities <- soprob_markov(
   fit,
-  data = baseline,
+  newdata = baseline,
   times = 1:3,
-  ylevels = fit$yunique,
+  y_levels = fit$yunique,
   absorb = "8"
 )
 dim(probabilities)

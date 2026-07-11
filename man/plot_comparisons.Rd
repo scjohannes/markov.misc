@@ -5,7 +5,7 @@
 \title{Plot Average Comparisons}
 \usage{
 plot_comparisons(
-  data,
+  x,
   x_var = NULL,
   color_var = NULL,
   linetype_var = NULL,
@@ -19,7 +19,7 @@ plot_comparisons(
 )
 }
 \arguments{
-\item{data}{A \code{markov_avg_comparisons} object returned by
+\item{x}{A \code{markov_avg_comparisons} object returned by
 \code{\link[=avg_comparisons]{avg_comparisons()}}, optionally after \code{\link[=inferences]{inferences()}}.}
 
 \item{x_var}{Character string or \code{NULL}. X-axis variable. If \code{NULL}, uses
@@ -65,11 +65,11 @@ reference line at 1. A single plot must contain only one comparison scale.
 cmp <- avg_comparisons(
   fit,
   variables = list(tx = c(0, 1)),
-  metric = "time_in_state",
-  states = c(1, 2),
+  estimand = "time_in_state",
+  state_sets = c(1, 2),
   times = 1:30
 ) |>
-  inferences(method = "simulation", n_sim = 500)
+  inferences(method = "mvn", n_draws = 500)
 
 plot_comparisons(cmp)
 }

@@ -6,14 +6,15 @@
 \usage{
 markov_msm_build(
   model,
-  data,
-  t_covs = NULL,
+  newdata = NULL,
+  data = NULL,
+  time_covariates = NULL,
   times = NULL,
-  ylevels = 1:6,
+  y_levels = 1:6,
   absorb = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  gap = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  gap_var = NULL,
   ...
 )
 }
@@ -22,21 +23,21 @@ markov_msm_build(
 
 \item{data}{Baseline data frame (one row per patient)}
 
-\item{t_covs}{Time-dependent covariate lookup (optional)}
+\item{time_covariates}{Time-dependent covariate lookup (optional)}
 
 \item{times}{Time points to predict}
 
-\item{ylevels}{State labels}
+\item{y_levels}{State labels}
 
 \item{absorb}{Absorbing state(s). These transition matrices are not needed
 because absorbing states keep their prior probability mass.}
 
-\item{tvarname}{Name of time variable}
+\item{time_var}{Name of time variable}
 
-\item{pvarname}{Name of previous state variable}
+\item{p_var}{Name of previous state variable}
 
-\item{gap}{Optional gap variable. With factor visit time, numeric gap values
-must be supplied in \code{t_covs}.}
+\item{gap_var}{Optional gap_var variable. With factor visit time, numeric gap_var values
+must be supplied in \code{time_covariates}.}
 
 \item{...}{Ignored}
 }

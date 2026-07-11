@@ -588,7 +588,7 @@ as_state_labels <- function(x) {
   as.character(x)
 }
 
-coerce_previous_state_values <- function(values, prototype, pvarname) {
+coerce_previous_state_values <- function(values, prototype, p_var) {
   labels <- as_state_labels(values)
 
   if (is.factor(prototype)) {
@@ -603,8 +603,8 @@ coerce_previous_state_values <- function(values, prototype, pvarname) {
     out <- suppressWarnings(as.integer(labels))
     if (anyNA(out) && any(!is.na(labels))) {
       stop(
-        "`ylevels` must be integer-compatible when `",
-        pvarname,
+        "`y_levels` must be integer-compatible when `",
+        p_var,
         "` is an integer previous-state variable."
       )
     }
@@ -615,8 +615,8 @@ coerce_previous_state_values <- function(values, prototype, pvarname) {
     out <- suppressWarnings(as.numeric(labels))
     if (anyNA(out) && any(!is.na(labels))) {
       stop(
-        "`ylevels` must be numeric-compatible when `",
-        pvarname,
+        "`y_levels` must be numeric-compatible when `",
+        p_var,
         "` is a numeric previous-state variable."
       )
     }
@@ -630,13 +630,13 @@ coerce_previous_state_values <- function(values, prototype, pvarname) {
   labels
 }
 
-make_previous_state_column <- function(states, prototype, n, pvarname) {
-  values <- coerce_previous_state_values(states, prototype, pvarname)
+make_previous_state_column <- function(states, prototype, n, p_var) {
+  values <- coerce_previous_state_values(states, prototype, p_var)
   rep(values, each = n)
 }
 
-normalize_previous_state_column <- function(values, prototype, pvarname) {
-  coerce_previous_state_values(values, prototype, pvarname)
+normalize_previous_state_column <- function(values, prototype, p_var) {
+  coerce_previous_state_values(values, prototype, p_var)
 }
 
 get_model_factor_levels <- function(model, varname) {
@@ -669,14 +669,14 @@ get_model_factor_levels <- function(model, varname) {
   NULL
 }
 
-get_time_info <- function(model, data, tvarname) {
-  values <- if (!is.null(tvarname) && tvarname %in% names(data)) {
-    data[[tvarname]]
+get_time_info <- function(model, data, time_var) {
+  values <- if (!is.null(time_var) && time_var %in% names(data)) {
+    data[[time_var]]
   } else {
     NULL
   }
   model_levels <- if (!is.null(model)) {
-    get_model_factor_levels(model, tvarname)
+    get_model_factor_levels(model, time_var)
   } else {
     NULL
   }
@@ -697,36 +697,36 @@ get_time_info <- function(model, data, tvarname) {
   )
 }
 
-default_sop_times <- function(data, tvarname, t_covs, default) {
+default_sop_times <- function(data, time_var, time_covariates, default) {
   if (default == "max_sequence") {
-    return(seq_len(max(data[[tvarname]], na.rm = TRUE)))
+    return(seq_len(max(data[[time_var]], na.rm = TRUE)))
   }
 
   if (default == "fast") {
-    if (!is.null(t_covs)) {
-      return(seq_len(nrow(t_covs)))
+    if (!is.null(time_covariates)) {
+      return(seq_len(nrow(time_covariates)))
     }
-    if (!is.null(tvarname) && tvarname %in% names(data)) {
-      return(sort(unique(data[[tvarname]])))
+    if (!is.null(time_var) && time_var %in% names(data)) {
+      return(sort(unique(data[[time_var]])))
     }
     return(1)
   }
 
-  if (is.null(tvarname) || !tvarname %in% names(data)) {
-    stop("`times` must be specified if `tvarname` is not in data.")
+  if (is.null(time_var) || !time_var %in% names(data)) {
+    stop("`times` must be specified if `time_var` is not in data.")
   }
 
-  sort(unique(data[[tvarname]]))
+  sort(unique(data[[time_var]]))
 }
 
-coerce_visit_times <- function(times, time_info, tvarname) {
+coerce_visit_times <- function(times, time_info, time_var) {
   labels <- as.character(times)
   bad <- is.na(match(labels, time_info$levels))
   if (any(bad)) {
     bad_values <- unique(labels[bad])
     stop(
       "Requested visit values are not among fitted factor levels for `",
-      tvarname,
+      time_var,
       "`: ",
       paste(utils::head(bad_values, 5), collapse = ", "),
       if (length(bad_values) > 5) " ..." else ""
@@ -744,59 +744,59 @@ resolve_sop_times <- function(
   model,
   data,
   times,
-  tvarname,
-  t_covs = NULL,
+  time_var,
+  time_covariates = NULL,
   default = c("unique", "max_sequence", "fast")
 ) {
   default <- match.arg(default)
-  time_info <- get_time_info(model, data, tvarname)
+  time_info <- get_time_info(model, data, time_var)
 
   if (is.null(times)) {
     times <- if (time_info$is_factor) {
       time_info$levels
     } else {
-      default_sop_times(data, tvarname, t_covs, default)
+      default_sop_times(data, time_var, time_covariates, default)
     }
   }
 
   if (time_info$is_factor) {
-    times <- coerce_visit_times(times, time_info, tvarname)
+    times <- coerce_visit_times(times, time_info, time_var)
   }
 
-  if (!is.null(t_covs) && nrow(t_covs) != length(times)) {
-    stop("`t_covs` must have one row per requested time point.")
+  if (!is.null(time_covariates) && nrow(time_covariates) != length(times)) {
+    stop("`time_covariates` must have one row per requested time point.")
   }
 
   list(times = times, time_info = time_info)
 }
 
-assign_sop_time <- function(data, tvarname, value, time_info) {
+assign_sop_time <- function(data, time_var, value, time_info) {
   if (isTRUE(time_info$is_factor)) {
-    data[[tvarname]] <- factor(
+    data[[time_var]] <- factor(
       as.character(value),
       levels = time_info$levels,
       ordered = isTRUE(time_info$ordered)
     )
   } else {
-    data[[tvarname]] <- value
+    data[[time_var]] <- value
   }
   data
 }
 
-validate_factor_gap <- function(gap, t_covs, time_info) {
-  if (is.null(gap) || !isTRUE(time_info$is_factor)) {
+validate_factor_gap <- function(gap_var, time_covariates, time_info) {
+  if (is.null(gap_var) || !isTRUE(time_info$is_factor)) {
     return(invisible(NULL))
   }
 
   if (
-    is.null(t_covs) ||
-      !gap %in% names(t_covs) ||
-      !is.numeric(t_covs[[gap]])
+    is.null(time_covariates) ||
+      !gap_var %in% names(time_covariates) ||
+      !is.numeric(time_covariates[[gap_var]])
   ) {
     stop(
-      "Factor visit time with `gap` requires numeric gap values in ",
-      "`t_covs[[\"",
-      gap,
+      "Factor visit time with `gap_var` requires numeric gap_var values in ",
+      "`time_covariates[[\"",
+      gap_var,
       "\"]]`; elapsed gaps are not inferred from ",
       "factor visit labels."
     )
@@ -805,16 +805,24 @@ validate_factor_gap <- function(gap, t_covs, time_info) {
   invisible(NULL)
 }
 
-assign_sop_gap <- function(data, gap, times, index, t_covs, time_info) {
-  if (is.null(gap)) {
+assign_sop_gap <- function(
+  data,
+  gap_var,
+  times,
+  index,
+  time_covariates,
+  time_info
+) {
+  if (is.null(gap_var)) {
     return(data)
   }
 
-  validate_factor_gap(gap, t_covs, time_info)
+  validate_factor_gap(gap_var, time_covariates, time_info)
   if (
-    !isTRUE(time_info$is_factor) && (is.null(t_covs) || !gap %in% names(t_covs))
+    !isTRUE(time_info$is_factor) &&
+      (is.null(time_covariates) || !gap_var %in% names(time_covariates))
   ) {
-    data[[gap]] <- if (index == 1L) {
+    data[[gap_var]] <- if (index == 1L) {
       times[index]
     } else {
       times[index] - times[index - 1L]
@@ -824,27 +832,34 @@ assign_sop_gap <- function(data, gap, times, index, t_covs, time_info) {
   data
 }
 
-assign_sop_t_covs <- function(data, t_covs, index) {
-  if (is.null(t_covs)) {
+assign_sop_t_covs <- function(data, time_covariates, index) {
+  if (is.null(time_covariates)) {
     return(data)
   }
 
-  for (nm in names(t_covs)) {
-    data[[nm]] <- t_covs[index, nm]
+  for (nm in names(time_covariates)) {
+    data[[nm]] <- time_covariates[index, nm]
   }
   data
 }
 
 assign_sop_visit <- function(
   data,
-  tvarname,
+  time_var,
   times,
   index,
-  t_covs,
-  gap,
+  time_covariates,
+  gap_var,
   time_info
 ) {
-  data <- assign_sop_time(data, tvarname, times[index], time_info)
-  data <- assign_sop_gap(data, gap, times, index, t_covs, time_info)
-  assign_sop_t_covs(data, t_covs, index)
+  data <- assign_sop_time(data, time_var, times[index], time_info)
+  data <- assign_sop_gap(
+    data,
+    gap_var,
+    times,
+    index,
+    time_covariates,
+    time_info
+  )
+  assign_sop_t_covs(data, time_covariates, index)
 }

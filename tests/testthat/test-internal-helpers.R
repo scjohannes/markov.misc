@@ -4,7 +4,7 @@ test_that("relevel_factors_consecutive preserves types and updates absorbing sta
     int_out <- relevel_factors_consecutive(
       int_data,
       original_data = data.frame(y = factor(1:3), yprev = factor(1:3)),
-      ylevels = 1:3,
+      y_levels = 1:3,
       absorb = c(2, 3)
     ),
     "were dropped",
@@ -17,7 +17,7 @@ test_that("relevel_factors_consecutive preserves types and updates absorbing sta
     no_absorb <- relevel_factors_consecutive(
       data.frame(y = c(1, 2), yprev = c(1, 2)),
       original_data = data.frame(y = 1:3, yprev = 1:3),
-      ylevels = 1:3,
+      y_levels = 1:3,
       absorb = 3
     ),
     "Set to NULL",
@@ -28,7 +28,7 @@ test_that("relevel_factors_consecutive preserves types and updates absorbing sta
   char_out <- relevel_factors_consecutive(
     data.frame(y = c("a", "b"), yprev = c("a", "b")),
     original_data = data.frame(y = c("a", "b", "c"), yprev = c("a", "b", "c")),
-    ylevels = NULL,
+    y_levels = NULL,
     absorb = NULL
   )
   expect_equal(char_out$ylevels, NULL)
@@ -37,7 +37,7 @@ test_that("relevel_factors_consecutive preserves types and updates absorbing sta
   inferred <- relevel_factors_consecutive(
     data.frame(y = c(1, 2), yprev = c(1, 2)),
     original_data = NULL,
-    ylevels = NULL,
+    y_levels = NULL,
     absorb = NULL
   )
   expect_equal(inferred$missing_levels, character(0))
@@ -186,13 +186,13 @@ test_that("get_effective_coefs() reports unsupported and mismatched coefficients
 
 test_that("plot validation branches are covered", {
   expect_error(
-    plot_results(
+    plot_operchar(
       data.frame(x = 1, g = "a"),
-      y = x,
-      x = x,
-      group = missing_group
+      outcomes = "x",
+      x_var = "x",
+      group_var = "missing_group"
     ),
-    "not found in data",
+    "Columns not found in `x`",
     fixed = TRUE
   )
 
@@ -201,12 +201,12 @@ test_that("plot validation branches are covered", {
   expect_s3_class(p, "ggplot")
 })
 
-test_that("relevel_factors_consecutive can relevel from ylevels alone", {
+test_that("relevel_factors_consecutive can relevel from y_levels alone", {
   out <- relevel_factors_consecutive(
     data = data.frame(y = c(1L, 3L), yprev = c(1L, 3L)),
     factor_cols = c("y", "yprev"),
     original_data = NULL,
-    ylevels = 1:3,
+    y_levels = 1:3,
     absorb = 3
   )
 
@@ -610,29 +610,6 @@ test_that("get_vcov_robust validates clusters before dispatching by model class"
   )))
 })
 
-test_that("standardize_sops and inferences validate dispatch-only branches", {
-  with_mocked_bindings(
-    validate_markov_model = function(model) NULL,
-    {
-      expect_error(
-        standardize_sops(
-          structure(list(), class = "not_supported"),
-          data = data.frame()
-        ),
-        "model must be an orm",
-        fixed = TRUE
-      )
-    }
-  )
-
-  object <- data.frame(estimate = 1)
-  class(object) <- c("markov_avg_sops", class(object))
-  expect_error(
-    inferences(object, method = "bootstrap", engine = "score_bootstrap"),
-    "only used when `method = \"simulation\"`",
-    fixed = TRUE
-  )
-})
 
 test_that("markov_msm_build validates model classes and design alignment", {
   with_mocked_bindings(
@@ -654,7 +631,7 @@ test_that("markov_msm_build validates model classes and design alignment", {
     markov.misc:::markov_msm_build(
       structure(list(), class = "orm"),
       data.frame(yprev = 1),
-      t_covs = data.frame(z = 1:2),
+      time_covariates = data.frame(z = 1:2),
       times = 1
     ),
     "one row per requested time point",
@@ -695,7 +672,7 @@ test_that("markov_msm_build validates model classes and design alignment", {
           structure(list(), class = "orm"),
           data.frame(id = 1, time = 2, yprev = 1),
           times = NULL,
-          ylevels = 1:2
+          y_levels = 1:2
         ),
         "Design matrix columns missing",
         fixed = TRUE
@@ -704,15 +681,15 @@ test_that("markov_msm_build validates model classes and design alignment", {
   )
 })
 
-test_that("plot_results reports unrecognizable grouped expressions", {
+test_that("plot_operchar validates selectors", {
   expect_error(
-    plot_results(
+    plot_operchar(
       data.frame(x = 1, y = 1, g = factor("a")),
-      y,
-      x = x,
-      group = c(g, x)
+      outcomes = "y",
+      x_var = "x",
+      group_var = c("g", "x")
     ),
-    "not recognizable",
+    "must each name one column",
     fixed = TRUE
   )
 })

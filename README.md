@@ -49,15 +49,14 @@ sop <- avg_sops(
   fit,
   variables = list(tx = c(0, 1)),
   times = 1:28,
-  ylevels = fit$yunique,
+  y_levels = fit$yunique,
   absorb = "8"
 )
 
 sop_ci <- inferences(
   sop,
-  method = "simulation",
-  engine = "mvn",
-  n_sim = 200,
+  method = "mvn",
+  n_draws = 200,
   conf_level = 0.95
 )
 

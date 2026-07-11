@@ -10,6 +10,7 @@ inferences_bootstrap(
   n_boot,
   workers,
   conf_level,
+  conf_type = "perc",
   return_draws,
   update_datadist,
   use_coefstart

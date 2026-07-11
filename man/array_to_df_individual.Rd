@@ -7,7 +7,7 @@
 array_to_df_individual(
   sops_array,
   times,
-  ylevels,
+  y_levels,
   newdata,
   by = NULL,
   weights = NULL,
@@ -19,7 +19,7 @@ array_to_df_individual(
 
 \item{times}{Vector of time points.}
 
-\item{ylevels}{Vector of state levels.}
+\item{y_levels}{Vector of state levels.}
 
 \item{newdata}{Original data with rowid.}
 

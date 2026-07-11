@@ -162,7 +162,7 @@ states_to_tte_v2 <- function(
 #'   `y` (state), a treatment column, and a time column.
 #' @param target_state Optional vector of state values to summarize. If `NULL`
 #'   (default), all observed states in `y` are included.
-#' @param tvarname Character string giving the name of the time column.
+#' @param time_var Character string giving the name of the time column.
 #'   Default is `"time"`.
 #' @param txvarname Character string giving the name of the treatment
 #'   column. Default is `"tx"`.
@@ -213,7 +213,7 @@ states_to_tte_v2 <- function(
 #' effect_summary <- calc_time_in_state_diff(
 #'   trajectories,
 #'   target_state = 1,
-#'   tvarname = "visit_day",
+#'   time_var = "visit_day",
 #'   txvarname = "arm",
 #'   reference_level = "control"
 #' )
@@ -228,12 +228,12 @@ states_to_tte_v2 <- function(
 calc_time_in_state_diff <- function(
   data,
   target_state = NULL,
-  tvarname = "time",
+  time_var = "time",
   txvarname = "tx",
   reference_level = NULL
 ) {
   # Input validation
-  required_cols <- c("id", "y", txvarname, tvarname)
+  required_cols <- c("id", "y", txvarname, time_var)
   missing_cols <- setdiff(required_cols, names(data))
   if (length(missing_cols) > 0) {
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
@@ -246,7 +246,7 @@ calc_time_in_state_diff <- function(
     } else {
       data[["y"]]
     },
-    .time = data[[tvarname]],
+    .time = data[[time_var]],
     .treatment = if (is.factor(data[[txvarname]])) {
       as.character(data[[txvarname]])
     } else {

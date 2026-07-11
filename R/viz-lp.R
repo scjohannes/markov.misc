@@ -13,22 +13,22 @@
 #' model covariates for the patient or scenario being plotted; `times` and
 #' `previous_states` define the plotting grid.
 #'
-#' @param model A fitted `orm`, `blrm`, `vglm`, `vgam`, or `robcov_vglm` Markov
+#' @param x A fitted `orm`, `blrm`, `vglm`, `vgam`, or `robcov_vglm` Markov
 #'   model.
 #' @param profile One-row data frame containing the covariate profile.
 #' @param variables Named list with one variable and at least two values. The
 #'   first value is the reference.
 #' @param times Time values at which to evaluate the linear predictor.
 #' @param previous_states Optional previous-state values to facet by. Defaults
-#'   to all non-absorbing states in `ylevels`.
-#' @param ylevels Optional state levels. If omitted, levels are inferred from
+#'   to all non-absorbing states in `y_levels`.
+#' @param y_levels Optional state levels. If omitted, levels are inferred from
 #'   the model when possible.
 #' @param absorb Optional absorbing-state label excluded from the default
 #'   previous-state grid.
-#' @param tvarname Character name of the time column.
-#' @param pvarname Character name of the previous-state column.
-#' @param gap Optional time-gap variable used by the fitted model.
-#' @param t_covs Optional time-varying covariate lookup table used by the fitted
+#' @param time_var Character name of the time column.
+#' @param p_var Character name of the previous-state column.
+#' @param gap_var Optional time-gap_var variable used by the fitted model.
+#' @param time_covariates Optional time-varying covariate lookup table used by the fitted
 #'   model.
 #' @param line_width Line width for the plotted contrasts.
 #'
@@ -41,25 +41,26 @@
 #'   profile = data.frame(tx = 0, age = 59, sex = "Male", yprev = 3),
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:28,
-#'   ylevels = 1:8,
+#'   y_levels = 1:8,
 #'   absorb = 8
 #' )
 #' }
 #' @export
 plot_lp_difference <- function(
-  model,
+  x,
   profile,
   variables,
   times,
   previous_states = NULL,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  gap = NULL,
-  t_covs = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  gap_var = NULL,
+  time_covariates = NULL,
   line_width = 0.7
 ) {
+  model <- x
   if (!inherits(model, c("orm", "blrm", "vglm", "vgam", "robcov_vglm"))) {
     stop(
       "`model` must be an `orm`, `blrm`, `vglm`, `vgam`, or ",
@@ -80,8 +81,8 @@ plot_lp_difference <- function(
   }
   plot_validate_scalar(line_width, "line_width", lower = 0)
 
-  ylevels <- markov_model_ylevels(model, ylevels)
-  ylevel_names <- as_state_labels(ylevels)
+  y_levels <- markov_model_ylevels(model, y_levels)
+  ylevel_names <- as_state_labels(y_levels)
   previous_states <- previous_states %||%
     setdiff(ylevel_names, as_state_labels(absorb))
 
@@ -91,10 +92,10 @@ plot_lp_difference <- function(
     variables = variables,
     times = times,
     previous_states = previous_states,
-    tvarname = tvarname,
-    pvarname = pvarname,
-    gap = gap,
-    t_covs = t_covs
+    time_var = time_var,
+    p_var = p_var,
+    gap_var = gap_var,
+    time_covariates = time_covariates
   )
   eta <- markov_linear_predictor_matrix(model, data)
   lp_data <- plot_lp_difference_data(
@@ -102,13 +103,13 @@ plot_lp_difference <- function(
     eta = eta,
     variable = variable,
     values = variables[[1]],
-    tvarname = tvarname,
-    pvarname = pvarname
+    time_var = time_var,
+    p_var = p_var
   )
 
   p <- ggplot2::ggplot(lp_data) +
     ggplot2::aes(
-      x = .data[[tvarname]],
+      x = .data[[time_var]],
       y = .data$estimate,
       color = .data$threshold,
       group = interaction(.data$threshold, .data$contrast)
@@ -138,23 +139,23 @@ plot_lp_grid <- function(
   variables,
   times,
   previous_states,
-  tvarname,
-  pvarname,
-  gap,
-  t_covs
+  time_var,
+  p_var,
+  gap_var,
+  time_covariates
 ) {
   variable <- names(variables)[1]
   time_res <- resolve_sop_times(
     model,
     profile,
     times,
-    tvarname,
-    t_covs = t_covs,
+    time_var,
+    time_covariates = time_covariates,
     default = "unique"
   )
   times <- time_res$times
   time_info <- time_res$time_info
-  validate_factor_gap(gap, t_covs, time_info)
+  validate_factor_gap(gap_var, time_covariates, time_info)
 
   rows <- vector(
     "list",
@@ -167,19 +168,19 @@ plot_lp_grid <- function(
         value <- variables[[1]][j]
         row <- profile
         row[[variable]] <- value
-        row[[pvarname]] <- plot_lp_previous_state(
+        row[[p_var]] <- plot_lp_previous_state(
           value = prev,
           model = model,
           profile = profile,
-          pvarname = pvarname
+          p_var = p_var
         )
         row <- assign_sop_visit(
           row,
-          tvarname = tvarname,
+          time_var = time_var,
           times = times,
           index = i,
-          t_covs = t_covs,
-          gap = gap,
+          time_covariates = time_covariates,
+          gap_var = gap_var,
           time_info = time_info
         )
         row$previous_state <- as.character(prev)
@@ -194,12 +195,12 @@ plot_lp_grid <- function(
   out
 }
 
-plot_lp_previous_state <- function(value, model, profile, pvarname) {
-  if (pvarname %in% names(profile)) {
-    return(coerce_previous_state_values(value, profile[[pvarname]], pvarname))
+plot_lp_previous_state <- function(value, model, profile, p_var) {
+  if (p_var %in% names(profile)) {
+    return(coerce_previous_state_values(value, profile[[p_var]], p_var))
   }
 
-  model_levels <- get_model_factor_levels(model, pvarname)
+  model_levels <- get_model_factor_levels(model, p_var)
   if (!is.null(model_levels)) {
     return(factor(as.character(value), levels = model_levels))
   }
@@ -236,8 +237,8 @@ markov_linear_predictor_matrix <- function(model, newdata) {
 }
 
 plot_blrm_lp_median_matrix <- function(model, newdata) {
-  ylevels <- markov_model_ylevels(model)
-  n_thresholds <- length(ylevels) - 1L
+  y_levels <- markov_model_ylevels(model)
+  n_thresholds <- length(y_levels) - 1L
   if (n_thresholds < 1L) {
     stop("`blrm` linear predictor plots require at least two state levels.")
   }
@@ -311,8 +312,8 @@ plot_lp_difference_data <- function(
   eta,
   variable,
   values,
-  tvarname,
-  pvarname
+  time_var,
+  p_var
 ) {
   eta <- as.matrix(eta)
   if (is.null(colnames(eta))) {
@@ -326,7 +327,7 @@ plot_lp_difference_data <- function(
 
   reference <- as.character(values[1])
   comparisons <- as.character(values[-1])
-  keys <- c(tvarname, pvarname, "previous_state", "threshold")
+  keys <- c(time_var, p_var, "previous_state", "threshold")
   reference_data <- long[as.character(long[[variable]]) == reference, ]
 
   out <- vector("list", length(comparisons))

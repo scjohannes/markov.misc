@@ -10,15 +10,15 @@ avg_sops(
   variables = NULL,
   by = NULL,
   times,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   refit_data = NULL,
   id_var = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  p2varname = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  p2_var = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   include_re = FALSE,
   n_draws = 100L,
   seed = NULL,
@@ -48,7 +48,7 @@ after standardization.}
 \item{times}{Required visit-scale time points. Numeric time variables use
 numeric values; factor-valued visit indices use fitted visit levels.}
 
-\item{ylevels}{A vector of state levels. If \code{NULL}, attempts to infer from
+\item{y_levels}{A vector of state levels. If \code{NULL}, attempts to infer from
 model.}
 
 \item{absorb}{The absorbing state.}
@@ -66,17 +66,17 @@ wrapper-stored model data. For \code{blrm} models with \code{include_re = TRUE},
 \code{model$clusterInfo$name} is used before the final \code{"id"} fallback when
 wrapper metadata is absent.}
 
-\item{tvarname}{Name of the time variable in the model.}
+\item{time_var}{Name of the time variable in the model.}
 
-\item{pvarname}{Name of the previous state variable in the model.}
+\item{p_var}{Name of the previous state variable in the model.}
 
-\item{p2varname}{Optional second previous-state variable. \code{NULL} uses a
+\item{p2_var}{Optional second previous-state variable. \code{NULL} uses a
 first-order Markov recursion; a non-\code{NULL} column name uses a second-order
 recursion.}
 
-\item{gap}{Name of the time gap variable, if used.}
+\item{gap_var}{Name of the time gap_var variable, if used.}
 
-\item{t_covs}{Optional time-varying covariate lookup table for explicit
+\item{time_covariates}{Optional time-varying covariate lookup table for explicit
 precomputed time-basis columns. Inline terms such as \code{rms::rcs(time, 4)}
 can be used without it.}
 
@@ -148,22 +148,22 @@ result <- avg_sops(
   model = fit,
   variables = list(tx = c(0, 1)),
   times = 1:60,
-  ylevels = 1:6,
+  y_levels = 1:6,
   absorb = 6
-) |> inferences(method = "simulation", n_sim = 500)
+) |> inferences(method = "mvn", n_draws = 500)
 
 # Refit bootstrap can reuse the stored full longitudinal data.
 result_boot <- avg_sops(
   model = fit,
   variables = list(tx = c(0, 1)),
   times = 1:60,
-  ylevels = 1:6,
+  y_levels = 1:6,
   absorb = 6
-) |> inferences(method = "bootstrap", engine = "fwb", n_sim = 500)
+) |> inferences(method = "fwb", n_draws = 500)
 }
 
 }
 \seealso{
 \code{\link[=sops]{sops()}} for individual-level SOPs, \code{\link[=inferences]{inferences()}} for bootstrap
-uncertainty, \code{\link[=standardize_sops]{standardize_sops()}} for the underlying implementation.
+uncertainty and \code{\link[=avg_comparisons]{avg_comparisons()}} for specialized estimands.
 }

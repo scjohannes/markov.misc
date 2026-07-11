@@ -8,7 +8,7 @@ generate_score_bootstrap_draws(
   model,
   baseline_data,
   id_var,
-  n_sim,
+  n_draws,
   score_weight_dist = "exponential",
   cluster = NULL,
   return_baseline_weights = TRUE
@@ -24,7 +24,7 @@ when patient-level averaging weights should be returned.}
 
 \item{id_var}{Name of patient ID variable in \code{baseline_data}.}
 
-\item{n_sim}{Number of simulation draws.}
+\item{n_draws}{Number of simulation draws.}
 
 \item{score_weight_dist}{Cluster weight distribution. Currently only
 \code{"exponential"} is supported.}
@@ -38,8 +38,8 @@ only coefficient perturbations are generated.}
 \value{
 A list with:
 \itemize{
-\item \code{beta_draws}: Matrix \verb{[n_sim x p]} of perturbed coefficients.
-\item \code{baseline_weights}: Matrix \verb{[n_sim x n_patients]} of normalized
+\item \code{beta_draws}: Matrix \verb{[n_draws x p]} of perturbed coefficients.
+\item \code{baseline_weights}: Matrix \verb{[n_draws x n_patients]} of normalized
 patient averaging weights.
 }
 }

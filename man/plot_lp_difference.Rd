@@ -5,22 +5,22 @@
 \title{Plot Treatment Differences in the Linear Predictor}
 \usage{
 plot_lp_difference(
-  model,
+  x,
   profile,
   variables,
   times,
   previous_states = NULL,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  gap = NULL,
-  t_covs = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  gap_var = NULL,
+  time_covariates = NULL,
   line_width = 0.7
 )
 }
 \arguments{
-\item{model}{A fitted \code{orm}, \code{blrm}, \code{vglm}, \code{vgam}, or \code{robcov_vglm} Markov
+\item{x}{A fitted \code{orm}, \code{blrm}, \code{vglm}, \code{vgam}, or \code{robcov_vglm} Markov
 model.}
 
 \item{profile}{One-row data frame containing the covariate profile.}
@@ -31,21 +31,21 @@ first value is the reference.}
 \item{times}{Time values at which to evaluate the linear predictor.}
 
 \item{previous_states}{Optional previous-state values to facet by. Defaults
-to all non-absorbing states in \code{ylevels}.}
+to all non-absorbing states in \code{y_levels}.}
 
-\item{ylevels}{Optional state levels. If omitted, levels are inferred from
+\item{y_levels}{Optional state levels. If omitted, levels are inferred from
 the model when possible.}
 
 \item{absorb}{Optional absorbing-state label excluded from the default
 previous-state grid.}
 
-\item{tvarname}{Character name of the time column.}
+\item{time_var}{Character name of the time column.}
 
-\item{pvarname}{Character name of the previous-state column.}
+\item{p_var}{Character name of the previous-state column.}
 
-\item{gap}{Optional time-gap variable used by the fitted model.}
+\item{gap_var}{Optional time-gap_var variable used by the fitted model.}
 
-\item{t_covs}{Optional time-varying covariate lookup table used by the fitted
+\item{time_covariates}{Optional time-varying covariate lookup table used by the fitted
 model.}
 
 \item{line_width}{Line width for the plotted contrasts.}
@@ -72,7 +72,7 @@ plot_lp_difference(
   profile = data.frame(tx = 0, age = 59, sex = "Male", yprev = 3),
   variables = list(tx = c(0, 1)),
   times = 1:28,
-  ylevels = 1:8,
+  y_levels = 1:8,
   absorb = 8
 )
 }

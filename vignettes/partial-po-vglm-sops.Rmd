@@ -117,10 +117,10 @@ sop_ppo <- avg_sops(
   fit_ppo,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
-  ylevels = factor(STATE_LEVELS, levels = STATE_LEVELS),
+  y_levels = factor(STATE_LEVELS, levels = STATE_LEVELS),
   absorb = ABSORB
 ) |> 
-  inferences(n_sim = 100)
+  inferences(n_draws = 100)
 ```
 
 ```{r plot-ppo}
@@ -147,7 +147,7 @@ diagnostic_times <- 1:FOLLOW_UP
 plot_transitions(
   raw_data,
   times = diagnostic_times,
-  ylevels = STATE_LEVELS,
+  y_levels = STATE_LEVELS,
   show_values = FALSE
 ) +
   labs(title = "Observed transition proportions")
@@ -157,7 +157,7 @@ plot_transitions(
 plot_transitions(
   fit_ppo,
   times = diagnostic_times,
-  ylevels = STATE_LEVELS,
+  y_levels = STATE_LEVELS,
   absorb = ABSORB,
   show_values = FALSE
 ) +
@@ -177,7 +177,7 @@ plot_correlation(
 plot_correlation(
   fit_ppo,
   times = seq_len(FOLLOW_UP),
-  ylevels = STATE_LEVELS,
+  y_levels = STATE_LEVELS,
   absorb = ABSORB,
   show_values = FALSE
 ) +
@@ -196,7 +196,7 @@ plot_variogram(
 plot_variogram(
   fit_ppo,
   times = seq_len(FOLLOW_UP),
-  ylevels = STATE_LEVELS,
+  y_levels = STATE_LEVELS,
   absorb = ABSORB
 ) +
   labs(title = "Model-based correlation variogram")
@@ -208,12 +208,12 @@ plot_variogram(
 ```{r}
 c <- avg_comparisons(
   fit_ppo,
-  metric = "time_in_state",
+  estimand = "time_in_state",
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
-  ylevels = factor(STATE_LEVELS, levels = STATE_LEVELS),
+  y_levels = factor(STATE_LEVELS, levels = STATE_LEVELS),
   absorb = ABSORB) |> 
-  inferences(n_sim = 100)
+  inferences(n_draws = 100)
 
 plot_comparisons(c)
 ```

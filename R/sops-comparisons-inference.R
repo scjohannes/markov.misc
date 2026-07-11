@@ -5,7 +5,7 @@ inferences_avg_comparisons <- function(
   method,
   engine,
   score_weight_dist,
-  n_sim,
+  n_draws,
   vcov,
   cluster,
   workers,
@@ -16,15 +16,15 @@ inferences_avg_comparisons <- function(
   use_coefstart
 ) {
   args <- attr(object, "comparison_args")
-  metric <- args$metric
+  estimand <- args$estimand
 
-  if (metric %in% c("sop", "time_in_state")) {
+  if (estimand %in% c("sop", "time_in_state")) {
     return(inferences_avg_comparisons_linear(
       object = object,
       method = method,
       engine = engine,
       score_weight_dist = score_weight_dist,
-      n_sim = n_sim,
+      n_draws = n_draws,
       vcov = vcov,
       cluster = cluster,
       workers = workers,
@@ -41,7 +41,7 @@ inferences_avg_comparisons <- function(
       object = object,
       engine = engine,
       score_weight_dist = score_weight_dist,
-      n_sim = n_sim,
+      n_draws = n_draws,
       vcov = vcov,
       cluster = cluster,
       workers = workers,
@@ -55,9 +55,10 @@ inferences_avg_comparisons <- function(
   inferences_avg_comparisons_time_benefit_bootstrap(
     object = object,
     engine = bootstrap_engine,
-    n_boot = n_sim,
+    n_boot = n_draws,
     workers = workers,
     conf_level = conf_level,
+    conf_type = conf_type,
     return_draws = return_draws,
     update_datadist = update_datadist,
     use_coefstart = use_coefstart
@@ -69,7 +70,7 @@ inferences_avg_comparisons_linear <- function(
   method,
   engine,
   score_weight_dist,
-  n_sim,
+  n_draws,
   vcov,
   cluster,
   workers,
@@ -93,14 +94,14 @@ inferences_avg_comparisons_linear <- function(
     variables = avg_args$variables,
     by = avg_args$by,
     times = avg_args$times,
-    ylevels = attr(object, "ylevels"),
+    y_levels = attr(object, "y_levels"),
     absorb = attr(object, "absorb"),
-    tvarname = attr(object, "tvarname") %||% "time",
-    pvarname = attr(object, "pvarname") %||% "yprev",
+    time_var = attr(object, "time_var") %||% "time",
+    p_var = attr(object, "p_var") %||% "yprev",
     id_var = avg_args$id_var,
-    p2varname = attr(object, "p2varname"),
-    gap = attr(object, "gap"),
-    t_covs = attr(object, "t_covs"),
+    p2_var = attr(object, "p2_var"),
+    gap_var = attr(object, "gap_var"),
+    time_covariates = attr(object, "time_covariates"),
     include_re = args$include_re,
     n_draws = args$n_draws,
     seed = args$seed,
@@ -111,10 +112,14 @@ inferences_avg_comparisons_linear <- function(
   )
   avg <- inferences(
     avg,
-    method = method,
-    engine = engine,
-    score_weight_dist = score_weight_dist,
-    n_sim = n_sim,
+    method = if (method == "simulation") {
+      engine
+    } else if (engine == "standard") {
+      "bootstrap"
+    } else {
+      "fwb"
+    },
+    n_draws = n_draws,
     vcov = vcov,
     cluster = cluster,
     workers = workers,
@@ -126,25 +131,24 @@ inferences_avg_comparisons_linear <- function(
   )
 
   state_sets <- normalize_comparison_state_sets(
-    args$states,
-    attr(avg, "ylevels")
+    args$state_sets,
+    attr(avg, "y_levels")
   )
   result <- avg_comparison_from_avg_sops(
     avg,
-    metric = args$metric,
+    estimand = args$estimand,
     state_sets = state_sets,
     comparison = args$comparison,
     time_map = args$time_map,
     origin_time = args$origin_time,
-    xout = args$xout,
+    target_times = args$target_times,
     origin = args$origin,
     time_unit = args$time_unit,
     return_draws = return_draws
   )
   result <- restore_avg_comparison_inference_attrs(result, object, avg)
   if (!isTRUE(return_draws)) {
-    attr(result, "simulation_draws") <- NULL
-    attr(result, "bootstrap_draws") <- NULL
+    attr(result, "draws") <- NULL
   }
   result
 }
@@ -156,7 +160,7 @@ restore_avg_comparison_inference_attrs <- function(result, object, inferred) {
     }
   }
   for (a in c(
-    "n_sim",
+    "n_draws",
     "n_boot",
     "n_successful",
     "conf_level",
@@ -182,7 +186,7 @@ inferences_avg_comparisons_time_benefit_simulation <- function(
   object,
   engine,
   score_weight_dist,
-  n_sim,
+  n_draws,
   vcov,
   cluster,
   workers,
@@ -207,7 +211,7 @@ inferences_avg_comparisons_time_benefit_simulation <- function(
     model = model,
     engine = engine,
     score_weight_dist = score_weight_dist,
-    n_sim = n_sim,
+    n_draws = n_draws,
     vcov = vcov,
     cluster = cluster,
     baseline_data = setup$baseline_data,
@@ -226,16 +230,16 @@ inferences_avg_comparisons_time_benefit_simulation <- function(
     model_i <- set_coef(model, beta_draws[i, ])
     sops_array <- tryCatch(
       soprob_markov(
-        object = model_i,
-        data = setup$newdata_pred,
+        model = model_i,
+        newdata = setup$newdata_pred,
         times = setup$times,
-        ylevels = setup$ylevels,
+        y_levels = setup$y_levels,
         absorb = setup$absorb,
-        tvarname = setup$tvarname,
-        pvarname = setup$pvarname,
-        p2varname = setup$p2varname,
-        gap = setup$gap,
-        t_covs = setup$t_covs
+        time_var = setup$time_var,
+        p_var = setup$p_var,
+        p2_var = setup$p2_var,
+        gap_var = setup$gap_var,
+        time_covariates = setup$time_covariates
       ),
       error = function(e) {
         warning("soprob_markov failed in draw ", i, ": ", e$message)
@@ -258,7 +262,7 @@ inferences_avg_comparisons_time_benefit_simulation <- function(
       time_unit = args$time_unit,
       time_map = args$time_map,
       origin_time = args$origin_time,
-      xout = args$xout,
+      target_times = args$target_times,
       origin = args$origin
     )
     draw_i$draw_id <- i
@@ -286,16 +290,16 @@ inferences_avg_comparisons_time_benefit_simulation <- function(
   finalize_avg_comparison_draw_inference(
     object = object,
     draws_df = draws_df,
-    draw_attr = "simulation_draws",
+    draw_attr = "draws",
     conf_level = conf_level,
     conf_type = conf_type,
     return_draws = return_draws,
     metadata = list(
-      n_sim = n_sim,
+      n_draws = n_draws,
       n_successful = length(draw_results),
       conf_level = conf_level,
       conf_type = conf_type,
-      method = "simulation",
+      method = "mvn",
       engine = engine,
       score_weight_dist = if (engine == "score_bootstrap") {
         score_weight_dist
@@ -313,6 +317,7 @@ inferences_avg_comparisons_time_benefit_bootstrap <- function(
   n_boot,
   workers,
   conf_level,
+  conf_type,
   return_draws,
   update_datadist,
   use_coefstart
@@ -327,12 +332,12 @@ inferences_avg_comparisons_time_benefit_bootstrap <- function(
   if (is.null(refit_data)) {
     stop("Full refit data not stored. Cannot perform bootstrap.")
   }
-  validate_refit_bootstrap_data(refit_data, setup$id_var, setup$tvarname)
+  validate_refit_bootstrap_data(refit_data, setup$id_var, setup$time_var)
   if (newdata_supplied && engine == "fwb") {
     warn_fixed_profile_bootstrap_weights("FWB")
   }
 
-  factor_cols <- c("y", setup$pvarname, setup$p2varname)
+  factor_cols <- c("y", setup$p_var, setup$p2_var)
   factor_cols <- intersect(factor_cols, names(refit_data))
 
   analysis_fn <- function(boot_data, fwb_weights = NULL) {
@@ -342,7 +347,7 @@ inferences_avg_comparisons_time_benefit_bootstrap <- function(
       model = model,
       factor_cols = factor_cols,
       original_data = refit_data,
-      ylevels = setup$ylevels,
+      y_levels = setup$y_levels,
       absorb = setup$absorb,
       update_datadist = update_datadist,
       use_coefstart = use_coefstart,
@@ -361,7 +366,7 @@ inferences_avg_comparisons_time_benefit_bootstrap <- function(
       baseline_data <- resolve_markov_prediction_data(
         boot_result$data,
         id_var = "new_id",
-        tvarname = setup$tvarname,
+        time_var = setup$time_var,
         data_label = "bootstrap data"
       )
       baseline_data <- ensure_markov_rowid(baseline_data)
@@ -375,7 +380,7 @@ inferences_avg_comparisons_time_benefit_bootstrap <- function(
       baseline_data <- resolve_markov_prediction_data(
         boot_result$data,
         id_var = setup$id_var,
-        tvarname = setup$tvarname,
+        time_var = setup$time_var,
         data_label = "bootstrap data"
       )
       baseline_data <- ensure_markov_rowid(baseline_data)
@@ -393,16 +398,16 @@ inferences_avg_comparisons_time_benefit_bootstrap <- function(
 
     sops_array <- tryCatch(
       soprob_markov(
-        object = m_boot,
-        data = newdata_cf,
+        model = m_boot,
+        newdata = newdata_cf,
         times = setup$times,
-        ylevels = factor(boot_result$ylevels),
+        y_levels = factor(boot_result$ylevels),
         absorb = boot_result$absorb,
-        tvarname = setup$tvarname,
-        pvarname = setup$pvarname,
-        p2varname = setup$p2varname,
-        gap = setup$gap,
-        t_covs = setup$t_covs
+        time_var = setup$time_var,
+        p_var = setup$p_var,
+        p2_var = setup$p2_var,
+        gap_var = setup$gap_var,
+        time_covariates = setup$time_covariates
       ),
       error = function(e) {
         warning("soprob_markov failed: ", e$message)
@@ -416,7 +421,7 @@ inferences_avg_comparisons_time_benefit_bootstrap <- function(
     sops_array <- complete_comparison_sops_array_states(
       sops_array = sops_array,
       boot_ylevels = boot_result$ylevels,
-      ylevels = setup$ylevels
+      y_levels = setup$y_levels
     )
     boot_setup <- setup
     boot_setup$baseline_data <- baseline_data
@@ -430,7 +435,7 @@ inferences_avg_comparisons_time_benefit_bootstrap <- function(
       time_unit = args$time_unit,
       time_map = args$time_map,
       origin_time = args$origin_time,
-      xout = args$xout,
+      target_times = args$target_times,
       origin = args$origin
     )
   }
@@ -505,9 +510,9 @@ inferences_avg_comparisons_time_benefit_bootstrap <- function(
   finalize_avg_comparison_draw_inference(
     object = object,
     draws_df = boot_df,
-    draw_attr = "bootstrap_draws",
+    draw_attr = "draws",
     conf_level = conf_level,
-    conf_type = "perc",
+    conf_type = conf_type,
     return_draws = return_draws,
     metadata = list(
       n_boot = n_boot,
@@ -529,7 +534,7 @@ setup_from_avg_comparison_object <- function(object) {
     by = avg_args$by,
     times = avg_args$times,
     id_var = avg_args$id_var,
-    p2varname = attr(object, "p2varname"),
+    p2_var = attr(object, "p2_var"),
     newdata_orig = attr(object, "newdata_orig"),
     refit_data = attr(object, "refit_data"),
     newdata_supplied = isTRUE(attr(object, "newdata_supplied")),
@@ -539,12 +544,13 @@ setup_from_avg_comparison_object <- function(object) {
     n_cf = nrow(attr(object, "comparison_grid")),
     n_each = attr(object, "comparison_n_each"),
     call_args = call_args,
-    tvarname = attr(object, "tvarname") %||% call_args$tvarname %||% "time",
-    pvarname = attr(object, "pvarname") %||% call_args$pvarname %||% "yprev",
-    ylevels = attr(object, "ylevels") %||% call_args$ylevels,
+    time_var = attr(object, "time_var") %||% call_args$time_var %||% "time",
+    p_var = attr(object, "p_var") %||% call_args$p_var %||% "yprev",
+    y_levels = attr(object, "y_levels") %||% call_args$y_levels,
     absorb = attr(object, "absorb") %||% call_args$absorb,
-    gap = attr(object, "gap") %||% call_args$gap,
-    t_covs = attr(object, "t_covs") %||% call_args$t_covs
+    gap_var = attr(object, "gap_var") %||% call_args$gap_var,
+    time_covariates = attr(object, "time_covariates") %||%
+      call_args$time_covariates
   )
 }
 
@@ -556,7 +562,7 @@ reduce_time_benefit_array_for_setup <- function(
   time_unit,
   time_map = NULL,
   origin_time = NULL,
-  xout = NULL,
+  target_times = NULL,
   origin = "empirical_baseline"
 ) {
   if (!is.null(time_map) || !is.null(origin_time)) {
@@ -567,13 +573,13 @@ reduce_time_benefit_array_for_setup <- function(
     ind <- interpolate_sops(
       ind,
       time_map = time_map,
-      xout = xout,
+      target_times = target_times,
       origin_time = origin_time,
       origin = origin
     )
     real_setup <- setup
     real_setup$times <- sort(unique(ind$time))
-    real_setup$ylevels <- attr(ind, "ylevels")
+    real_setup$y_levels <- attr(ind, "y_levels")
     out <- reduce_time_benefit_sops_df(
       data = as.data.frame(ind),
       setup = real_setup,
@@ -619,32 +625,32 @@ time_benefit_sops_from_array <- function(sops_array, setup) {
   out <- array_to_df_individual(
     sops_array = sops_array,
     times = setup$times,
-    ylevels = setup$ylevels,
+    y_levels = setup$y_levels,
     newdata = newdata,
     by = NULL
   )
-  attr(out, "ylevels") <- setup$ylevels
+  attr(out, "y_levels") <- setup$y_levels
   attr(out, "call_args") <- setup$call_args %||%
     list(
       times = setup$times,
-      ylevels = setup$ylevels,
+      y_levels = setup$y_levels,
       absorb = setup$absorb,
-      tvarname = setup$tvarname,
-      pvarname = setup$pvarname,
-      p2varname = setup$p2varname,
-      gap = setup$gap,
-      t_covs = setup$t_covs
+      time_var = setup$time_var,
+      p_var = setup$p_var,
+      p2_var = setup$p2_var,
+      gap_var = setup$gap_var,
+      time_covariates = setup$time_covariates
     )
   attr(out, "newdata_orig") <- setup$newdata_orig %||% setup$baseline_data
   attr(out, "newdata_pred") <- newdata
   attr(out, "newdata_supplied") <- setup$newdata_supplied
   attr(out, "id_var") <- setup$id_var
-  attr(out, "tvarname") <- setup$tvarname
-  attr(out, "pvarname") <- setup$pvarname
-  attr(out, "p2varname") <- setup$p2varname
+  attr(out, "time_var") <- setup$time_var
+  attr(out, "p_var") <- setup$p_var
+  attr(out, "p2_var") <- setup$p2_var
   attr(out, "absorb") <- setup$absorb
-  attr(out, "gap") <- setup$gap
-  attr(out, "t_covs") <- setup$t_covs
+  attr(out, "gap_var") <- setup$gap_var
+  attr(out, "time_covariates") <- setup$time_covariates
   class(out) <- c("markov_sops", class(out))
   out
 }
@@ -652,10 +658,10 @@ time_benefit_sops_from_array <- function(sops_array, setup) {
 complete_comparison_sops_array_states <- function(
   sops_array,
   boot_ylevels,
-  ylevels
+  y_levels
 ) {
   boot_labels <- as_state_labels(boot_ylevels)
-  target_labels <- as_state_labels(ylevels)
+  target_labels <- as_state_labels(y_levels)
   if (identical(boot_labels, target_labels)) {
     return(sops_array)
   }
@@ -687,7 +693,8 @@ finalize_avg_comparison_draw_inference <- function(
     draws_df = draws_df,
     group_cols = group_cols,
     conf_level = conf_level,
-    conf_type = conf_type
+    conf_type = conf_type,
+    point_estimates = as.data.frame(object)
   )
   result <- merge_comparison_ci(as.data.frame(object), ci, group_cols)
   for (a in names(attributes(object))) {
@@ -701,7 +708,7 @@ finalize_avg_comparison_draw_inference <- function(
     }
   }
   if (isTRUE(return_draws)) {
-    attr(result, draw_attr) <- draws_df
+    attr(result, "draws") <- draws_df
   }
   class(result) <- class(object)
   result

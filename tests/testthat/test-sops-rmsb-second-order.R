@@ -84,24 +84,24 @@ test_that("soprob_markov handles second-order recursion and absorbing states", {
       )
 
       out <- soprob_markov(
-        object = model,
-        data = data,
+        model = model,
+        newdata = data,
         times = 1:2,
-        ylevels = 1:3,
+        y_levels = 1:3,
         absorb = 3,
-        p2varname = "ypprev"
+        p2_var = "ypprev"
       )
 
       absorb_data <- data
       absorb_data$ypprev <- factor(3, levels = 1:3)
       absorb_data$yprev <- factor(3, levels = 1:3)
       absorb_out <- soprob_markov(
-        object = model,
-        data = absorb_data,
+        model = model,
+        newdata = absorb_data,
         times = 1:2,
-        ylevels = 1:3,
+        y_levels = 1:3,
         absorb = 3,
-        p2varname = "ypprev"
+        p2_var = "ypprev"
       )
     }
   )
@@ -141,14 +141,14 @@ test_that("soprob_markov handles single first-order time points", {
     },
     {
       out <- soprob_markov(
-        object = model,
-        data = data.frame(
+        model = model,
+        newdata = data.frame(
           id = 1,
           time = 1,
           yprev = factor(1, levels = 1:3)
         ),
         times = 1,
-        ylevels = 1:3,
+        y_levels = 1:3,
         absorb = 3
       )
     }
@@ -188,14 +188,14 @@ test_that("soprob_markov carries absorbing labels that are not column positions"
     },
     {
       out <- soprob_markov(
-        object = model,
-        data = data.frame(
+        model = model,
+        newdata = data.frame(
           id = 1,
           time = 1,
           yprev = factor(0, levels = 0:2)
         ),
         times = 1:2,
-        ylevels = 0:2,
+        y_levels = 0:2,
         absorb = 2
       )
     }
@@ -231,53 +231,6 @@ test_that("blrm posterior draw sampling is random, capped, and reproducible", {
   )
 })
 
-test_that("standardize_sops() reuses blrm posterior draws across arms", {
-  model <- make_fake_blrm()
-  data <- data.frame(
-    id = c("a", "b"),
-    time = c(1, 1),
-    yprev = factor(c(1, 2), levels = 1:3),
-    tx = c(0, 1)
-  )
-  captured_draws <- list()
-  select_calls <- 0L
-
-  with_mocked_bindings(
-    select_posterior_draws = function(model, n_draws = 100L, seed = NULL) {
-      select_calls <<- select_calls + 1L
-      c(3L, 1L)
-    },
-    soprob_markov = function(...) {
-      args <- list(...)
-      captured_draws[[length(captured_draws) + 1L]] <<- args$.draw_indices
-      n_draws <- length(args$.draw_indices)
-      n_pat <- nrow(args$data)
-      n_times <- length(args$times)
-      n_states <- length(args$ylevels)
-      array(
-        1 / n_states,
-        dim = c(n_draws, n_pat, n_times, n_states)
-      )
-    },
-    {
-      out <- standardize_sops(
-        model,
-        data = data,
-        times = 1:2,
-        ylevels = 1:3,
-        absorb = 3,
-        n_draws = 2
-      )
-    }
-  )
-
-  expect_equal(select_calls, 1L)
-  expect_length(captured_draws, 2)
-  expect_identical(captured_draws[[1]], c(3L, 1L))
-  expect_identical(captured_draws[[2]], c(3L, 1L))
-  expect_equal(dim(out$sop_tx), c(2L, 2L, 3L))
-  expect_equal(dim(out$sop_ctrl), c(2L, 2L, 3L))
-})
 
 test_that("manual blrm prediction supports PO, constrained PPO, and random effects", {
   gamma <- rbind(
@@ -389,7 +342,7 @@ test_that("sops() summarizes blrm posterior SOP draws and stores optional draws"
         posterior_summary = "mean",
         return_draws = TRUE
       )
-      inferred <- inferences(result, method = "bootstrap", n_sim = 2)
+      inferred <- inferences(result, method = "bootstrap", n_draws = 2)
     }
   )
 

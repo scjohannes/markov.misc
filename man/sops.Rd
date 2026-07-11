@@ -8,16 +8,16 @@ sops(
   model,
   newdata = NULL,
   times,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   by = NULL,
   refit_data = NULL,
   id_var = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  p2varname = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  p2_var = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   include_re = FALSE,
   n_draws = 100L,
   seed = NULL,
@@ -41,7 +41,7 @@ prediction row per \code{id_var}.}
 variables this is usually a numeric vector. For factor-valued visit
 indices, values are matched to fitted visit levels.}
 
-\item{ylevels}{A vector of state levels. If NULL, attempts to infer from model.}
+\item{y_levels}{A vector of state levels. If NULL, attempts to infer from model.}
 
 \item{absorb}{The absorbing state.}
 
@@ -62,19 +62,19 @@ when available, otherwise \code{"id"}. For frequentist models, \code{id_var} is 
 for stored-data extraction and refit bootstrap metadata, not for ordinary
 user-supplied prediction rows.}
 
-\item{tvarname}{Name of the time variable in the model.}
+\item{time_var}{Name of the time variable in the model.}
 
-\item{pvarname}{Name of the previous state variable in the model.}
+\item{p_var}{Name of the previous state variable in the model.}
 
-\item{p2varname}{Optional second previous-state variable. \code{NULL} uses a
+\item{p2_var}{Optional second previous-state variable. \code{NULL} uses a
 first-order Markov recursion; a non-\code{NULL} column name uses a second-order
 recursion.}
 
-\item{gap}{Name of the time gap variable (if used).}
+\item{gap_var}{Name of the time gap_var variable (if used).}
 
-\item{t_covs}{Optional time-varying covariate lookup table for explicit
+\item{time_covariates}{Optional time-varying covariate lookup table for explicit
 basis columns. Inline terms such as \code{rms::rcs(time, 4)} can be used without
-supplying \code{t_covs}.}
+supplying \code{time_covariates}.}
 
 \item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
 fitted random-effect draws in posterior predictions for known IDs.}
@@ -149,18 +149,18 @@ instead, which creates counterfactual datasets and averages over individuals.
 \examples{
 \dontrun{
 # Individual-level SOPs
-sops_ind <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6)
+sops_ind <- sops(fit, newdata = baseline_data, times = 1:30, y_levels = 1:6)
 
 # Stratified by ECOG performance status
-sops_ecog <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6,
+sops_ecog <- sops(fit, newdata = baseline_data, times = 1:30, y_levels = 1:6,
                   by = "ecog")
 
 # Stratified by multiple variables
-sops_strat <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6,
+sops_strat <- sops(fit, newdata = baseline_data, times = 1:30, y_levels = 1:6,
                    by = c("ecog", "age_group"))
 
 # Compatible with inferences()
-sops_strat |> inferences(method = "simulation", n_sim = 1000)
+sops_strat |> inferences(method = "mvn", n_draws = 1000)
 }
 
 }
