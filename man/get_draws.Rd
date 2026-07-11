@@ -56,7 +56,7 @@ result <- avg_sops(
   absorb = 6,
   id_var = "id"
 ) |>
-  inferences(n_boot = 1000, return_draws = TRUE)
+  inferences(method = "bootstrap", n_draws = 1000, return_draws = TRUE)
 
 # Extract draws
 draws <- get_draws(result)

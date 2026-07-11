@@ -17,8 +17,7 @@ inferences(
   null = NULL,
   return_draws = TRUE,
   update_datadist = TRUE,
-  use_coefstart = FALSE,
-  ...
+  use_coefstart = FALSE
 )
 }
 \arguments{

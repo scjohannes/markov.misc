@@ -235,8 +235,7 @@ inferences <- function(
   null = NULL,
   return_draws = TRUE,
   update_datadist = TRUE,
-  use_coefstart = FALSE,
-  ...
+  use_coefstart = FALSE
 ) {
   with_local_seed(seed, {
     inferences_impl(
@@ -251,8 +250,7 @@ inferences <- function(
       null = null,
       return_draws = return_draws,
       update_datadist = update_datadist,
-      use_coefstart = use_coefstart,
-      ...
+      use_coefstart = use_coefstart
     )
   })
 }
@@ -269,8 +267,7 @@ inferences_impl <- function(
   null,
   return_draws,
   update_datadist,
-  use_coefstart,
-  ...
+  use_coefstart
 ) {
   # --- Input Validation ---
   if (

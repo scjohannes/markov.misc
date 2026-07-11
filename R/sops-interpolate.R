@@ -354,10 +354,8 @@ normalize_interpolated_sops <- function(x) {
 }
 
 sop_draw_attr_name <- function(x) {
-  for (nm in c("draws", "draws", "draws")) {
-    if (!is.null(attr(x, nm))) {
-      return(nm)
-    }
+  if (!is.null(attr(x, "draws"))) {
+    return("draws")
   }
   NULL
 }

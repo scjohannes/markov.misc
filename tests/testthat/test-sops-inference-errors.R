@@ -106,6 +106,7 @@ test_that("inferences() validates the homogenized method interface", {
   expect_error(inferences(object, method = "other", n_draws = 1), "arg")
   expect_false("engine" %in% names(formals(inferences)))
   expect_false("score_weight_dist" %in% names(formals(inferences)))
+  expect_false("..." %in% names(formals(inferences)))
 
   seen_engine <- NULL
   with_mocked_bindings(
@@ -125,6 +126,19 @@ test_that("inferences() validates the homogenized method interface", {
 
   expect_equal(seen_engine, "fwb")
   expect_equal(attr(out, "method"), "fwb")
+})
+
+test_that("inferences() rejects obsolete and misspelled arguments", {
+  object <- structure(
+    data.frame(estimate = 0.5),
+    class = c("markov_sops", "data.frame")
+  )
+
+  expect_error(
+    inferences(object, n_boot = 2),
+    "unused argument (n_boot = 2)",
+    fixed = TRUE
+  )
 })
 
 test_that("inferences_simulation() falls back when fast-path setup fails", {
