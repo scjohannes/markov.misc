@@ -163,21 +163,21 @@ sop_vglm <- avg_sops(
   fit_vglm,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
-  ylevels = factor(STATE_LEVELS, levels = STATE_LEVELS),
+  y_levels = factor(STATE_LEVELS, levels = STATE_LEVELS),
   absorb = ABSORB
 ) |> 
   inferences(
-    n_sim = 100
+    n_draws = 100
   )
 
 sop_orm <- avg_sops(
   fit_orm,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_orm$yunique,
+  y_levels = fit_orm$yunique,
   absorb = ABSORB
 ) |> 
-  inferences(n_sim = 100)
+  inferences(n_draws = 100)
 
 combined_sops <- rbind(
   data.frame(backend = "VGAM vglm", as.data.frame(sop_vglm)),
@@ -215,7 +215,7 @@ mc <- plot_correlation(
   time_var = "time",
   y_var = "y",
   times = seq_len(FOLLOW_UP), 
-  ylevels = fit_orm$yunique, 
+  y_levels = fit_orm$yunique,
   absorb = ABSORB)
 
 ec
@@ -235,7 +235,7 @@ mt <- plot_transitions(
   time_var = "time",
   y_var = "y",
   times = seq_len(FOLLOW_UP), 
-  ylevels = fit_orm$yunique, 
+  y_levels = fit_orm$yunique,
   absorb = ABSORB)
 
 et
@@ -249,7 +249,7 @@ td <- plot_transitions(
   time_var = "time",
   y_var = "y",
   times = seq_len(FOLLOW_UP), 
-  ylevels = fit_orm$yunique, 
+  y_levels = fit_orm$yunique,
   absorb = ABSORB)
 td
 ```
@@ -269,7 +269,7 @@ plot_variogram(
   time_var = "time",
   y_var = "y",
   times = seq_len(FOLLOW_UP), 
-  ylevels = fit_orm$yunique, 
+  y_levels = fit_orm$yunique,
   absorb = ABSORB) +
   coord_cartesian(ylim = c(0, 1))
 ```

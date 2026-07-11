@@ -5,16 +5,16 @@ plot_correlation_input_data <- function(
   newdata,
   refit_data,
   times,
-  ylevels,
+  y_levels,
   absorb,
   id_var,
   time_var,
   y_var,
-  pvarname,
-  p2varname,
+  p_var,
+  p2_var,
   facet_var,
-  gap,
-  t_covs,
+  gap_var,
+  time_covariates,
   seed,
   n_draws,
   triangle
@@ -25,15 +25,15 @@ plot_correlation_input_data <- function(
       newdata = newdata,
       refit_data = refit_data,
       times = times,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
       id_var = id_var,
       time_var = time_var,
-      pvarname = pvarname,
-      p2varname = p2varname,
+      p_var = p_var,
+      p2_var = p2_var,
       facet_var = facet_var,
-      gap = gap,
-      t_covs = t_covs,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       seed = seed,
       n_draws = n_draws,
       triangle = triangle
@@ -46,9 +46,9 @@ plot_correlation_input_data <- function(
   if (!is.null(newdata) || !is.null(refit_data)) {
     stop("`newdata` and `refit_data` are only used for model-based plots.")
   }
-  if (!is.null(p2varname) || !is.null(gap) || !is.null(t_covs)) {
+  if (!is.null(p2_var) || !is.null(gap_var) || !is.null(time_covariates)) {
     stop(
-      "`p2varname`, `gap`, and `t_covs` are only used for model-based plots."
+      "`p2_var`, `gap_var`, and `time_covariates` are only used for model-based plots."
     )
   }
   if (!is.null(seed)) {
@@ -68,7 +68,7 @@ plot_correlation_input_data <- function(
     time_var = time_var,
     y_var = y_var,
     facet_var = facet_var,
-    ylevels = ylevels,
+    y_levels = y_levels,
     triangle = triangle
   )
 }
@@ -78,15 +78,15 @@ plot_correlation_model_data <- function(
   newdata,
   refit_data,
   times,
-  ylevels,
+  y_levels,
   absorb,
   id_var,
   time_var,
-  pvarname,
-  p2varname,
+  p_var,
+  p2_var,
   facet_var,
-  gap,
-  t_covs,
+  gap_var,
+  time_covariates,
   seed,
   n_draws,
   triangle
@@ -97,24 +97,24 @@ plot_correlation_model_data <- function(
     refit_data = refit_data,
     variables = NULL,
     times = times,
-    ylevels = ylevels,
+    y_levels = y_levels,
     absorb = absorb,
     time_var = time_var,
-    pvarname = pvarname,
-    p2varname = p2varname,
+    p_var = p_var,
+    p2_var = p2_var,
     id_var = id_var,
-    gap = gap,
-    t_covs = t_covs
+    gap_var = gap_var,
+    time_covariates = time_covariates
   )
 
   plot_correlation_model_summary(
     model = model,
     setup = setup,
     facet_var = facet_var,
-    pvarname = pvarname,
-    p2varname = p2varname,
-    gap = gap,
-    t_covs = t_covs,
+    p_var = p_var,
+    p2_var = p2_var,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     seed = seed,
     n_draws = n_draws,
     triangle = triangle
@@ -125,24 +125,24 @@ plot_correlation_model_summary <- function(
   model,
   setup,
   facet_var,
-  pvarname,
-  p2varname,
-  gap,
-  t_covs,
+  p_var,
+  p2_var,
+  gap_var,
+  time_covariates,
   seed,
   n_draws,
   triangle
 ) {
-  second_order <- !is.null(p2varname)
+  second_order <- !is.null(p2_var)
 
   plot_model_trace_summaries(
     model = model,
     setup = setup,
     facet_var = facet_var,
-    pvarname = pvarname,
-    p2varname = p2varname,
-    gap = gap,
-    t_covs = t_covs,
+    p_var = p_var,
+    p2_var = p2_var,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     seed = seed,
     n_draws = n_draws,
     return_kernels = TRUE,
@@ -152,7 +152,7 @@ plot_correlation_model_summary <- function(
         data = setup$data,
         plot_indices = setup$plot_indices,
         plot_times = setup$plot_times,
-        ylevels = setup$ylevels,
+        y_levels = setup$y_levels,
         facet_var = facet_var,
         draw = draw,
         second_order = second_order,
@@ -174,7 +174,7 @@ plot_correlation_trace_summary <- function(
   data,
   plot_indices,
   plot_times,
-  ylevels,
+  y_levels,
   facet_var,
   draw,
   second_order,
@@ -183,7 +183,7 @@ plot_correlation_trace_summary <- function(
   groups <- plot_facet_groups(data, facet_var)
   out <- vector("list", nrow(groups))
   time_keys <- as.character(plot_times)
-  scores <- seq_along(ylevels)
+  scores <- seq_along(y_levels)
 
   for (i in seq_len(nrow(groups))) {
     keep <- plot_group_subset(data, groups[i, , drop = FALSE], facet_var)
@@ -515,7 +515,7 @@ plot_correlation_data <- function(
   time_var,
   y_var,
   facet_var,
-  ylevels,
+  y_levels,
   triangle
 ) {
   plot_validate_columns(data, c(id_var, time_var, y_var), "`data`")
@@ -530,7 +530,7 @@ plot_correlation_data <- function(
       id_var = id_var,
       time_var = time_var,
       y_var = y_var,
-      ylevels = ylevels
+      y_levels = y_levels
     )
     corr <- stats::cor(mat, method = "pearson", use = "pairwise.complete.obs")
     out[[i]] <- plot_correlation_matrix_long(
@@ -555,7 +555,7 @@ plot_state_time_matrix <- function(
   id_var,
   time_var,
   y_var,
-  ylevels = NULL
+  y_levels = NULL
 ) {
   ids <- unique(as.character(data[[id_var]]))
   times <- plot_ordered_values(data[[time_var]])
@@ -580,17 +580,17 @@ plot_state_time_matrix <- function(
     ncol = length(time_labels),
     dimnames = list(ids, time_labels)
   )
-  mat[cbind(id_index, time_index)] <- plot_state_scores(data[[y_var]], ylevels)
+  mat[cbind(id_index, time_index)] <- plot_state_scores(data[[y_var]], y_levels)
   mat
 }
 
-plot_state_scores <- function(x, ylevels = NULL) {
-  if (!is.null(ylevels)) {
-    ylevel_names <- as_state_labels(ylevels)
+plot_state_scores <- function(x, y_levels = NULL) {
+  if (!is.null(y_levels)) {
+    ylevel_names <- as_state_labels(y_levels)
     out <- match(as.character(x), ylevel_names)
     bad <- is.na(out) & !is.na(x)
     if (any(bad)) {
-      stop("`data` contains state values that are not in `ylevels`.")
+      stop("`data` contains state values that are not in `y_levels`.")
     }
     return(out)
   }

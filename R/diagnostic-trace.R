@@ -4,13 +4,13 @@ markov_transition_trace <- function(
   object,
   data,
   times = NULL,
-  ylevels,
+  y_levels,
   absorb = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  p2varname = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  p2_var = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   include_re = FALSE,
   id_var = NULL,
   n_draws = 100L,
@@ -54,13 +54,13 @@ markov_transition_trace <- function(
 
   validate_markov_model(object)
 
-  if (!pvarname %in% names(data)) {
-    stop("Previous-state variable `", pvarname, "` not found in `data`.")
+  if (!p_var %in% names(data)) {
+    stop("Previous-state variable `", p_var, "` not found in `data`.")
   }
-  if (!is.null(p2varname) && !p2varname %in% names(data)) {
+  if (!is.null(p2_var) && !p2_var %in% names(data)) {
     stop(
       "Second previous-state variable `",
-      p2varname,
+      p2_var,
       "` not found in `data`."
     )
   }
@@ -69,13 +69,13 @@ markov_transition_trace <- function(
     object,
     data,
     times,
-    tvarname,
-    t_covs = t_covs,
+    time_var,
+    time_covariates = time_covariates,
     default = "unique"
   )
   times <- time_res$times
   time_info <- time_res$time_info
-  validate_factor_gap(gap, t_covs, time_info)
+  validate_factor_gap(gap_var, time_covariates, time_info)
 
   draw_indices <- NULL
   if (ftype == "rmsb") {
@@ -110,7 +110,7 @@ markov_transition_trace <- function(
 
   n_pat <- nrow(data)
   n_times <- length(times)
-  ylevel_names <- as_state_labels(ylevels)
+  ylevel_names <- as_state_labels(y_levels)
   absorb_names <- as_state_labels(absorb)
   n_states <- length(ylevel_names)
   absorb_idx <- which(ylevel_names %in% absorb_names)
@@ -133,7 +133,7 @@ markov_transition_trace <- function(
       dimnames = list(rownames(data), times, ylevel_names, ylevel_names)
     )
     if (isTRUE(return_kernels)) {
-      kernels <- if (is.null(p2varname)) {
+      kernels <- if (is.null(p2_var)) {
         array(
           0,
           dim = c(n_pat, n_times, n_states, n_states),
@@ -171,7 +171,7 @@ markov_transition_trace <- function(
       )
     )
     if (isTRUE(return_kernels)) {
-      kernels <- if (is.null(p2varname)) {
+      kernels <- if (is.null(p2_var)) {
         array(
           0,
           dim = c(nd, n_pat, n_times, n_states, n_states),
@@ -202,15 +202,15 @@ markov_transition_trace <- function(
 
   data <- assign_sop_visit(
     data,
-    tvarname = tvarname,
+    time_var = time_var,
     times = times,
     index = 1L,
-    t_covs = t_covs,
-    gap = gap,
+    time_covariates = time_covariates,
+    gap_var = gap_var,
     time_info = time_info
   )
 
-  prev_idx <- match_state_indices(data[[pvarname]], ylevel_names, pvarname)
+  prev_idx <- match_state_indices(data[[p_var]], ylevel_names, p_var)
   predict_rows <- !prev_idx %in% absorb_idx
 
   if (nd == 0) {
@@ -265,7 +265,7 @@ markov_transition_trace <- function(
     }
   }
 
-  if (!is.null(p2varname)) {
+  if (!is.null(p2_var)) {
     return(markov_transition_trace_second_order(
       P = P,
       transitions = transitions,
@@ -277,11 +277,11 @@ markov_transition_trace <- function(
       times = times,
       ylevel_names = ylevel_names,
       absorb_names = absorb_names,
-      tvarname = tvarname,
-      pvarname = pvarname,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      time_var = time_var,
+      p_var = p_var,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       time_info = time_info,
       draw_indices = draw_indices
     ))
@@ -298,10 +298,10 @@ markov_transition_trace <- function(
     times = times,
     ylevel_names = ylevel_names,
     absorb_names = absorb_names,
-    tvarname = tvarname,
-    pvarname = pvarname,
-    gap = gap,
-    t_covs = t_covs,
+    time_var = time_var,
+    p_var = p_var,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     time_info = time_info,
     draw_indices = draw_indices
   )
@@ -377,10 +377,10 @@ markov_transition_trace_first_order <- function(
   times,
   ylevel_names,
   absorb_names,
-  tvarname,
-  pvarname,
-  gap,
-  t_covs,
+  time_var,
+  p_var,
+  gap_var,
+  time_covariates,
   time_info,
   draw_indices
 ) {
@@ -401,21 +401,21 @@ markov_transition_trace_first_order <- function(
   }
 
   edata_base <- data[rep(seq_len(n_pat), times = length(yna)), , drop = FALSE]
-  edata_base[[pvarname]] <- make_previous_state_column(
+  edata_base[[p_var]] <- make_previous_state_column(
     states = yna,
-    prototype = data[[pvarname]],
+    prototype = data[[p_var]],
     n = n_pat,
-    pvarname = pvarname
+    p_var = p_var
   )
 
   for (it in 2:n_times) {
     edata_base <- assign_sop_visit(
       edata_base,
-      tvarname = tvarname,
+      time_var = time_var,
       times = times,
       index = it,
-      t_covs = t_covs,
-      gap = gap,
+      time_covariates = time_covariates,
+      gap_var = gap_var,
       time_info = time_info
     )
 
@@ -501,11 +501,11 @@ markov_transition_trace_second_order <- function(
   times,
   ylevel_names,
   absorb_names,
-  tvarname,
-  pvarname,
-  p2varname,
-  gap,
-  t_covs,
+  time_var,
+  p_var,
+  p2_var,
+  gap_var,
+  time_covariates,
   time_info,
   draw_indices
 ) {
@@ -557,27 +557,27 @@ markov_transition_trace_second_order <- function(
   })
 
   edata_base <- data[rep(seq_len(n_pat), times = n_pairs), , drop = FALSE]
-  edata_base[[p2varname]] <- make_previous_state_column(
+  edata_base[[p2_var]] <- make_previous_state_column(
     states = ylevel_names[pair_grid$h],
-    prototype = data[[p2varname]],
+    prototype = data[[p2_var]],
     n = n_pat,
-    pvarname = p2varname
+    p_var = p2_var
   )
-  edata_base[[pvarname]] <- make_previous_state_column(
+  edata_base[[p_var]] <- make_previous_state_column(
     states = ylevel_names[pair_grid$j],
-    prototype = data[[pvarname]],
+    prototype = data[[p_var]],
     n = n_pat,
-    pvarname = pvarname
+    p_var = p_var
   )
 
   for (it in 2:n_times) {
     edata_base <- assign_sop_visit(
       edata_base,
-      tvarname = tvarname,
+      time_var = time_var,
       times = times,
       index = it,
-      t_covs = t_covs,
-      gap = gap,
+      time_covariates = time_covariates,
+      gap_var = gap_var,
       time_info = time_info
     )
 

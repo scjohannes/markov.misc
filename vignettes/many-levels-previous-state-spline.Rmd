@@ -104,7 +104,7 @@ mc <- plot_correlation(
   time_var = "time",
   y_var = "y",
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_many$yunique,
+  y_levels = fit_many$yunique,
   absorb = ABSORB)
 
 ec
@@ -124,7 +124,7 @@ mt <- plot_transitions(
   time_var = "time",
   y_var = "y",
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_many$yunique,
+  y_levels = fit_many$yunique,
   absorb = ABSORB)
 
 et
@@ -138,7 +138,7 @@ td <- plot_transitions(
   time_var = "time",
   y_var = "y",
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_many$yunique,
+  y_levels = fit_many$yunique,
   absorb = ABSORB)
 td
 ```
@@ -157,7 +157,7 @@ plot_variogram(
   time_var = "time",
   y_var = "y",
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_many$yunique,
+  y_levels = fit_many$yunique,
   absorb = ABSORB)
 ```
 
@@ -168,10 +168,10 @@ sop_many <- avg_sops(
   fit_many,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
-  ylevels = fit_many$yunique,
-  pvarname = "yprev"
+  y_levels = fit_many$yunique,
+  p_var = "yprev"
 ) |> 
-  inferences(n_sim = 10)
+  inferences(n_draws = 10)
 ```
 
 With many states, a stacked distribution is usually easier to read than one
@@ -200,11 +200,11 @@ c <- avg_comparisons(
   fit_many, 
   times = seq_len(FOLLOW_UP),
   variables = list(tx = c(0, 1)), 
-  metric = "time_in_state",
-  states = list(good = 1:10, average = 11:20, bad = 21:30), 
+  estimand = "time_in_state",
+  state_sets = list(good = 1:10, average = 11:20, bad = 21:30),
 ) |> 
   inferences(
-    n_sim = 10
+    n_draws = 10
   )
 
 plot_comparisons(c)
@@ -215,10 +215,10 @@ tb <- avg_comparisons(
   fit_many, 
   times = seq_len(FOLLOW_UP),
   variables = list(tx = c(0, 1)),
-  metric = "time_benefit"
+  estimand = "time_benefit"
 ) |> 
   inferences(
-    n_sim = 10
+    n_draws = 10
   )
 
 plot_comparisons(tb)
@@ -229,10 +229,10 @@ sc <- avg_comparisons(
   fit_many, 
   times = seq_len(FOLLOW_UP),
   variables = list(tx = c(0, 1)),
-  metric = "sop"
+  estimand = "sop"
 ) |> 
   inferences(
-    n_sim = 10
+    n_draws = 10
   )
 
 plot_comparisons(sc, facet_var = "state_set")

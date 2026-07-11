@@ -136,7 +136,7 @@ such as `rms::rcs(yprev, 6)`.
 ### State Levels and Absorbing States
 
 The package treats state labels as ordered, stable values. Public SOP calls pass
-state support through `ylevels` and absorbing states through `absorb`. Internally:
+state support through `y_levels` and absorbing states through `absorb`. Internally:
 
 - `as_state_labels()` normalizes levels to character labels for comparisons.
 - Absorbing-state mass is carried forward during SOP recursion.
@@ -178,9 +178,9 @@ Important attributes are set in `set_sops_attrs()`:
 | --- | --- |
 | `model` | The fitted model needed to replay prediction during inference. |
 | `call_args` | Requested times, states, absorbing states, time/previous-state variable names, gaps, time covariates, and grouping variables. |
-| `tvarname`, `pvarname`, `p2varname`, `gap` | Names of dynamic transition-history variables. |
-| `ylevels`, `absorb` | State support and absorbing states. |
-| `t_covs` | Time-dependent covariate lookup used when formulas contain spline bases or other derived time columns. |
+| `time_var`, `p_var`, `p2_var`, `gap` | Names of dynamic transition-history variables. |
+| `y_levels`, `absorb` | State support and absorbing states. |
+| `time_covariates` | Time-dependent covariate lookup used when formulas contain spline bases or other derived time columns. |
 | `by` | Stratification variables for grouped individual SOPs. |
 | `newdata_orig` | Original source data supplied to the SOP call, or wrapper-stored model data when `newdata = NULL`. User-supplied rows are treated as fixed prediction profiles; wrapper-stored data may be full longitudinal data. |
 | `newdata_pred` | The fixed prediction data used by recursive SOP prediction, with `rowid` regenerated internally. For user-supplied `newdata`, every row is kept. For stored longitudinal source data, this is extracted as the earliest row per `id_var`. |
@@ -195,10 +195,10 @@ These attributes are part of the architecture. Downstream functions such as
 `avg_comparisons()`, and `plot_sops()` rely on them.
 
 The public SOP endpoints keep their argument order grouped by use: core
-estimand inputs first (`times`, `ylevels`, `absorb`, `by`, and comparison
+estimand inputs first (`times`, `y_levels`, `absorb`, `by`, and comparison
 choices), advanced source-data controls next (`refit_data`, `id_var`), then
-Markov model-structure controls (`tvarname`, `pvarname`, `p2varname`, `gap`,
-`t_covs`), and finally posterior-specific knobs.
+Markov model-structure controls (`time_var`, `p_var`, `p2_var`, `gap`,
+`time_covariates`), and finally posterior-specific knobs.
 
 ## Primary User Workflows
 
@@ -413,7 +413,7 @@ cumulative logits to state probabilities.
 
 ### Second-Order Recursion
 
-When `p2varname` is supplied, `soprob_markov()` dispatches to
+When `p2_var` is supplied, `soprob_markov()` dispatches to
 `soprob_markov_second_order_run()`. The state distribution is no longer enough;
 the recursion tracks joint history over `(S(t-2), S(t-1))`. That enables models
 whose transition probability depends on two lagged states, at the cost of a
@@ -426,11 +426,11 @@ Time handling is centralized in backend helpers:
 - Numeric time can be generated from the requested `times` sequence.
 - Factor time uses explicitly supplied visit labels, validated against fitted
   factor levels.
-- `t_covs` supplies precomputed time-dependent covariates such as spline bases.
+- `time_covariates` supplies precomputed time-dependent covariates such as spline bases.
 - `gap` allows transition models to include the elapsed interval since the
   previous observation.
 - Factor-valued visit models with gaps require a numeric gap value supplied
-  through `t_covs`.
+  through `time_covariates`.
 
 This design keeps modeling formulas flexible while making prediction explicit:
 the SOP engine only uses time values and time covariates it can reconstruct.
@@ -592,7 +592,7 @@ SOP bootstrap inference has two public targets:
   prediction rows need, while FWB keeps every row in the refit data present with
   positive patient-level weights.
 
-For `method = "bootstrap", engine = "fwb"`, weights are drawn at the patient ID
+For `method = "fwb"`, weights are drawn at the patient ID
 level, normalized to mean 1 over patients for model fitting, expanded to rows,
 and then separately normalized to sum 1 by `marginalize_sops_array()` or
 `array_to_df_individual()` when averaging empirical SOPs. With `by`, weights are
@@ -728,12 +728,12 @@ bar plots, `markov_avg_sops` objects with stored draws can overlay a determinist
 subset of draw-level bars. The plotting functions validate that each plotted
 time/state/facet/linetype combination is unique, which prevents accidental
 overplotting of multiple scenarios. Model-derived SOP plots use the stored
-`ylevels` attribute for discrete state scale order so character state labels
+`y_levels` attribute for discrete state scale order so character state labels
 keep model/state-support order rather than lexicographic order.
 
 `plot_comparisons()` lives in `R/viz-comparisons.R`. Shared ggplot validation,
 faceting, and scale helpers live in `R/viz-helpers.R`, so SOP and comparison
-plots do not depend on each other's implementation files. `plot_results()` in
+plots do not depend on each other's implementation files. `plot_operchar()` in
 `R/viz-results.R` visualizes operating-characteristic summaries and can combine
 panels with `patchwork`.
 
@@ -750,7 +750,7 @@ summaries with ggplot.
 Model-based diagnostic plots treat requested `times` as plot times: sparse
 numeric or factor visit requests are expanded to the full intermediate grid and
 filtered back to the requested times after deterministic evaluation. When
-`t_covs` is supplied, it must cover this expanded recursion grid. For
+`time_covariates` is supplied, it must cover this expanded recursion grid. For
 `rmsb::blrm()` models, posterior draw-specific traces are computed in chunks
 with the existing manual `predict_blrm_response_markov()` backend and
 summarized only after draw-level aggregation; fitted random effects are omitted.
@@ -778,7 +778,7 @@ Important validation checks include:
 - VGAM transition models must be cumulative models with `reverse = TRUE`.
 - `by`, counterfactual variables, previous-state variables, ID variables, and
   requested target states are checked against available columns.
-- `t_covs` is required when formula-derived time covariates cannot be rebuilt
+- `time_covariates` is required when formula-derived time covariates cannot be rebuilt
   from raw `times`.
 - `validate_coef_vcov()` coerces Matrix-package covariance objects to base
   matrices, then requires coefficient vectors and covariance matrices to have
@@ -913,6 +913,35 @@ Useful regression themes include:
 Generated roxygen documentation in `man/` should be regenerated when exported
 interfaces or examples change.
 
+## Canonical SOP contracts
+
+The public SOP vocabulary uses `model`, `newdata`, `variables`, `by`, `times`,
+`y_levels`, `time_var`, `p_var`, `p2_var`, `gap_var`, `time_covariates`,
+`absorb`, `include_re`, `n_draws`, `seed`, `conf_level`, `conf_type`, and
+`return_draws`. Public post-processing and plotting functions take `x` first;
+observed-state selectors remain `y_var`, and all plot selectors are character
+`*_var` arguments.
+
+`sops()`, `avg_sops()`, and `avg_comparisons()` return base data frames with
+the exact leading classes `markov_sops`, `markov_avg_sops`, and
+`markov_avg_comparisons`.
+Computed measure columns are ordered as `estimate`, `std.error`, `statistic`,
+`p.value`, `s.value`, `conf.low`, and `conf.high`. Comparison metadata uses
+`estimand` and `term`; raw SOP predictions do not invent a `term`.
+
+All uncertainty samples use one `draws` attribute with `draw_id`, identifying
+columns, and `estimate`. Frequentist intervals are either empirical percentiles
+or Wald intervals centered on the reported point estimate. Explicit `null`
+values alone activate normal-theory test columns. Bayesian results keep
+posterior summaries and percentile intervals and do not add frequentist tests.
+
+`avg_comparisons()` is the specialized route for SOP, time-in-state, and
+patient-level time-benefit estimands.
+
+Plot APIs return ggplot objects except `plot_operchar()`, which returns a
+patchwork object when `combine = TRUE` and a named ggplot list otherwise.
+`plot_comparisons()` intentionally accepts comparison results.
+
 ## Code Reference Index
 
 | File | Key symbols | Notes |
@@ -932,7 +961,6 @@ interfaces or examples change.
 | `R/robcov_vglm.R` | `robcov_vglm()`, `compute_scores_vglm()`, `compare_se_orm_vglm()` | Robust covariance and VGAM score support. |
 | `R/mvn_helpers.R` | `set_coef()`, `get_vcov_robust()`, `validate_coef_vcov()`, `get_coef()` | Coefficient mutation and covariance extraction for inference. |
 | `R/sops-api.R` | `sops()`, `sops_blrm()`, `avg_sops()`, `avg_sops_blrm()` | Main public SOP API. |
-| `R/sops-standardize.R` | `standardize_sops()` | Legacy standardized SOP wrapper. |
 | `R/sops-engine.R` | `soprob_markov()`, `soprob_markov_second_order_run()` | Core first- and second-order recursive SOP engine for SOP arrays. |
 | `R/diagnostic-trace.R` | `markov_transition_trace()` and trace helpers | Opt-in transition traces and kernels for diagnostic summaries, kept separate from the SOP hot path. |
 | `R/diagnostic-data.R`, `R/diagnostic-transitions.R`, `R/diagnostic-correlation.R` | diagnostic setup, BLRM trace chunking, transition summaries, correlation summaries | Internal diagnostic-data layer used by transition, correlation, and variogram plots. |
@@ -945,7 +973,7 @@ interfaces or examples change.
 | `R/sops-comparisons-inference.R` | `inferences_avg_comparisons()` and helpers | Draw and refit inference for average comparisons, including nonlinear time-benefit replay. |
 | `R/viz-sops.R` | `plot_sops()` and SOP plot helpers | Empirical and model-derived SOP plots. |
 | `R/viz-comparisons.R` | `plot_comparisons()` and helpers | Average-comparison plots. |
-| `R/viz-results.R` | `plot_results()` | Operating-characteristic summary plots. |
+| `R/viz-results.R` | `plot_operchar()` | Operating-characteristic summary plots. |
 | `R/viz-helpers.R` | shared ggplot helpers | Common plotting validation, faceting, and default discrete scales. |
 | `R/sops-inference.R` | `inferences()`, `inferences_simulation()` | Main inference dispatcher and coefficient-draw replay. |
 | `R/sops-inference-draws.R` | `generate_sop_coefficient_draws()`, `apply_sop_simulation_draws()` | Shared coefficient-draw generation and optional parallel draw application for SOP and comparison inference. |

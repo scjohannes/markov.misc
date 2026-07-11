@@ -33,10 +33,10 @@ make_mock_avg_sops <- function(by = NULL, tx_levels = c(0, 1, 2)) {
     times = sort(unique(out$time)),
     id_var = "id"
   )
-  attr(out, "ylevels") <- c("1", "2")
+  attr(out, "y_levels") <- c("1", "2")
   attr(out, "call_args") <- list(times = sort(unique(out$time)))
-  attr(out, "tvarname") <- "time"
-  attr(out, "pvarname") <- "yprev"
+  attr(out, "time_var") <- "time"
+  attr(out, "p_var") <- "yprev"
   out
 }
 
@@ -49,8 +49,8 @@ test_that("avg_comparisons() computes SOP differences and multiple levels", {
       out <- avg_comparisons(
         structure(list(), class = "mock_model"),
         variables = list(tx = c(0, 1, 2)),
-        metric = "sop",
-        states = "1",
+        estimand = "sop",
+        state_sets = "1",
         times = 1:2,
         comparison = "difference"
       )
@@ -75,8 +75,8 @@ test_that("avg_comparisons() computes time-in-state ratios for lumped states", {
       out <- avg_comparisons(
         structure(list(), class = "mock_model"),
         variables = list(tx = c(0, 1)),
-        metric = "time_in_state",
-        states = "1",
+        estimand = "time_in_state",
+        state_sets = "1",
         times = 1:2,
         comparison = "ratio"
       )
@@ -97,8 +97,8 @@ test_that("avg_comparisons() preserves by strata", {
       out <- avg_comparisons(
         structure(list(), class = "mock_model"),
         variables = list(tx = c(0, 1)),
-        metric = "sop",
-        states = "1",
+        estimand = "sop",
+        state_sets = "1",
         times = 1,
         by = "sex"
       )
@@ -121,8 +121,8 @@ test_that("avg_comparisons() uses real-time AUC for time-in-state", {
       out <- avg_comparisons(
         structure(list(), class = "mock_model"),
         variables = list(tx = c(0, 1)),
-        metric = "time_in_state",
-        states = "1",
+        estimand = "time_in_state",
+        state_sets = "1",
         times = 1:2,
         time_map = c("1" = 0, "2" = 2)
       )
@@ -134,7 +134,7 @@ test_that("avg_comparisons() uses real-time AUC for time-in-state", {
 
 test_that("avg_comparisons() forwards model-structure args for marginal metrics", {
   avg <- make_mock_avg_sops(tx_levels = c(0, 1))
-  t_covs <- data.frame(visit = 1:2, spline = c(0, 1))
+  time_covariates <- data.frame(visit = 1:2, spline = c(0, 1))
   captured <- new.env(parent = emptyenv())
 
   with_mocked_bindings(
@@ -146,28 +146,28 @@ test_that("avg_comparisons() forwards model-structure args for marginal metrics"
       out <- avg_comparisons(
         structure(list(), class = "mock_model"),
         variables = list(tx = c(0, 1)),
-        metric = "time_in_state",
-        states = "1",
+        estimand = "time_in_state",
+        state_sets = "1",
         times = 1:2,
-        ylevels = c("1", "2"),
+        y_levels = c("1", "2"),
         absorb = "2",
-        tvarname = "visit",
-        pvarname = "prev",
-        p2varname = "preprev",
-        gap = "gap",
-        t_covs = t_covs
+        time_var = "visit",
+        p_var = "prev",
+        p2_var = "preprev",
+        gap_var = "gap",
+        time_covariates = time_covariates
       )
     }
   )
 
   expect_s3_class(out, "markov_avg_comparisons")
-  expect_equal(captured$args$ylevels, c("1", "2"))
+  expect_equal(captured$args$y_levels, c("1", "2"))
   expect_equal(captured$args$absorb, "2")
-  expect_equal(captured$args$tvarname, "visit")
-  expect_equal(captured$args$pvarname, "prev")
-  expect_equal(captured$args$p2varname, "preprev")
+  expect_equal(captured$args$time_var, "visit")
+  expect_equal(captured$args$p_var, "prev")
+  expect_equal(captured$args$p2_var, "preprev")
   expect_equal(captured$args$gap, "gap")
-  expect_equal(captured$args$t_covs, t_covs)
+  expect_equal(captured$args$time_covariates, time_covariates)
 })
 
 test_that("avg_comparisons() computes time benefit from paired profiles", {
@@ -178,7 +178,7 @@ test_that("avg_comparisons() computes time benefit from paired profiles", {
     prev = c(2, 2),
     preprev = c(1, 1)
   )
-  t_covs <- data.frame(visit = 1, spline = 0)
+  time_covariates <- data.frame(visit = 1, spline = 0)
   captured <- new.env(parent = emptyenv())
 
   with_mocked_bindings(
@@ -197,10 +197,10 @@ test_that("avg_comparisons() computes time benefit from paired profiles", {
       out$estimate <- c(0, 0, 1, 0, 1, 1, 0, 1)
       class(out) <- c("markov_sops", class(out))
       attr(out, "call_args") <- list(times = 1)
-      attr(out, "ylevels") <- c("1", "2")
-      attr(out, "tvarname") <- captured$args$tvarname
-      attr(out, "pvarname") <- captured$args$pvarname
-      attr(out, "p2varname") <- captured$args$p2varname
+      attr(out, "y_levels") <- c("1", "2")
+      attr(out, "time_var") <- captured$args$time_var
+      attr(out, "p_var") <- captured$args$p_var
+      attr(out, "p2_var") <- captured$args$p2_var
       out
     },
     {
@@ -208,25 +208,25 @@ test_that("avg_comparisons() computes time benefit from paired profiles", {
         structure(list(), class = "mock_model"),
         newdata = newdata,
         variables = list(tx = c(0, 1)),
-        metric = "time_benefit",
+        estimand = "time_benefit",
         times = 1,
-        ylevels = c("1", "2"),
-        tvarname = "visit",
-        pvarname = "prev",
-        p2varname = "preprev",
-        gap = "gap",
-        t_covs = t_covs
+        y_levels = c("1", "2"),
+        time_var = "visit",
+        p_var = "prev",
+        p2_var = "preprev",
+        gap_var = "gap",
+        time_covariates = time_covariates
       )
     }
   )
 
   expect_equal(out$estimate, 0.5)
-  expect_equal(out$metric, "time_benefit")
-  expect_equal(captured$args$tvarname, "visit")
-  expect_equal(captured$args$pvarname, "prev")
-  expect_equal(captured$args$p2varname, "preprev")
+  expect_equal(out$estimand, "time_benefit")
+  expect_equal(captured$args$time_var, "visit")
+  expect_equal(captured$args$p_var, "prev")
+  expect_equal(captured$args$p2_var, "preprev")
   expect_equal(captured$args$gap, "gap")
-  expect_equal(captured$args$t_covs, t_covs)
+  expect_equal(captured$args$time_covariates, time_covariates)
 })
 
 test_that("time-benefit array reducer preserves scenario blocks", {
@@ -234,7 +234,7 @@ test_that("time-benefit array reducer preserves scenario blocks", {
     n_cf = 2,
     n_each = 2,
     variables = list(tx = c(0, 1)),
-    ylevels = c("1", "2"),
+    y_levels = c("1", "2"),
     times = 1,
     by = NULL,
     baseline_data = data.frame(id = 1:2)
@@ -263,7 +263,7 @@ test_that("time-benefit array reducer uses real-time AUC when mapped", {
     n_cf = 2,
     n_each = 1,
     variables = list(tx = c(0, 1)),
-    ylevels = c("1", "2"),
+    y_levels = c("1", "2"),
     times = 1:2,
     by = NULL,
     baseline_data = baseline,
@@ -275,8 +275,8 @@ test_that("time-benefit array reducer uses real-time AUC when mapped", {
     ),
     grid = grid,
     id_var = "id",
-    tvarname = "time",
-    pvarname = "yprev",
+    time_var = "time",
+    p_var = "yprev",
     newdata_supplied = TRUE
   )
   sops_array <- array(NA_real_, dim = c(2, 2, 2))
@@ -307,8 +307,8 @@ test_that("time-benefit simulation inference uses real-time comparison scale", {
     list(tx = c(0, 1))
   )
   object <- data.frame(
-    metric = "time_benefit",
-    variable = "tx",
+    estimand = "time_benefit",
+    term = "tx",
     reference_level = 0,
     comparison_level = 1,
     contrast = "1 - 0",
@@ -327,11 +327,11 @@ test_that("time-benefit simulation inference uses real-time comparison scale", {
     id_var = "id"
   )
   attr(object, "comparison_args") <- list(
-    metric = "time_benefit",
+    estimand = "time_benefit",
     comparison = "difference",
     time_map = c("1" = 0, "2" = 4),
     origin_time = NULL,
-    xout = NULL,
+    target_times = NULL,
     origin = "none",
     time_unit = NULL
   )
@@ -341,10 +341,10 @@ test_that("time-benefit simulation inference uses real-time comparison scale", {
   attr(object, "comparison_baseline_data") <- baseline
   attr(object, "comparison_grid") <- grid
   attr(object, "comparison_n_each") <- 1L
-  attr(object, "call_args") <- list(times = 1:2, ylevels = c("1", "2"))
-  attr(object, "tvarname") <- "time"
-  attr(object, "pvarname") <- "yprev"
-  attr(object, "ylevels") <- c("1", "2")
+  attr(object, "call_args") <- list(times = 1:2, y_levels = c("1", "2"))
+  attr(object, "time_var") <- "time"
+  attr(object, "p_var") <- "yprev"
+  attr(object, "y_levels") <- c("1", "2")
 
   sops_array <- array(NA_real_, dim = c(2, 2, 2))
   sops_array[1, 1, ] <- c(0, 1)
@@ -363,7 +363,7 @@ test_that("time-benefit simulation inference uses real-time comparison scale", {
         object = object,
         engine = "mvn",
         score_weight_dist = "exponential",
-        n_sim = 2,
+        n_draws = 2,
         vcov = NULL,
         cluster = NULL,
         workers = NULL,
@@ -376,7 +376,7 @@ test_that("time-benefit simulation inference uses real-time comparison scale", {
 
   expect_equal(out$conf.low, 2)
   expect_equal(out$conf.high, 2)
-  expect_equal(attr(out, "simulation_draws")$estimate, c(2, 2))
+  expect_equal(attr(out, "draws")$estimate, c(2, 2))
 })
 
 test_that("avg_comparisons() validates v1 interface boundaries", {
@@ -406,18 +406,18 @@ test_that("avg_comparisons() validates v1 interface boundaries", {
         avg_comparisons(
           structure(list(), class = "mock_model"),
           variables = list(tx = c(0, 1)),
-          metric = "time_benefit",
+          estimand = "time_benefit",
           times = 1,
-          states = "1"
+          state_sets = "1"
         ),
-        "`states` is not used",
+        "`state_sets` is not used",
         fixed = TRUE
       )
       expect_error(
         avg_comparisons(
           structure(list(), class = "mock_model"),
           variables = list(tx = c(0, 1)),
-          metric = "time_benefit",
+          estimand = "time_benefit",
           times = 1,
           comparison = "ratio"
         ),
@@ -447,11 +447,10 @@ test_that("comparison inference reduces paired draw-level SOPs", {
     0.1
 
   inferred_avg <- avg
-  attr(inferred_avg, "simulation_draws") <- draws
+  attr(inferred_avg, "draws") <- draws
   attr(inferred_avg, "conf_level") <- 0.95
   attr(inferred_avg, "conf_type") <- "perc"
-  attr(inferred_avg, "method") <- "simulation"
-  attr(inferred_avg, "engine") <- "mvn"
+  attr(inferred_avg, "method") <- "mvn"
 
   with_mocked_bindings(
     avg_sops = function(...) avg,
@@ -459,9 +458,9 @@ test_that("comparison inference reduces paired draw-level SOPs", {
       cmp <- avg_comparisons(
         structure(list(), class = "mock_model"),
         variables = list(tx = c(0, 1)),
-        metric = "sop",
+        estimand = "sop",
         times = 1:2,
-        states = "1"
+        state_sets = "1"
       )
     }
   )
@@ -472,10 +471,9 @@ test_that("comparison inference reduces paired draw-level SOPs", {
     {
       out <- markov.misc:::inferences_avg_comparisons_linear(
         object = cmp,
-        method = "simulation",
-        engine = "mvn",
+        method = "mvn",
         score_weight_dist = "exponential",
-        n_sim = 2,
+        n_draws = 2,
         vcov = NULL,
         cluster = NULL,
         workers = NULL,
@@ -488,7 +486,7 @@ test_that("comparison inference reduces paired draw-level SOPs", {
     }
   )
 
-  reduced <- attr(out, "simulation_draws")
+  reduced <- attr(out, "draws")
   reduced <- reduced[order(reduced$draw_id, reduced$time), ]
   rownames(reduced) <- NULL
 

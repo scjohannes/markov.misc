@@ -7,7 +7,7 @@
 interpolate_sops(
   x,
   time_map,
-  xout = NULL,
+  target_times = NULL,
   origin_time = NULL,
   origin = c("empirical_baseline", "none"),
   normalize = TRUE
@@ -20,7 +20,7 @@ interpolate_sops(
 a data frame with visit and real-time columns. Data frames may use columns
 \code{visit} and \code{real_time}, \code{visit} and \code{time}, or their first two columns.}
 
-\item{xout}{Optional numeric real-time grid. If \code{NULL}, uses mapped visit
+\item{target_times}{Optional numeric real-time grid. If \code{NULL}, uses mapped visit
 times, plus \code{origin_time} when an empirical origin anchor is requested.}
 
 \item{origin_time}{Optional real time for an empirical baseline anchor.}
@@ -71,7 +71,7 @@ avg <- avg_sops(
 interpolate_sops(
   avg,
   time_map = c("1" = 3, "2" = 7, "3" = 14, "4" = 28),
-  xout = 0:28,
+  target_times = 0:28,
   origin_time = 0
 )
 }

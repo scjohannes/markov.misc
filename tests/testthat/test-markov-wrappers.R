@@ -158,13 +158,13 @@ test_that("sops uses stored full data and extracts earliest prediction rows", {
     fit,
     newdata = manual_baseline,
     times = 1:3,
-    ylevels = 1:6,
+    y_levels = 1:6,
     absorb = 6
   )
   automatic <- sops(
     fit,
     times = 1:3,
-    ylevels = 1:6,
+    y_levels = 1:6,
     absorb = 6
   )
 
@@ -206,7 +206,7 @@ test_that("sops treats supplied newdata rows as fixed prediction profiles", {
     fit,
     newdata = profiles_no_id,
     times = 1:2,
-    ylevels = 1:6,
+    y_levels = 1:6,
     absorb = 6
   )
   prediction_data <- attr(out, "newdata_pred")
@@ -221,9 +221,8 @@ test_that("sops treats supplied newdata rows as fixed prediction profiles", {
   expect_warning(
     inferred <- inferences(
       out,
-      method = "bootstrap",
-      engine = "fwb",
-      n_sim = 1,
+      method = "fwb",
+      n_draws = 1,
       return_draws = TRUE,
       use_coefstart = FALSE
     ),
@@ -258,7 +257,7 @@ test_that("avg_sops treats supplied newdata rows as standardization profiles", {
     newdata = profiles_no_id,
     variables = list(tx = c(0, 1)),
     times = 1:2,
-    ylevels = 1:6,
+    y_levels = 1:6,
     absorb = 6
   )
   prediction_data <- attr(out, "newdata_pred")
@@ -275,9 +274,8 @@ test_that("avg_sops treats supplied newdata rows as standardization profiles", {
   expect_warning(
     inferred <- inferences(
       out,
-      method = "bootstrap",
-      engine = "fwb",
-      n_sim = 1,
+      method = "fwb",
+      n_draws = 1,
       return_draws = TRUE,
       use_coefstart = FALSE
     ),
@@ -314,14 +312,13 @@ test_that("individual sops supports FWB but rejects standard bootstrap", {
     id_var = "id"
   )
 
-  object <- sops(fit, times = 1:2, ylevels = 1:6, absorb = 6)
+  object <- sops(fit, times = 1:2, y_levels = 1:6, absorb = 6)
 
   expect_error(
     inferences(
       object,
       method = "bootstrap",
-      engine = "standard",
-      n_sim = 1
+      n_draws = 1
     ),
     "Standard refit bootstrap is not supported"
   )
@@ -329,18 +326,17 @@ test_that("individual sops supports FWB but rejects standard bootstrap", {
   withr::local_seed(10041)
   out <- inferences(
     object,
-    method = "bootstrap",
-    engine = "fwb",
-    n_sim = 2,
+    method = "fwb",
+    n_draws = 2,
     return_draws = TRUE,
     use_coefstart = FALSE
   )
 
   expect_s3_class(out, "markov_sops")
-  expect_equal(attr(out, "engine"), "fwb")
+  expect_equal(attr(out, "method"), "fwb")
   expect_equal(attr(out, "n_successful"), 2)
   expect_true(all(c("conf.low", "conf.high", "std.error") %in% names(out)))
-  expect_false(is.null(attr(out, "bootstrap_draws")))
+  expect_false(is.null(attr(out, "draws")))
 })
 
 test_that("orm_markov supports FWB for grouped and ungrouped sops", {
@@ -381,16 +377,15 @@ test_that("orm_markov supports FWB for grouped and ungrouped sops", {
     fit,
     by = "sex",
     times = 1:2,
-    ylevels = fit$yunique,
+    y_levels = fit$yunique,
     absorb = "6"
   )
 
   withr::local_seed(10061)
   grouped_ci <- inferences(
     grouped,
-    method = "bootstrap",
-    engine = "fwb",
-    n_sim = 2,
+    method = "fwb",
+    n_draws = 2,
     return_draws = TRUE,
     update_datadist = FALSE
   )
@@ -399,22 +394,21 @@ test_that("orm_markov supports FWB for grouped and ungrouped sops", {
   expect_setequal(grouped_ci$sex, levels(data$sex))
   expect_equal(anyNA(grouped_ci$conf.low), FALSE)
   expect_contains(
-    names(attr(grouped_ci, "bootstrap_draws")),
+    names(attr(grouped_ci, "draws")),
     c("sex", "draw_id")
   )
 
   individual <- sops(
     fit,
     times = 1:2,
-    ylevels = fit$yunique,
+    y_levels = fit$yunique,
     absorb = "6"
   )
 
   individual_ci <- inferences(
     individual,
-    method = "bootstrap",
-    engine = "fwb",
-    n_sim = 2,
+    method = "fwb",
+    n_draws = 2,
     return_draws = TRUE,
     update_datadist = FALSE
   )

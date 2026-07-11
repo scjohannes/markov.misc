@@ -7,7 +7,7 @@
 calc_time_in_state_diff(
   data,
   target_state = NULL,
-  tvarname = "time",
+  time_var = "time",
   txvarname = "tx",
   reference_level = NULL
 )
@@ -19,7 +19,7 @@ calc_time_in_state_diff(
 \item{target_state}{Optional vector of state values to summarize. If \code{NULL}
 (default), all observed states in \code{y} are included.}
 
-\item{tvarname}{Character string giving the name of the time column.
+\item{time_var}{Character string giving the name of the time column.
 Default is \code{"time"}.}
 
 \item{txvarname}{Character string giving the name of the treatment
@@ -80,7 +80,7 @@ effect_summary <- calc_time_in_state_diff(trajectories)
 effect_summary <- calc_time_in_state_diff(
   trajectories,
   target_state = 1,
-  tvarname = "visit_day",
+  time_var = "visit_day",
   txvarname = "arm",
   reference_level = "control"
 )

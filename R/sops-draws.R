@@ -16,7 +16,8 @@ compute_ci_from_draws <- function(
   draws_df,
   group_cols,
   conf_level = 0.95,
-  conf_type = "perc"
+  conf_type = "perc",
+  point_estimates = NULL
 ) {
   conf_level <- validate_conf_level(conf_level)
   if (
@@ -40,21 +41,30 @@ compute_ci_from_draws <- function(
 
     se <- stats::sd(x, na.rm = TRUE)
     critical <- abs(stats::qnorm(alpha / 2))
-    mean_est <- mean(x, na.rm = TRUE)
     c(
-      conf.low = mean_est - critical * se,
-      conf.high = mean_est + critical * se,
+      conf.low = -critical * se,
+      conf.high = critical * se,
       std.error = se
     )
   }
 
   if (length(group_cols) == 0L) {
     stats <- summarize_values(draws_df$estimate)
-    return(data.frame(
+    out <- data.frame(
       conf.low = stats[["conf.low"]],
       conf.high = stats[["conf.high"]],
       std.error = stats[["std.error"]]
-    ))
+    )
+    if (conf_type == "wald") {
+      center <- if (is.null(point_estimates)) {
+        mean(draws_df$estimate)
+      } else {
+        point_estimates$estimate[1]
+      }
+      out$conf.low <- center + out$conf.low
+      out$conf.high <- center + out$conf.high
+    }
+    return(out)
   }
 
   # Aggregate to get summary statistics
@@ -91,6 +101,25 @@ compute_ci_from_draws <- function(
   summary_stats$conf.high <- mat[, 2]
   summary_stats$std.error <- mat[, 3]
 
+  if (conf_type == "wald") {
+    if (is.null(point_estimates)) {
+      centers <- stats::aggregate(agg_formula, data = draws_df, FUN = mean)
+    } else {
+      centers <- point_estimates[, c(group_cols, "estimate"), drop = FALSE]
+    }
+    names(centers)[names(centers) == "estimate"] <- ".center"
+    summary_stats <- merge(
+      summary_stats,
+      centers,
+      by = group_cols,
+      all.x = TRUE,
+      sort = FALSE
+    )
+    summary_stats$conf.low <- summary_stats$.center + summary_stats$conf.low
+    summary_stats$conf.high <- summary_stats$.center + summary_stats$conf.high
+    summary_stats$.center <- NULL
+  }
+
   summary_stats
 }
 
@@ -102,7 +131,7 @@ compute_ci_from_draws <- function(
 #' This function joins the draws back to the original point estimate object,
 #' preserving all covariates, grouping variables, and summary statistics.
 #'
-#' @param object A SOP or average-comparison object returned with stored draws.
+#' @param x A SOP or average-comparison object returned with stored draws.
 #'
 #' @return A data frame with columns:
 #'   \itemize{
@@ -140,7 +169,7 @@ compute_ci_from_draws <- function(
 #'   newdata = data,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:30,
-#'   ylevels = 1:6,
+#'   y_levels = 1:6,
 #'   absorb = 6,
 #'   id_var = "id"
 #' ) |>
@@ -181,31 +210,29 @@ compute_ci_from_draws <- function(
 #' @seealso [inferences()], [avg_sops()]
 #'
 #' @export
-get_draws <- function(object) {
+get_draws <- function(x) {
   if (
     !inherits(
-      object,
-      c("markov_avg_sops", "markov_sops", "markov_avg_comparisons")
+      x,
+      c(
+        "markov_avg_sops",
+        "markov_sops",
+        "markov_avg_comparisons"
+      )
     )
   ) {
     stop(
       "get_draws() requires an object from inferences(). ",
       "Got: ",
-      paste(class(object), collapse = ", ")
+      paste(class(x), collapse = ", ")
     )
   }
 
   # 1. Extract draws attribute
-  draws <- attr(object, "bootstrap_draws")
-  if (is.null(draws)) {
-    draws <- attr(object, "simulation_draws")
-  }
-  if (is.null(draws)) {
-    draws <- attr(object, "draws")
-  }
+  draws <- attr(x, "draws")
 
   if (is.null(draws)) {
-    method <- attr(object, "method")
+    method <- attr(x, "method")
     msg <- "No draws found. Run inferences() with return_draws = TRUE."
     if (!is.null(method)) {
       msg <- paste0(msg, " (Method used: '", method, "')")
@@ -214,7 +241,7 @@ get_draws <- function(object) {
   }
 
   # 2. Prepare metadata from the original object
-  meta <- as.data.frame(object)
+  meta <- as.data.frame(x)
 
   # Rename 'estimate' in draws to 'draw' to avoid conflict with point estimates
   if ("estimate" %in% names(draws)) {

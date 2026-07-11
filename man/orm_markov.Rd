@@ -62,7 +62,7 @@ fit <- orm_markov(
   id_var = "id"
 )
 
-sops(fit, times = 1:60, ylevels = factor(1:6), absorb = "6")
+sops(fit, times = 1:60, y_levels = factor(1:6), absorb = "6")
 }
 
 }

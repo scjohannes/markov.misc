@@ -24,9 +24,9 @@ test_that("soprob_markov matches Hmisc::soprobMarkovOrdm for a proportional-odds
   )
   actual <- soprob_markov(
     model,
-    data = data[1, ],
-    time = seq_len(follow_up),
-    ylevels = factor(1:6),
+    newdata = data[1, ],
+    times = seq_len(follow_up),
+    y_levels = factor(1:6),
     absorb = "6"
   )
 
@@ -48,7 +48,7 @@ test_that("soprob_markov gives the same predictions for inline and precomputed s
   data$time_lin <- as.vector(time_spline[, 1])
   data$time_nlin_1 <- as.vector(time_spline[, 2])
   data$time_nlin_2 <- as.vector(time_spline[, 3])
-  t_covs <- make_time_covariates(
+  time_covariates <- make_time_covariates(
     data,
     "time",
     "time_lin",
@@ -70,18 +70,18 @@ test_that("soprob_markov gives the same predictions for inline and precomputed s
   baseline <- data[data$time == 1, , drop = FALSE][seq_len(6), , drop = FALSE]
   inline_sops <- soprob_markov(
     inline_model,
-    data = baseline,
-    time = seq_len(follow_up),
-    ylevels = factor(1:6),
+    newdata = baseline,
+    times = seq_len(follow_up),
+    y_levels = factor(1:6),
     absorb = "6"
   )
   precomputed_sops <- soprob_markov(
     precomputed_model,
-    data = baseline,
-    time = seq_len(follow_up),
-    ylevels = factor(1:6),
+    newdata = baseline,
+    times = seq_len(follow_up),
+    y_levels = factor(1:6),
     absorb = "6",
-    t_covs = t_covs
+    time_covariates = time_covariates
   )
 
   expect_probability_array(inline_sops, expected_dim = c(6L, follow_up, 6L))
@@ -121,19 +121,19 @@ test_that("soprob_markov supports inline splines of numeric previous state", {
   )
 
   slow <- soprob_markov(
-    object = model,
-    data = baseline,
+    model = model,
+    newdata = baseline,
     times = 1:7,
-    ylevels = 1:10,
+    y_levels = 1:10,
     absorb = "10",
-    pvarname = "yprev"
+    p_var = "yprev"
   )
   components <- markov.misc:::markov_msm_build(
     model = model,
-    data = baseline,
+    newdata = baseline,
     times = 1:7,
-    ylevels = 1:10,
-    pvarname = "yprev"
+    y_levels = 1:10,
+    p_var = "yprev"
   )
   gamma <- markov.misc:::compute_Gamma(
     stats::coef(model),
@@ -166,7 +166,7 @@ test_that("soprob_markov handles partial proportional-odds constraints", {
   data$time_lin <- as.vector(time_spline[, 1])
   data$time_nlin_1 <- as.vector(time_spline[, 2])
   data$time_nlin_2 <- as.vector(time_spline[, 3])
-  t_covs <- make_time_covariates(
+  time_covariates <- make_time_covariates(
     data,
     "time",
     "time_lin",
@@ -196,11 +196,11 @@ test_that("soprob_markov handles partial proportional-odds constraints", {
 
   result <- soprob_markov(
     model,
-    data = data[1, ],
-    time = seq_len(follow_up),
-    ylevels = factor(1:6),
+    newdata = data[1, ],
+    times = seq_len(follow_up),
+    y_levels = factor(1:6),
     absorb = "6",
-    t_covs = t_covs
+    time_covariates = time_covariates
   )
 
   expect_probability_array(result, expected_dim = c(1L, follow_up, 6L))
@@ -221,7 +221,7 @@ test_that("soprob_markov incorporates treatment interactions into predictions", 
   data$time_lin <- as.vector(time_spline[, 1])
   data$time_nlin_1 <- as.vector(time_spline[, 2])
   data$time_nlin_2 <- as.vector(time_spline[, 3])
-  t_covs <- make_time_covariates(
+  time_covariates <- make_time_covariates(
     data,
     "time",
     "time_lin",
@@ -264,19 +264,19 @@ test_that("soprob_markov incorporates treatment interactions into predictions", 
 
   treated_sops <- soprob_markov(
     model,
-    data = treated,
-    time = seq_len(follow_up),
-    ylevels = factor(1:6),
+    newdata = treated,
+    times = seq_len(follow_up),
+    y_levels = factor(1:6),
     absorb = "6",
-    t_covs = t_covs
+    time_covariates = time_covariates
   )
   control_sops <- soprob_markov(
     model,
-    data = control,
-    time = seq_len(follow_up),
-    ylevels = factor(1:6),
+    newdata = control,
+    times = seq_len(follow_up),
+    y_levels = factor(1:6),
     absorb = "6",
-    t_covs = t_covs
+    time_covariates = time_covariates
   )
 
   expect_probability_array(treated_sops, expected_dim = c(1L, follow_up, 6L))
@@ -302,9 +302,9 @@ test_that("soprob_markov carries absorbing-state mass forward", {
 
   result <- soprob_markov(
     model,
-    data = data[seq_len(8), ],
-    time = seq_len(follow_up),
-    ylevels = factor(1:6),
+    newdata = data[seq_len(8), ],
+    times = seq_len(follow_up),
+    y_levels = factor(1:6),
     absorb = "6"
   )
 
@@ -336,9 +336,9 @@ test_that("soprob_markov normalizes transitions when no state is absorbing", {
 
   result <- soprob_markov(
     model,
-    data = baseline,
-    time = seq_len(follow_up),
-    ylevels = factor(1:6),
+    newdata = baseline,
+    times = seq_len(follow_up),
+    y_levels = factor(1:6),
     absorb = NULL
   )
 
@@ -355,7 +355,12 @@ test_that("avg_sops() equals manual G-computation over individual SOPs", {
     follow_up_time = follow_up,
     seed = 123
   )
-  t_covs <- make_time_covariates(data, "time", "time_lin", "time_nlin_1")
+  time_covariates <- make_time_covariates(
+    data,
+    "time",
+    "time_lin",
+    "time_nlin_1"
+  )
   model <- VGAM::vglm(
     ordered(y) ~ (time_lin + time_nlin_1) * tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
@@ -370,10 +375,10 @@ test_that("avg_sops() equals manual G-computation over individual SOPs", {
     robust_model,
     newdata = baseline_tx1,
     times = seq_len(follow_up),
-    ylevels = 1:6,
+    y_levels = 1:6,
     absorb = "6",
     id_var = "id",
-    t_covs = t_covs
+    time_covariates = time_covariates
   )
   manual_tx1 <- aggregate(
     estimate ~ time + state,
@@ -388,10 +393,10 @@ test_that("avg_sops() equals manual G-computation over individual SOPs", {
     robust_model,
     newdata = baseline_tx0,
     times = seq_len(follow_up),
-    ylevels = 1:6,
+    y_levels = 1:6,
     absorb = "6",
     id_var = "id",
-    t_covs = t_covs
+    time_covariates = time_covariates
   )
   manual_tx0 <- aggregate(
     estimate ~ time + state,
@@ -408,10 +413,10 @@ test_that("avg_sops() equals manual G-computation over individual SOPs", {
     newdata = baseline,
     variables = "tx",
     times = seq_len(follow_up),
-    ylevels = 1:6,
+    y_levels = 1:6,
     absorb = "6",
     id_var = "id",
-    t_covs = t_covs
+    time_covariates = time_covariates
   )
   automated <- as.data.frame(automated)
   automated <- automated[order(automated$tx, automated$state, automated$time), ]

@@ -4,10 +4,10 @@
 \alias{get_draws}
 \title{Extract Individual Draws from Inference Objects}
 \usage{
-get_draws(object)
+get_draws(x)
 }
 \arguments{
-\item{object}{A SOP or average-comparison object returned with stored draws.}
+\item{x}{A SOP or average-comparison object returned with stored draws.}
 }
 \value{
 A data frame with columns:
@@ -52,7 +52,7 @@ result <- avg_sops(
   newdata = data,
   variables = list(tx = c(0, 1)),
   times = 1:30,
-  ylevels = 1:6,
+  y_levels = 1:6,
   absorb = 6,
   id_var = "id"
 ) |>

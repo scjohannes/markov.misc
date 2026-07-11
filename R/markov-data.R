@@ -118,14 +118,14 @@ prepare_markov_data <- function(
 #'   columns stay numeric after releveling.
 #' @param original_data Optional data frame containing the original data before
 #'   subsetting. Used to determine which levels are present in the full dataset.
-#' @param ylevels Optional integer vector of original state levels (e.g., 1:6).
+#' @param y_levels Optional integer vector of original state levels (e.g., 1:6).
 #'   If provided along with absorb, these will be updated to match the new levels.
 #' @param absorb Optional integer specifying the absorbing state in the original
 #'   levels. Will be updated to the new position if provided.
 #'
 #' @return A list with components:
 #'   - data: The data frame with releveled factors
-#'   - ylevels: Updated ylevels (if provided as input), or NULL
+#'   - y_levels: Updated y_levels (if provided as input), or NULL
 #'   - absorb: Updated absorb (if provided as input), or NULL
 #'   - missing_levels: Character vector of levels that were missing
 #'
@@ -136,7 +136,7 @@ prepare_markov_data <- function(
 #' 2. Creates a mapping from old to new consecutive integers
 #' 3. Relevels the specified state columns while preserving factor vs numeric
 #'    type
-#' 4. Updates ylevels and absorb parameters if provided
+#' 4. Updates y_levels and absorb parameters if provided
 #'
 #' This is particularly useful for ordered factors representing health states
 #' in Markov models, where missing states would otherwise cause model fitting
@@ -149,7 +149,7 @@ prepare_markov_data <- function(
 #'   data = boot_data,
 #'   factor_cols = c("y", "yprev"),
 #'   original_data = full_data,
-#'   ylevels = 1:6,
+#'   y_levels = 1:6,
 #'   absorb = 6
 #' )
 #'
@@ -163,7 +163,7 @@ relevel_factors_consecutive <- function(
   data,
   factor_cols = c("y", "yprev"),
   original_data = NULL,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL
 ) {
   # Determine original levels
@@ -180,8 +180,8 @@ relevel_factors_consecutive <- function(
         }
       }
     ))))
-  } else if (!is.null(ylevels)) {
-    original_levels <- ylevels
+  } else if (!is.null(y_levels)) {
+    original_levels <- y_levels
   } else {
     # Infer from data
     original_levels <- sort(unique(unlist(lapply(
@@ -214,7 +214,7 @@ relevel_factors_consecutive <- function(
   if (length(missing_levels) == 0) {
     return(list(
       data = data,
-      ylevels = ylevels,
+      ylevels = y_levels,
       absorb = absorb,
       missing_levels = character(0)
     ))
@@ -253,8 +253,8 @@ relevel_factors_consecutive <- function(
     }
   }
 
-  # Update ylevels if provided
-  new_ylevels <- if (!is.null(ylevels)) {
+  # Update y_levels if provided
+  new_ylevels <- if (!is.null(y_levels)) {
     seq_along(states_present)
   } else {
     NULL

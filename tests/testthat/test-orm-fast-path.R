@@ -39,17 +39,17 @@ test_that("orm fast path supports categorical previous state", {
     fit,
     baseline,
     times = 1:5,
-    ylevels = fit$yunique,
+    y_levels = fit$yunique,
     absorb = "6",
-    pvarname = "yprev"
+    p_var = "yprev"
   )
   components <- markov.misc:::markov_msm_build(
     model = fit,
     data = baseline,
     times = 1:5,
-    ylevels = fit$yunique,
+    y_levels = fit$yunique,
     absorb = "6",
-    pvarname = "yprev"
+    p_var = "yprev"
   )
   fast <- markov.misc:::markov_msm_run(
     components,
@@ -130,14 +130,14 @@ test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
     fit_default,
     baseline,
     times = 1:4,
-    ylevels = fit_default$yunique,
+    y_levels = fit_default$yunique,
     absorb = "6"
   )
   sops_scaled <- markov.misc::sops(
     fit_scaled,
     baseline,
     times = 1:4,
-    ylevels = fit_scaled$yunique,
+    y_levels = fit_scaled$yunique,
     absorb = "6"
   )
   expect_equal(sops_scaled$estimate, sops_default$estimate, tolerance = 1e-10)
@@ -149,7 +149,7 @@ test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
     refit_data = data,
     variables = "tx",
     times = 1:4,
-    ylevels = fit_default$yunique,
+    y_levels = fit_default$yunique,
     absorb = "6",
     id_var = "id"
   )
@@ -158,7 +158,7 @@ test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
     refit_data = data,
     variables = "tx",
     times = 1:4,
-    ylevels = fit_scaled$yunique,
+    y_levels = fit_scaled$yunique,
     absorb = "6",
     id_var = "id"
   )
@@ -167,17 +167,15 @@ test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
   withr::local_seed(61051)
   mvn_default <- markov.misc::inferences(
     avg_default,
-    method = "simulation",
-    engine = "mvn",
-    n_sim = 2,
+    method = "mvn",
+    n_draws = 2,
     return_draws = TRUE
   )
   withr::local_seed(61051)
   mvn_scaled <- markov.misc::inferences(
     avg_scaled,
-    method = "simulation",
-    engine = "mvn",
-    n_sim = 2,
+    method = "mvn",
+    n_draws = 2,
     return_draws = TRUE
   )
   expect_equal(mvn_scaled$conf.low, mvn_default$conf.low, tolerance = 1e-8)
@@ -186,19 +184,17 @@ test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
   withr::local_seed(61052)
   score_default <- markov.misc::inferences(
     avg_default,
-    method = "simulation",
-    engine = "score_bootstrap",
+    method = "score_bootstrap",
     cluster = data$id,
-    n_sim = 2,
+    n_draws = 2,
     return_draws = TRUE
   )
   withr::local_seed(61052)
   score_scaled <- markov.misc::inferences(
     avg_scaled,
-    method = "simulation",
-    engine = "score_bootstrap",
+    method = "score_bootstrap",
     cluster = data$id,
-    n_sim = 2,
+    n_draws = 2,
     return_draws = TRUE
   )
   expect_equal(
@@ -217,7 +213,7 @@ test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
     newdata = data,
     variables = "tx",
     times = 1:4,
-    ylevels = fit_scaled$yunique,
+    y_levels = fit_scaled$yunique,
     absorb = "6",
     id_var = "id"
   )
@@ -225,7 +221,7 @@ test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
   boot_scaled <- markov.misc::inferences(
     avg_scaled_full,
     method = "bootstrap",
-    n_sim = 1,
+    n_draws = 1,
     update_datadist = FALSE,
     return_draws = TRUE
   )
@@ -256,7 +252,7 @@ test_that("orm supports MVN and score-bootstrap inference", {
     refit_data = data,
     variables = "tx",
     times = 1:4,
-    ylevels = fit$yunique,
+    y_levels = fit$yunique,
     absorb = "6",
     id_var = "id"
   )
@@ -264,9 +260,9 @@ test_that("orm supports MVN and score-bootstrap inference", {
   expect_error(
     markov.misc::inferences(
       avg,
-      method = "simulation",
+      method = "mvn",
       vcov = stats::vcov(fit),
-      n_sim = 2
+      n_draws = 2
     ),
     "Dimension mismatch"
   )
@@ -274,9 +270,8 @@ test_that("orm supports MVN and score-bootstrap inference", {
   withr::local_seed(61031)
   mvn <- markov.misc::inferences(
     avg,
-    method = "simulation",
-    engine = "mvn",
-    n_sim = 2,
+    method = "mvn",
+    n_draws = 2,
     return_draws = TRUE
   )
   expect_equal(attr(mvn, "n_successful"), 2L)
@@ -286,9 +281,8 @@ test_that("orm supports MVN and score-bootstrap inference", {
   expect_error(
     markov.misc::inferences(
       avg,
-      method = "simulation",
-      engine = "score_bootstrap",
-      n_sim = 2
+      method = "score_bootstrap",
+      n_draws = 2
     ),
     "`cluster` is required"
   )
@@ -296,13 +290,12 @@ test_that("orm supports MVN and score-bootstrap inference", {
   withr::local_seed(61032)
   score <- markov.misc::inferences(
     avg,
-    method = "simulation",
-    engine = "score_bootstrap",
+    method = "score_bootstrap",
     cluster = data$id,
-    n_sim = 2,
+    n_draws = 2,
     return_draws = TRUE
   )
-  expect_equal(attr(score, "engine"), "score_bootstrap")
+  expect_equal(attr(score, "method"), "score_bootstrap")
   expect_equal(attr(score, "n_successful"), 2L)
   expect_true(any(score$std.error > 0))
 })
@@ -326,7 +319,7 @@ test_that("orm supports refit bootstrap inference", {
     newdata = data,
     variables = "tx",
     times = 1:4,
-    ylevels = fit$yunique,
+    y_levels = fit$yunique,
     absorb = "6",
     id_var = "id"
   )
@@ -335,7 +328,7 @@ test_that("orm supports refit bootstrap inference", {
   boot <- markov.misc::inferences(
     avg,
     method = "bootstrap",
-    n_sim = 1,
+    n_draws = 1,
     update_datadist = FALSE,
     return_draws = TRUE
   )

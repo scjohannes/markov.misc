@@ -5,11 +5,11 @@ plot_transitions_empirical_data <- function(
   times,
   time_var,
   y_var,
-  pvarname,
+  p_var,
   facet_var,
-  ylevels
+  y_levels
 ) {
-  plot_validate_columns(data, c(time_var, y_var, pvarname), "`data`")
+  plot_validate_columns(data, c(time_var, y_var, p_var), "`data`")
   plot_validate_facets(data, facet_var)
   if (!is.null(times)) {
     keep <- as.character(data[[time_var]]) %in% as.character(times)
@@ -20,9 +20,9 @@ plot_transitions_empirical_data <- function(
     data = data,
     time_var = time_var,
     y_var = y_var,
-    pvarname = pvarname,
+    p_var = p_var,
     facet_var = facet_var,
-    ylevels = ylevels
+    y_levels = y_levels
   )
 }
 
@@ -32,16 +32,16 @@ plot_transitions_model_data <- function(
   refit_data,
   variables,
   times,
-  ylevels,
+  y_levels,
   absorb,
   comparison,
   time_var,
-  pvarname,
-  p2varname,
+  p_var,
+  p2_var,
   id_var,
   facet_var,
-  gap,
-  t_covs,
+  gap_var,
+  time_covariates,
   seed,
   n_draws
 ) {
@@ -58,14 +58,14 @@ plot_transitions_model_data <- function(
     refit_data = refit_data,
     variables = variables,
     times = times,
-    ylevels = ylevels,
+    y_levels = y_levels,
     absorb = absorb,
     time_var = time_var,
-    pvarname = pvarname,
-    p2varname = p2varname,
+    p_var = p_var,
+    p2_var = p2_var,
     id_var = id_var,
-    gap = gap,
-    t_covs = t_covs
+    gap_var = gap_var,
+    time_covariates = time_covariates
   )
 
   facet_summary <- facet_var
@@ -77,10 +77,10 @@ plot_transitions_model_data <- function(
     model = model,
     setup = setup,
     facet_var = facet_summary,
-    pvarname = pvarname,
-    p2varname = p2varname,
-    gap = gap,
-    t_covs = t_covs,
+    p_var = p_var,
+    p2_var = p2_var,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     seed = seed,
     n_draws = n_draws
   )
@@ -101,10 +101,10 @@ plot_transition_model_summary <- function(
   model,
   setup,
   facet_var,
-  pvarname,
-  p2varname,
-  gap,
-  t_covs,
+  p_var,
+  p2_var,
+  gap_var,
+  time_covariates,
   seed,
   n_draws
 ) {
@@ -112,10 +112,10 @@ plot_transition_model_summary <- function(
     model = model,
     setup = setup,
     facet_var = facet_var,
-    pvarname = pvarname,
-    p2varname = p2varname,
-    gap = gap,
-    t_covs = t_covs,
+    p_var = p_var,
+    p2_var = p2_var,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     seed = seed,
     n_draws = n_draws,
     return_kernels = FALSE,
@@ -125,7 +125,7 @@ plot_transition_model_summary <- function(
         data = setup$data,
         plot_indices = setup$plot_indices,
         plot_times = setup$plot_times,
-        ylevels = setup$ylevels,
+        y_levels = setup$y_levels,
         facet_var = facet_var,
         draw = draw
       )
@@ -134,7 +134,7 @@ plot_transition_model_summary <- function(
       plot_transition_summarize_draws(
         data = data,
         facet_var = facet_var,
-        ylevels = setup$ylevels
+        y_levels = setup$y_levels
       )
     }
   )
@@ -145,7 +145,7 @@ plot_transition_trace_summary <- function(
   data,
   plot_indices,
   plot_times,
-  ylevels,
+  y_levels,
   facet_var,
   draw
 ) {
@@ -162,7 +162,7 @@ plot_transition_trace_summary <- function(
       rows = rows,
       time_indices = plot_indices,
       time_keys = time_keys,
-      ylevels = ylevels,
+      y_levels = y_levels,
       group = group,
       facet_var = facet_var,
       draw = draw
@@ -174,7 +174,7 @@ plot_transition_trace_summary <- function(
     out,
     facet_var = facet_var,
     time_keys = time_keys,
-    state_levels = ylevels
+    state_levels = y_levels
   )
 }
 
@@ -183,7 +183,7 @@ plot_transition_trace_group_summary <- function(
   rows,
   time_indices,
   time_keys,
-  ylevels,
+  y_levels,
   group,
   facet_var,
   draw
@@ -196,8 +196,8 @@ plot_transition_trace_group_summary <- function(
     out <- expand.grid(
       draw_id = draw_ids,
       .time_key = time_keys,
-      previous_state = ylevels,
-      state = ylevels,
+      previous_state = y_levels,
+      state = y_levels,
       KEEP.OUT.ATTRS = FALSE,
       stringsAsFactors = FALSE
     )
@@ -206,8 +206,8 @@ plot_transition_trace_group_summary <- function(
     summed <- apply(mass, c(2, 3, 4), sum)
     out <- expand.grid(
       .time_key = time_keys,
-      previous_state = ylevels,
-      state = ylevels,
+      previous_state = y_levels,
+      state = y_levels,
       KEEP.OUT.ATTRS = FALSE,
       stringsAsFactors = FALSE
     )
@@ -224,7 +224,7 @@ plot_transition_trace_group_summary <- function(
   out
 }
 
-plot_transition_summarize_draws <- function(data, facet_var, ylevels) {
+plot_transition_summarize_draws <- function(data, facet_var, y_levels) {
   group_cols <- c(".time_key", facet_var, "previous_state", "state")
   agg_formula <- stats::as.formula(
     paste("cbind(estimate, n, total) ~", paste(group_cols, collapse = " + "))
@@ -240,7 +240,7 @@ plot_transition_summarize_draws <- function(data, facet_var, ylevels) {
     out,
     facet_var = facet_var,
     time_keys = time_keys,
-    state_levels = ylevels
+    state_levels = y_levels
   )
 }
 
@@ -267,21 +267,21 @@ plot_transition_summary <- function(
   data,
   time_var,
   y_var,
-  pvarname,
+  p_var,
   facet_var,
-  ylevels
+  y_levels
 ) {
   state_levels <- plot_transition_state_levels(
     data,
-    vars = c(y_var, pvarname),
-    ylevels = ylevels
+    vars = c(y_var, p_var),
+    y_levels = y_levels
   )
   time_values <- plot_ordered_values(data[[time_var]])
   time_keys <- as.character(time_values)
 
   input <- data.frame(
     .time_key = as.character(data[[time_var]]),
-    previous_state = as.character(data[[pvarname]]),
+    previous_state = as.character(data[[p_var]]),
     state = as.character(data[[y_var]]),
     .n = 1L,
     stringsAsFactors = FALSE
@@ -410,9 +410,9 @@ plot_transition_difference <- function(summary, variable, values, facet_var) {
   out
 }
 
-plot_transition_state_levels <- function(data, vars, ylevels = NULL) {
-  if (!is.null(ylevels)) {
-    return(as_state_labels(ylevels))
+plot_transition_state_levels <- function(data, vars, y_levels = NULL) {
+  if (!is.null(y_levels)) {
+    return(as_state_labels(y_levels))
   }
 
   state_levels <- character()

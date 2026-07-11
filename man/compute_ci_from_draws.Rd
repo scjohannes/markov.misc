@@ -8,7 +8,8 @@ compute_ci_from_draws(
   draws_df,
   group_cols,
   conf_level = 0.95,
-  conf_type = "perc"
+  conf_type = "perc",
+  point_estimates = NULL
 )
 }
 \arguments{

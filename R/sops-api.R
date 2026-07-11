@@ -16,7 +16,7 @@
 #' @param times Required visit-scale time points to estimate. For numeric time
 #'   variables this is usually a numeric vector. For factor-valued visit
 #'   indices, values are matched to fitted visit levels.
-#' @param ylevels A vector of state levels. If NULL, attempts to infer from model.
+#' @param y_levels A vector of state levels. If NULL, attempts to infer from model.
 #' @param absorb The absorbing state.
 #' @param by Optional character vector of variable names to stratify by. When
 #'   provided, the function aggregates (averages) SOPs within each stratum
@@ -32,15 +32,15 @@
 #'   when available, otherwise `"id"`. For frequentist models, `id_var` is used
 #'   for stored-data extraction and refit bootstrap metadata, not for ordinary
 #'   user-supplied prediction rows.
-#' @param tvarname Name of the time variable in the model.
-#' @param pvarname Name of the previous state variable in the model.
-#' @param p2varname Optional second previous-state variable. `NULL` uses a
+#' @param time_var Name of the time variable in the model.
+#' @param p_var Name of the previous state variable in the model.
+#' @param p2_var Optional second previous-state variable. `NULL` uses a
 #'   first-order Markov recursion; a non-`NULL` column name uses a second-order
 #'   recursion.
-#' @param gap Name of the time gap variable (if used).
-#' @param t_covs Optional time-varying covariate lookup table for explicit
+#' @param gap_var Name of the time gap_var variable (if used).
+#' @param time_covariates Optional time-varying covariate lookup table for explicit
 #'   basis columns. Inline terms such as `rms::rcs(time, 4)` can be used without
-#'   supplying `t_covs`.
+#'   supplying `time_covariates`.
 #' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
 #'   fitted random-effect draws in posterior predictions for known IDs.
 #' @param n_draws Integer number of posterior draws to sample for `blrm`, or
@@ -103,18 +103,18 @@
 #' @examples
 #' \dontrun{
 #' # Individual-level SOPs
-#' sops_ind <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6)
+#' sops_ind <- sops(fit, newdata = baseline_data, times = 1:30, y_levels = 1:6)
 #'
 #' # Stratified by ECOG performance status
-#' sops_ecog <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6,
+#' sops_ecog <- sops(fit, newdata = baseline_data, times = 1:30, y_levels = 1:6,
 #'                   by = "ecog")
 #'
 #' # Stratified by multiple variables
-#' sops_strat <- sops(fit, newdata = baseline_data, times = 1:30, ylevels = 1:6,
+#' sops_strat <- sops(fit, newdata = baseline_data, times = 1:30, y_levels = 1:6,
 #'                    by = c("ecog", "age_group"))
 #'
 #' # Compatible with inferences()
-#' sops_strat |> inferences(method = "simulation", n_sim = 1000)
+#' sops_strat |> inferences(method = "mvn", n_draws = 1000)
 #' }
 #'
 #' @importFrom stats model.frame
@@ -123,16 +123,16 @@ sops <- function(
   model,
   newdata = NULL,
   times,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   by = NULL,
   refit_data = NULL,
   id_var = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  p2varname = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  p2_var = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   include_re = FALSE,
   n_draws = 100L,
   seed = NULL,
@@ -182,12 +182,12 @@ sops <- function(
     model,
     newdata_orig,
     times,
-    tvarname,
-    t_covs = t_covs,
+    time_var,
+    time_covariates = time_covariates,
     default = "unique"
   )
   times <- time_res$times
-  validate_factor_gap(gap, t_covs, time_res$time_info)
+  validate_factor_gap(gap_var, time_covariates, time_res$time_info)
 
   newdata <- if (newdata_supplied) {
     newdata_orig
@@ -195,30 +195,30 @@ sops <- function(
     resolve_markov_prediction_data(
       newdata_orig,
       id_var = id_var,
-      tvarname = tvarname
+      time_var = time_var
     )
   }
   newdata <- ensure_markov_rowid(newdata)
 
-  if (is.null(ylevels)) {
+  if (is.null(y_levels)) {
     # Try to infer from model
     if (inherits(model, "vglm")) {
       # VGAM stores response levels
-      ylevels <- model@extra$colnames.y
-      if (is.null(ylevels)) stop("`ylevels` cannot be NULL")
+      y_levels <- model@extra$colnames.y
+      if (is.null(y_levels)) stop("`y_levels` cannot be NULL")
     } else if (inherits(model, "robcov_vglm")) {
       # robcov_vglm stores extra slot in list
-      ylevels <- model$extra$colnames.y
-      if (is.null(ylevels)) stop("`ylevels` cannot be NULL")
+      y_levels <- model$extra$colnames.y
+      if (is.null(y_levels)) stop("`y_levels` cannot be NULL")
     } else if (inherits(model, "blrm")) {
-      ylevels <- model$ylevels
-      if (is.null(ylevels)) stop("`ylevels` cannot be NULL")
+      y_levels <- model$ylevels
+      if (is.null(y_levels)) stop("`y_levels` cannot be NULL")
     } else if (inherits(model, "orm")) {
       # rms orm stores levels
-      ylevels <- model$yunique
-      if (is.null(ylevels)) stop("`ylevels` cannot be NULL")
+      y_levels <- model$yunique
+      if (is.null(y_levels)) stop("`y_levels` cannot be NULL")
     } else {
-      stop("`ylevels` cannot be NULL")
+      stop("`y_levels` cannot be NULL")
     }
   }
 
@@ -228,13 +228,13 @@ sops <- function(
       model = model,
       newdata = newdata,
       times = times,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
-      tvarname = tvarname,
-      pvarname = pvarname,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      time_var = time_var,
+      p_var = p_var,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       by = by,
       include_re = include_re,
       id_var = id_var,
@@ -251,23 +251,29 @@ sops <- function(
 
   # --- 2. Compute SOPs (Vectorized) ---
   sops_array <- soprob_markov(
-    object = model,
-    data = newdata,
+    model = model,
+    newdata = newdata,
     times = times,
-    ylevels = ylevels,
+    y_levels = y_levels,
     absorb = absorb,
-    tvarname = tvarname,
-    pvarname = pvarname,
-    p2varname = p2varname,
-    gap = gap,
-    t_covs = t_covs
+    time_var = time_var,
+    p_var = p_var,
+    p2_var = p2_var,
+    gap_var = gap_var,
+    time_covariates = time_covariates
   )
 
   # --- 3. Validate 'by' Parameter ---
   validate_sops_by(by, newdata)
 
   # --- 4. Tidy the Output ---
-  result <- array_to_df_individual(sops_array, times, ylevels, newdata, by = by)
+  result <- array_to_df_individual(
+    sops_array,
+    times,
+    y_levels,
+    newdata,
+    by = by
+  )
 
   # --- 6. Store Attributes for Downstream Use ---
   set_sops_attrs(
@@ -276,22 +282,22 @@ sops <- function(
     model = model,
     call_args = sops_call_args(
       times,
-      ylevels,
+      y_levels,
       absorb,
-      tvarname,
-      pvarname,
-      p2varname,
-      gap,
-      t_covs,
+      time_var,
+      p_var,
+      p2_var,
+      gap_var,
+      time_covariates,
       by = by
     ),
-    tvarname = tvarname,
-    pvarname = pvarname,
-    p2varname = p2varname,
-    ylevels = ylevels,
+    time_var = time_var,
+    p_var = p_var,
+    p2_var = p2_var,
+    y_levels = y_levels,
     absorb = absorb,
-    gap = gap,
-    t_covs = t_covs,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     by = by,
     newdata_orig = newdata_orig,
     extra_attrs = list(
@@ -307,13 +313,13 @@ sops_blrm <- function(
   model,
   newdata,
   times,
-  ylevels,
+  y_levels,
   absorb,
-  tvarname,
-  pvarname,
-  p2varname,
-  gap,
-  t_covs,
+  time_var,
+  p_var,
+  p2_var,
+  gap_var,
+  time_covariates,
   by,
   include_re,
   id_var,
@@ -331,7 +337,7 @@ sops_blrm <- function(
   draw_indices <- select_posterior_draws(model, n_draws, seed)
   n_pat <- nrow(newdata)
   n_times <- length(times)
-  n_states <- length(ylevels)
+  n_states <- length(y_levels)
   n_cells <- n_pat * n_times * n_states
   n_requested <- length(draw_indices)
   # `sops()` keeps individual-level draw summaries in memory. The default
@@ -358,16 +364,16 @@ sops_blrm <- function(
   row_cursor <- 1L
   for (chunk in chunks) {
     arr <- soprob_markov(
-      object = model,
-      data = newdata,
+      model = model,
+      newdata = newdata,
       times = times,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
-      tvarname = tvarname,
-      pvarname = pvarname,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      time_var = time_var,
+      p_var = p_var,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       include_re = include_re,
       id_var = id_var,
       n_draws = NULL,
@@ -389,7 +395,7 @@ sops_blrm <- function(
     idx_pat <- rep(seq_len(n_pat), times = n_times * n_states)
     result <- newdata[idx_pat, , drop = FALSE]
     result$time <- rep(rep(times, each = n_pat), times = n_states)
-    result$state <- rep(ylevels, each = n_pat * n_times)
+    result$state <- rep(y_levels, each = n_pat * n_times)
     result$estimate <- stats$estimate
     result$conf.low <- stats$conf.low
     result$conf.high <- stats$conf.high
@@ -405,7 +411,7 @@ sops_blrm <- function(
     draw_list <- vector("list", n_requested)
     for (i in seq_len(n_requested)) {
       arr_i <- array(draw_values[i, ], dim = c(n_pat, n_times, n_states))
-      draw_i <- array_to_df_individual(arr_i, times, ylevels, newdata, by = by)
+      draw_i <- array_to_df_individual(arr_i, times, y_levels, newdata, by = by)
       draw_i$draw_id <- draw_indices[i]
       draw_list[[i]] <- draw_i
     }
@@ -428,13 +434,13 @@ sops_blrm <- function(
     model = model,
     call_args = sops_call_args(
       times,
-      ylevels,
+      y_levels,
       absorb,
-      tvarname,
-      pvarname,
-      p2varname,
-      gap,
-      t_covs,
+      time_var,
+      p_var,
+      p2_var,
+      gap_var,
+      time_covariates,
       by = by,
       include_re = include_re,
       id_var = id_var,
@@ -443,13 +449,13 @@ sops_blrm <- function(
       posterior_summary = posterior_summary,
       conf_level = conf_level
     ),
-    tvarname = tvarname,
-    pvarname = pvarname,
-    p2varname = p2varname,
-    ylevels = ylevels,
+    time_var = time_var,
+    p_var = p_var,
+    p2_var = p2_var,
+    y_levels = y_levels,
     absorb = absorb,
-    gap = gap,
-    t_covs = t_covs,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     by = by,
     newdata_orig = newdata_orig,
     extra_attrs = list(
@@ -587,7 +593,7 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #' after standardization.
 #' @param times Required visit-scale time points. Numeric time variables use
 #'   numeric values; factor-valued visit indices use fitted visit levels.
-#' @param ylevels A vector of state levels. If `NULL`, attempts to infer from
+#' @param y_levels A vector of state levels. If `NULL`, attempts to infer from
 #'   model.
 #' @param absorb The absorbing state.
 #' @param refit_data Optional full longitudinal data used only by refit-bootstrap
@@ -601,13 +607,13 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'   wrapper-stored model data. For `blrm` models with `include_re = TRUE`,
 #'   `model$clusterInfo$name` is used before the final `"id"` fallback when
 #'   wrapper metadata is absent.
-#' @param tvarname Name of the time variable in the model.
-#' @param pvarname Name of the previous state variable in the model.
-#' @param p2varname Optional second previous-state variable. `NULL` uses a
+#' @param time_var Name of the time variable in the model.
+#' @param p_var Name of the previous state variable in the model.
+#' @param p2_var Optional second previous-state variable. `NULL` uses a
 #'   first-order Markov recursion; a non-`NULL` column name uses a second-order
 #'   recursion.
-#' @param gap Name of the time gap variable, if used.
-#' @param t_covs Optional time-varying covariate lookup table for explicit
+#' @param gap_var Name of the time gap_var variable, if used.
+#' @param time_covariates Optional time-varying covariate lookup table for explicit
 #'   precomputed time-basis columns. Inline terms such as `rms::rcs(time, 4)`
 #'   can be used without it.
 #' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
@@ -653,7 +659,7 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #' stored with `return_draws = TRUE` remain normalized within each draw.
 #'
 #' @seealso [sops()] for individual-level SOPs, [inferences()] for bootstrap
-#'   uncertainty, [standardize_sops()] for the underlying implementation.
+#'   uncertainty and [avg_comparisons()] for specialized estimands.
 #'
 #' @examples
 #' \dontrun{
@@ -669,18 +675,18 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'   model = fit,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
-#'   ylevels = 1:6,
+#'   y_levels = 1:6,
 #'   absorb = 6
-#' ) |> inferences(method = "simulation", n_sim = 500)
+#' ) |> inferences(method = "mvn", n_draws = 500)
 #'
 #' # Refit bootstrap can reuse the stored full longitudinal data.
 #' result_boot <- avg_sops(
 #'   model = fit,
 #'   variables = list(tx = c(0, 1)),
 #'   times = 1:60,
-#'   ylevels = 1:6,
+#'   y_levels = 1:6,
 #'   absorb = 6
-#' ) |> inferences(method = "bootstrap", engine = "fwb", n_sim = 500)
+#' ) |> inferences(method = "fwb", n_draws = 500)
 #' }
 #'
 #' @export
@@ -690,15 +696,15 @@ avg_sops <- function(
   variables = NULL,
   by = NULL,
   times,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   refit_data = NULL,
   id_var = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  p2varname = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  p2_var = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   include_re = FALSE,
   n_draws = 100L,
   seed = NULL,
@@ -750,14 +756,14 @@ avg_sops <- function(
 
   # --- 2. Extract Baseline Data (One Row Per Patient) ---
   # For standardization, we need unique patient baseline covariates
-  # This matches standardize_sops() behavior
+  # Average the counterfactual SOP predictions over the target population.
   baseline_data <- if (newdata_supplied) {
     newdata_orig
   } else {
     resolve_markov_prediction_data(
       newdata_orig,
       id_var = id_var,
-      tvarname = tvarname
+      time_var = time_var
     )
   }
   baseline_data <- ensure_markov_rowid(baseline_data)
@@ -788,14 +794,14 @@ avg_sops <- function(
       variables = var_list,
       by = by,
       times = times,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
-      tvarname = tvarname,
-      pvarname = pvarname,
+      time_var = time_var,
+      p_var = p_var,
       id_var = id_var,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       include_re = include_re,
       n_draws = n_draws,
       seed = seed,
@@ -818,14 +824,14 @@ avg_sops <- function(
     newdata = newdata_expanded,
     refit_data = refit_data,
     times = times,
-    ylevels = ylevels,
+    y_levels = y_levels,
     absorb = absorb,
-    tvarname = tvarname,
-    pvarname = pvarname,
+    time_var = time_var,
+    p_var = p_var,
     id_var = id_var,
-    p2varname = p2varname,
-    gap = gap,
-    t_covs = t_covs,
+    p2_var = p2_var,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     ...
   )
   resolved_times <- attr(sops_ind, "call_args")$times
@@ -861,13 +867,13 @@ avg_sops <- function(
     class_name = "markov_avg_sops",
     model = attr(sops_ind, "model"),
     call_args = attr(sops_ind, "call_args"),
-    tvarname = attr(sops_ind, "tvarname"),
-    pvarname = attr(sops_ind, "pvarname"),
-    p2varname = attr(sops_ind, "p2varname"),
-    ylevels = attr(sops_ind, "ylevels"),
+    time_var = attr(sops_ind, "time_var"),
+    p_var = attr(sops_ind, "p_var"),
+    p2_var = attr(sops_ind, "p2_var"),
+    y_levels = attr(sops_ind, "y_levels"),
     absorb = attr(sops_ind, "absorb"),
-    gap = attr(sops_ind, "gap"),
-    t_covs = attr(sops_ind, "t_covs"),
+    gap_var = attr(sops_ind, "gap_var"),
+    time_covariates = attr(sops_ind, "time_covariates"),
     newdata_orig = newdata_orig,
     avg_args = list(
       variables = var_list,
@@ -891,14 +897,14 @@ avg_sops_blrm <- function(
   variables,
   by,
   times,
-  ylevels,
+  y_levels,
   absorb,
-  tvarname,
-  pvarname,
+  time_var,
+  p_var,
   id_var,
-  p2varname,
-  gap,
-  t_covs,
+  p2_var,
+  gap_var,
+  time_covariates,
   include_re,
   n_draws,
   seed,
@@ -907,18 +913,18 @@ avg_sops_blrm <- function(
   return_draws,
   ...
 ) {
-  ylevels <- ylevels %||% model$ylevels
+  y_levels <- y_levels %||% model$ylevels
 
   time_res <- resolve_sop_times(
     model,
     newdata_expanded,
     times,
-    tvarname,
-    t_covs = t_covs,
+    time_var,
+    time_covariates = time_covariates,
     default = "unique"
   )
   times <- time_res$times
-  validate_factor_gap(gap, t_covs, time_res$time_info)
+  validate_factor_gap(gap_var, time_covariates, time_res$time_info)
 
   validate_sops_by(by, newdata_expanded, data_arg = "expanded prediction data")
 
@@ -935,16 +941,16 @@ avg_sops_blrm <- function(
 
   for (chunk in chunks) {
     arr <- soprob_markov(
-      object = model,
-      data = newdata_expanded,
+      model = model,
+      newdata = newdata_expanded,
       times = times,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
-      tvarname = tvarname,
-      pvarname = pvarname,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      time_var = time_var,
+      p_var = p_var,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       include_re = include_re,
       id_var = id_var,
       n_draws = NULL,
@@ -960,7 +966,7 @@ avg_sops_blrm <- function(
           sops_array = arr_i,
           grid = grid,
           times = times,
-          ylevels = ylevels,
+          y_levels = y_levels,
           variables = variables,
           n_cf = n_cf,
           n_each = n_each
@@ -969,7 +975,7 @@ avg_sops_blrm <- function(
         draw_i <- array_to_df_individual(
           sops_array = arr_i,
           times = times,
-          ylevels = ylevels,
+          y_levels = y_levels,
           newdata = newdata_expanded,
           by = NULL
         )
@@ -1008,13 +1014,13 @@ avg_sops_blrm <- function(
     model = model,
     call_args = sops_call_args(
       times,
-      ylevels,
+      y_levels,
       absorb,
-      tvarname,
-      pvarname,
-      p2varname,
-      gap,
-      t_covs,
+      time_var,
+      p_var,
+      p2_var,
+      gap_var,
+      time_covariates,
       include_re = include_re,
       id_var = id_var,
       n_draws = n_draws,
@@ -1022,13 +1028,13 @@ avg_sops_blrm <- function(
       posterior_summary = posterior_summary,
       conf_level = conf_level
     ),
-    tvarname = tvarname,
-    pvarname = pvarname,
-    p2varname = p2varname,
-    ylevels = ylevels,
+    time_var = time_var,
+    p_var = p_var,
+    p2_var = p2_var,
+    y_levels = y_levels,
     absorb = absorb,
-    gap = gap,
-    t_covs = t_covs,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     by = by,
     avg_args = list(
       variables = variables,

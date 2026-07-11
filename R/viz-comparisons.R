@@ -4,7 +4,7 @@
 #'
 #' Plots output from [avg_comparisons()] on the comparison scale.
 #'
-#' @param data A `markov_avg_comparisons` object returned by
+#' @param x A `markov_avg_comparisons` object returned by
 #'   [avg_comparisons()], optionally after [inferences()].
 #' @param x_var Character string or `NULL`. X-axis variable. If `NULL`, uses
 #'   `"time"` when available, then `"state_set"` when available, and otherwise
@@ -36,11 +36,11 @@
 #' cmp <- avg_comparisons(
 #'   fit,
 #'   variables = list(tx = c(0, 1)),
-#'   metric = "time_in_state",
-#'   states = c(1, 2),
+#'   estimand = "time_in_state",
+#'   state_sets = c(1, 2),
 #'   times = 1:30
 #' ) |>
-#'   inferences(method = "simulation", n_sim = 500)
+#'   inferences(method = "mvn", n_draws = 500)
 #'
 #' plot_comparisons(cmp)
 #' }
@@ -48,7 +48,7 @@
 #' @importFrom ggplot2 geom_errorbar geom_hline geom_point
 #' @export
 plot_comparisons <- function(
-  data,
+  x,
   x_var = NULL,
   color_var = NULL,
   linetype_var = NULL,
@@ -60,6 +60,7 @@ plot_comparisons <- function(
   point_size = 2,
   line_width = 0.7
 ) {
+  data <- x
   geom <- match.arg(geom)
   plot_validate_scalar(ribbon_alpha, "ribbon_alpha", lower = 0, upper = 1)
   plot_validate_scalar(point_size, "point_size", lower = 0)
@@ -198,7 +199,7 @@ plot_comparisons_validate_data <- function(data, estimate_var) {
   if (!is.data.frame(data)) {
     stop("`data` must be a data frame returned by `avg_comparisons()`.")
   }
-  required <- c("metric", "comparison", "contrast", estimate_var)
+  required <- c("estimand", "comparison", "contrast", estimate_var)
   missing_vars <- setdiff(required, names(data))
   if (length(missing_vars) > 0) {
     stop(
@@ -260,9 +261,9 @@ plot_comparisons_state_set_levels <- function(data) {
   }
 
   parsed <- strsplit(values, "+", fixed = TRUE)
-  ylevels <- attr(data, "ylevels", exact = TRUE)
-  if (!is.null(ylevels)) {
-    state_levels <- as_state_labels(ylevels)
+  y_levels <- attr(data, "y_levels", exact = TRUE)
+  if (!is.null(y_levels)) {
+    state_levels <- as_state_labels(y_levels)
     state_order <- stats::setNames(seq_along(state_levels), state_levels)
     keys <- vapply(
       parsed,
@@ -332,17 +333,17 @@ plot_comparisons_y_label <- function(comparison) {
 }
 
 plot_comparisons_title <- function(data) {
-  metric <- unique(as.character(data$metric))
-  metric <- metric[!is.na(metric)]
-  if (length(metric) != 1) {
+  estimand <- unique(as.character(data$estimand))
+  estimand <- estimand[!is.na(estimand)]
+  if (length(estimand) != 1) {
     return("Average Comparisons")
   }
   metric_label <- switch(
-    metric,
+    estimand,
     sop = "SOP",
     time_in_state = "Time-in-State",
     time_benefit = "Time-Benefit",
-    metric
+    estimand
   )
   paste("Average", metric_label, "Comparisons")
 }

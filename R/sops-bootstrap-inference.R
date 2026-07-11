@@ -30,6 +30,7 @@ inferences_bootstrap <- function(
   n_boot,
   workers,
   conf_level,
+  conf_type = "perc",
   return_draws,
   update_datadist,
   use_coefstart
@@ -50,6 +51,7 @@ inferences_bootstrap <- function(
       n_boot = n_boot,
       workers = workers,
       conf_level = conf_level,
+      conf_type = conf_type,
       return_draws = return_draws,
       update_datadist = update_datadist,
       use_coefstart = use_coefstart
@@ -65,13 +67,13 @@ inferences_bootstrap <- function(
   call_args <- attr(object, "call_args")
   avg_args <- attr(object, "avg_args")
 
-  tvarname <- attr(object, "tvarname")
-  pvarname <- attr(object, "pvarname")
-  p2varname <- attr(object, "p2varname")
-  ylevels <- attr(object, "ylevels")
+  time_var <- attr(object, "time_var")
+  p_var <- attr(object, "p_var")
+  p2_var <- attr(object, "p2_var")
+  y_levels <- attr(object, "y_levels")
   absorb <- attr(object, "absorb")
-  gap <- attr(object, "gap")
-  t_covs <- attr(object, "t_covs")
+  gap_var <- attr(object, "gap_var")
+  time_covariates <- attr(object, "time_covariates")
 
   variables <- avg_args$variables
   by <- avg_args$by
@@ -82,7 +84,7 @@ inferences_bootstrap <- function(
     stop("Full refit data not stored. Cannot perform bootstrap.")
   }
 
-  validate_refit_bootstrap_data(refit_data, id_var, tvarname)
+  validate_refit_bootstrap_data(refit_data, id_var, time_var)
 
   if (newdata_supplied && engine == "fwb") {
     warn_fixed_profile_bootstrap_weights("FWB")
@@ -90,10 +92,10 @@ inferences_bootstrap <- function(
 
   # Dimensions for result expansion
   n_times <- length(times)
-  n_states <- length(ylevels)
+  n_states <- length(y_levels)
 
   # --- 2. Identify Factor Columns ---
-  factor_cols <- c("y", pvarname, p2varname)
+  factor_cols <- c("y", p_var, p2_var)
   factor_cols <- intersect(factor_cols, names(refit_data))
 
   # --- 4. Define Analysis Function ---
@@ -109,7 +111,7 @@ inferences_bootstrap <- function(
       model = model,
       factor_cols = factor_cols,
       original_data = refit_data,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
       update_datadist = update_datadist,
       use_coefstart = use_coefstart,
@@ -118,7 +120,7 @@ inferences_bootstrap <- function(
 
     m_boot <- boot_result$model
     boot_data <- boot_result$data
-    boot_ylevels <- boot_result$ylevels
+    boot_ylevels <- boot_result$ylevels %||% boot_result$y_levels
     boot_absorb <- boot_result$absorb
     missing_states <- boot_result$missing_states
 
@@ -127,7 +129,7 @@ inferences_bootstrap <- function(
     }
 
     # Get states present in original numbering (for mapping back later)
-    ylevel_names <- as_state_labels(ylevels)
+    ylevel_names <- as_state_labels(y_levels)
     states_present <- ylevel_names[
       !ylevel_names %in% as_state_labels(missing_states)
     ]
@@ -147,7 +149,7 @@ inferences_bootstrap <- function(
         baseline_boot <- resolve_markov_prediction_data(
           boot_data,
           id_var = "new_id",
-          tvarname = tvarname,
+          time_var = time_var,
           data_label = "bootstrap data"
         )
         baseline_weights <- NULL
@@ -155,7 +157,7 @@ inferences_bootstrap <- function(
         baseline_boot <- resolve_markov_prediction_data(
           boot_data,
           id_var = id_var,
-          tvarname = tvarname,
+          time_var = time_var,
           data_label = "bootstrap data"
         )
         baseline_weights <- fwb_baseline_weights(
@@ -172,16 +174,16 @@ inferences_bootstrap <- function(
     # Compute individual SOPs for counterfactual data
     sops_array <- tryCatch(
       soprob_markov(
-        object = m_boot,
-        data = newdata_cf,
+        model = m_boot,
+        newdata = newdata_cf,
         times = times,
-        ylevels = factor(boot_ylevels),
+        y_levels = factor(boot_ylevels),
         absorb = boot_absorb,
-        tvarname = tvarname,
-        pvarname = pvarname,
-        p2varname = p2varname,
-        gap = gap,
-        t_covs = t_covs
+        time_var = time_var,
+        p_var = p_var,
+        p2_var = p2_var,
+        gap_var = gap_var,
+        time_covariates = time_covariates
       ),
       error = function(e) {
         warning("soprob_markov failed: ", e$message)
@@ -201,7 +203,7 @@ inferences_bootstrap <- function(
       sops_array = sops_array,
       grid = grid,
       times = times,
-      ylevels = factor(boot_ylevels),
+      y_levels = factor(boot_ylevels),
       variables = variables,
       n_cf = n_cf,
       n_each = n_each,
@@ -215,7 +217,7 @@ inferences_bootstrap <- function(
         boot_avg <- complete_bootstrap_sop_states(
           boot_avg,
           times = times,
-          ylevels = ylevels,
+          y_levels = y_levels,
           variables = variables,
           by = by
         )
@@ -253,7 +255,7 @@ inferences_bootstrap <- function(
     for (cf_i in seq_len(n_cf)) {
       avg_sops_mat <- avg_sops_list[[cf_i]]
 
-      df <- expand.grid(time = times, state = ylevels)
+      df <- expand.grid(time = times, state = y_levels)
       df$estimate <- as.vector(avg_sops_mat)
 
       # Add variable values for this counterfactual
@@ -288,13 +290,13 @@ inferences_bootstrap <- function(
         "newdata_supplied",
         "variables",
         "times",
-        "ylevels",
+        "y_levels",
         "absorb",
-        "pvarname",
-        "p2varname",
-        "tvarname",
-        "gap",
-        "t_covs",
+        "p_var",
+        "p2_var",
+        "time_var",
+        "gap_var",
+        "time_covariates",
         "n_times",
         "n_states",
         "update_datadist",
@@ -326,13 +328,13 @@ inferences_bootstrap <- function(
         "newdata_supplied",
         "variables",
         "times",
-        "ylevels",
+        "y_levels",
         "absorb",
-        "pvarname",
-        "p2varname",
-        "tvarname",
-        "gap",
-        "t_covs",
+        "p_var",
+        "p2_var",
+        "time_var",
+        "gap_var",
+        "time_covariates",
         "n_times",
         "n_states",
         "update_datadist",
@@ -369,7 +371,8 @@ inferences_bootstrap <- function(
     draws_df = boot_df,
     group_cols = group_cols,
     conf_level = conf_level,
-    conf_type = "perc" # Bootstrap always uses percentile
+    conf_type = conf_type,
+    point_estimates = as.data.frame(object)
   )
 
   # Merge with original object
@@ -391,7 +394,7 @@ inferences_bootstrap <- function(
   attr(final_result, "n_boot") <- n_boot
   attr(final_result, "n_successful") <- length(boot_results)
   attr(final_result, "conf_level") <- conf_level
-  attr(final_result, "method") <- "bootstrap"
+  attr(final_result, "method") <- if (engine == "fwb") "fwb" else "bootstrap"
   attr(final_result, "engine") <- engine
   if (engine == "fwb") {
     attr(final_result, "fwb_weight_type") <- "exponential"
@@ -403,7 +406,7 @@ inferences_bootstrap <- function(
 
   # Store full bootstrap draws if requested
   if (return_draws) {
-    attr(final_result, "bootstrap_draws") <- boot_df
+    attr(final_result, "draws") <- boot_df
   }
 
   final_result
@@ -414,6 +417,7 @@ inferences_bootstrap_sops_fwb <- function(
   n_boot,
   workers,
   conf_level,
+  conf_type = "perc",
   return_draws,
   update_datadist,
   use_coefstart
@@ -425,13 +429,13 @@ inferences_bootstrap_sops_fwb <- function(
   refit_data <- attr(object, "refit_data") %||% markov_model_data(model)
   call_args <- attr(object, "call_args")
 
-  tvarname <- attr(object, "tvarname")
-  pvarname <- attr(object, "pvarname")
-  p2varname <- attr(object, "p2varname")
-  ylevels <- attr(object, "ylevels")
+  time_var <- attr(object, "time_var")
+  p_var <- attr(object, "p_var")
+  p2_var <- attr(object, "p2_var")
+  y_levels <- attr(object, "y_levels")
   absorb <- attr(object, "absorb")
-  gap <- attr(object, "gap")
-  t_covs <- attr(object, "t_covs")
+  gap_var <- attr(object, "gap_var")
+  time_covariates <- attr(object, "time_covariates")
   by <- call_args$by %||% attr(object, "by")
   times <- call_args$times
   id_var <- attr(object, "id_var") %||% markov_model_id_var(model)
@@ -455,7 +459,7 @@ inferences_bootstrap_sops_fwb <- function(
       "`id_var` to `sops()`."
     )
   }
-  validate_refit_bootstrap_data(refit_data, id_var, tvarname)
+  validate_refit_bootstrap_data(refit_data, id_var, time_var)
 
   prediction_data <- ensure_markov_rowid(prediction_data)
   if (!newdata_supplied) {
@@ -483,7 +487,7 @@ inferences_bootstrap_sops_fwb <- function(
     NULL
   }
 
-  factor_cols <- c("y", pvarname, p2varname)
+  factor_cols <- c("y", p_var, p2_var)
   factor_cols <- intersect(factor_cols, names(refit_data))
 
   analysis_fn <- function(boot_data, fwb_weights = NULL) {
@@ -494,7 +498,7 @@ inferences_bootstrap_sops_fwb <- function(
       model = model,
       factor_cols = factor_cols,
       original_data = refit_data,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
       update_datadist = update_datadist,
       use_coefstart = use_coefstart,
@@ -502,7 +506,7 @@ inferences_bootstrap_sops_fwb <- function(
     )
 
     m_boot <- boot_result$model
-    boot_ylevels <- boot_result$ylevels
+    boot_ylevels <- boot_result$ylevels %||% boot_result$y_levels
     boot_absorb <- boot_result$absorb
     missing_states <- boot_result$missing_states
 
@@ -520,16 +524,16 @@ inferences_bootstrap_sops_fwb <- function(
 
     sops_array <- tryCatch(
       soprob_markov(
-        object = m_boot,
-        data = prediction_data,
+        model = m_boot,
+        newdata = prediction_data,
         times = times,
-        ylevels = factor(boot_ylevels),
+        y_levels = factor(boot_ylevels),
         absorb = boot_absorb,
-        tvarname = tvarname,
-        pvarname = pvarname,
-        p2varname = p2varname,
-        gap = gap,
-        t_covs = t_covs
+        time_var = time_var,
+        p_var = p_var,
+        p2_var = p2_var,
+        gap_var = gap_var,
+        time_covariates = time_covariates
       ),
       error = function(e) {
         warning("soprob_markov failed: ", e$message)
@@ -580,13 +584,13 @@ inferences_bootstrap_sops_fwb <- function(
       "prediction_data",
       "refit_data",
       "times",
-      "ylevels",
+      "y_levels",
       "absorb",
-      "pvarname",
-      "p2varname",
-      "tvarname",
-      "gap",
-      "t_covs",
+      "p_var",
+      "p2_var",
+      "time_var",
+      "gap_var",
+      "time_covariates",
       "update_datadist",
       "factor_cols",
       "use_coefstart",
@@ -617,7 +621,8 @@ inferences_bootstrap_sops_fwb <- function(
     draws_df = boot_df,
     group_cols = group_cols,
     conf_level = conf_level,
-    conf_type = "perc"
+    conf_type = conf_type,
+    point_estimates = as.data.frame(object)
   )
 
   object$.sop_order <- seq_len(nrow(object))
@@ -636,7 +641,7 @@ inferences_bootstrap_sops_fwb <- function(
   attr(final_result, "n_boot") <- n_boot
   attr(final_result, "n_successful") <- length(boot_results)
   attr(final_result, "conf_level") <- conf_level
-  attr(final_result, "method") <- "bootstrap"
+  attr(final_result, "method") <- "fwb"
   attr(final_result, "engine") <- "fwb"
   attr(final_result, "fwb_weight_type") <- "exponential"
   attr(final_result, "fwb_weight_scale") <- "cluster_mean_1"
@@ -648,7 +653,7 @@ inferences_bootstrap_sops_fwb <- function(
   }
 
   if (return_draws) {
-    attr(final_result, "bootstrap_draws") <- boot_df
+    attr(final_result, "draws") <- boot_df
   }
 
   final_result
@@ -662,12 +667,12 @@ inferences_bootstrap_sops_fwb <- function(
 validate_refit_bootstrap_data <- function(
   refit_data,
   id_var,
-  tvarname,
+  time_var,
   data_arg = "refit_data"
 ) {
   validate_markov_id_var(id_var, refit_data, data_arg)
 
-  if (!is.null(tvarname) && tvarname %in% names(refit_data)) {
+  if (!is.null(time_var) && time_var %in% names(refit_data)) {
     rows_per_patient <- tabulate(match(
       refit_data[[id_var]],
       unique(refit_data[[id_var]])
@@ -721,7 +726,7 @@ bootstrap_avg_df_to_matrices <- function(
 complete_bootstrap_sop_states <- function(
   boot_avg,
   times,
-  ylevels,
+  y_levels,
   variables,
   by = NULL
 ) {
@@ -729,7 +734,7 @@ complete_bootstrap_sop_states <- function(
   group_values <- unique(boot_avg[, group_cols, drop = FALSE])
   base <- expand.grid(
     time = times,
-    state = ylevels,
+    state = y_levels,
     KEEP.OUT.ATTRS = FALSE
   )
 

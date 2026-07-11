@@ -28,7 +28,7 @@
 #'   id_var = "id"
 #' )
 #'
-#' sops(fit, times = 1:60, ylevels = factor(1:6), absorb = "6")
+#' sops(fit, times = 1:60, y_levels = factor(1:6), absorb = "6")
 #' }
 #'
 #' @seealso [blrm_markov()], [vglm_markov()], [sops()], [avg_sops()]
@@ -258,18 +258,18 @@ warn_missing_markov_id_var <- function(wrapper) {
 warn_duplicate_markov_id_time <- function(
   data,
   id_var,
-  tvarname = "time",
+  time_var = "time",
   wrapper = "the Markov wrapper"
 ) {
   if (
     is.null(id_var) ||
       !id_var %in% names(data) ||
-      !tvarname %in% names(data)
+      !time_var %in% names(data)
   ) {
     return(invisible(NULL))
   }
 
-  key <- data[c(id_var, tvarname)]
+  key <- data[c(id_var, time_var)]
   if (anyDuplicated(key) == 0L) {
     return(invisible(NULL))
   }
@@ -279,7 +279,7 @@ warn_duplicate_markov_id_time <- function(
     " received data with duplicate `",
     id_var,
     "` x `",
-    tvarname,
+    time_var,
     "` combinations. This is usually accidental in Markov transition data; ",
     "automatic SOP prediction from stored data will use one prediction row ",
     "per `",
@@ -399,7 +399,7 @@ resolve_markov_source_data <- function(model, newdata, refit_data = NULL) {
 resolve_markov_prediction_data <- function(
   data,
   id_var,
-  tvarname,
+  time_var,
   data_label = "newdata"
 ) {
   if (is.null(id_var) || !id_var %in% names(data)) {
@@ -411,12 +411,12 @@ resolve_markov_prediction_data <- function(
     return(data)
   }
 
-  if (tvarname %in% names(data)) {
+  if (time_var %in% names(data)) {
     split_idx <- split(seq_len(nrow(data)), id)
     baseline_idx <- vapply(
       split_idx,
       function(idx) {
-        time_values <- data[[tvarname]][idx]
+        time_values <- data[[time_var]][idx]
         idx[order(time_values, na.last = TRUE)[1]]
       },
       integer(1)
@@ -427,7 +427,7 @@ resolve_markov_prediction_data <- function(
   warning(
     data_label,
     " contains repeated IDs but no `",
-    tvarname,
+    time_var,
     "` column; using the first row per ID as the prediction row.",
     call. = FALSE
   )

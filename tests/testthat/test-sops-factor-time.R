@@ -67,8 +67,8 @@ make_interpolation_case <- function() {
   )
 
   class(x) <- c("markov_avg_sops", class(x))
-  attr(x, "pvarname") <- "yprev"
-  attr(x, "ylevels") <- factor(1:2)
+  attr(x, "p_var") <- "yprev"
+  attr(x, "y_levels") <- factor(1:2)
   attr(x, "avg_args") <- list(
     variables = list(tx = c(0, 1)),
     by = NULL,
@@ -140,7 +140,7 @@ add_interpolation_draws <- function(x) {
   draws$estimate <- pmin(pmax(draws$estimate, 0), 1)
   rownames(draws) <- NULL
 
-  attr(x, "simulation_draws") <- draws
+  attr(x, "draws") <- draws
   attr(x, "conf_level") <- 0.8
   attr(x, "conf_type") <- "perc"
   x
@@ -166,10 +166,10 @@ test_that("factor visit time works through SOP APIs and the fast path", {
 
   direct <- soprob_markov(
     fit,
-    data = baseline,
+    newdata = baseline,
     times = 1:4,
-    ylevels = factor(1:4),
-    pvarname = "yprev"
+    y_levels = factor(1:4),
+    p_var = "yprev"
   )
   expect_equal(dim(direct), c(nrow(baseline), 4L, 4L))
   expect_equal(dimnames(direct)[[2]], as.character(1:4))
@@ -178,8 +178,8 @@ test_that("factor visit time works through SOP APIs and the fast path", {
     fit,
     newdata = baseline,
     times = 1:4,
-    ylevels = factor(1:4),
-    pvarname = "yprev"
+    y_levels = factor(1:4),
+    p_var = "yprev"
   )
   expect_equal(sort(unique(as.character(individual$time))), as.character(1:4))
 
@@ -188,8 +188,8 @@ test_that("factor visit time works through SOP APIs and the fast path", {
     newdata = baseline,
     variables = list(tx = c(0, 1)),
     times = 1:4,
-    ylevels = factor(1:4),
-    pvarname = "yprev"
+    y_levels = factor(1:4),
+    p_var = "yprev"
   )
   expect_equal(
     as.character(attr(averaged, "avg_args")$times),
@@ -200,8 +200,8 @@ test_that("factor visit time works through SOP APIs and the fast path", {
     model = fit,
     data = baseline,
     times = 1:4,
-    ylevels = factor(1:4),
-    pvarname = "yprev"
+    y_levels = factor(1:4),
+    p_var = "yprev"
   )
   fast <- markov.misc:::markov_msm_run(
     components,
@@ -211,7 +211,7 @@ test_that("factor visit time works through SOP APIs and the fast path", {
   expect_equal(unname(fast), unname(direct), tolerance = 1e-10)
 })
 
-test_that("factor visit gap requires explicit numeric t_covs", {
+test_that("factor visit gap requires explicit numeric time_covariates", {
   skip_if_not_installed("VGAM")
 
   data <- make_factor_visit_case(n_patients = 40)
@@ -225,23 +225,23 @@ test_that("factor visit gap requires explicit numeric t_covs", {
   expect_error(
     soprob_markov(
       fit,
-      data = baseline,
+      newdata = baseline,
       times = 1:4,
-      ylevels = factor(1:4),
-      pvarname = "yprev",
-      gap = "gap"
+      y_levels = factor(1:4),
+      p_var = "yprev",
+      gap_var = "gap"
     ),
-    "Factor visit time with `gap` requires numeric gap values"
+    "Factor visit time with `gap_var` requires numeric gap_var values"
   )
 
   out <- soprob_markov(
     fit,
-    data = baseline,
+    newdata = baseline,
     times = 1:4,
-    ylevels = factor(1:4),
-    pvarname = "yprev",
-    gap = "gap",
-    t_covs = data.frame(gap = c(3, 4, 7, 14))
+    y_levels = factor(1:4),
+    p_var = "yprev",
+    gap_var = "gap",
+    time_covariates = data.frame(gap = c(3, 4, 7, 14))
   )
   expect_equal(dim(out), c(nrow(baseline), 4L, 4L))
 })
@@ -263,29 +263,29 @@ test_that("factor visit simulation and bootstrap inference smoke-test", {
     newdata = baseline,
     variables = list(tx = c(0, 1)),
     times = 1:4,
-    ylevels = factor(1:4),
-    pvarname = "yprev"
+    y_levels = factor(1:4),
+    p_var = "yprev"
   )
-  sim <- inferences(avg_baseline, n_sim = 2, return_draws = TRUE)
+  sim <- inferences(avg_baseline, n_draws = 2, return_draws = TRUE)
   expect_s3_class(sim, "markov_avg_sops")
-  expect_false(is.null(attr(sim, "simulation_draws")))
+  expect_false(is.null(attr(sim, "draws")))
 
   avg_full <- avg_sops(
     fit,
     refit_data = data,
     variables = list(tx = c(0, 1)),
     times = 1:4,
-    ylevels = factor(1:4),
-    pvarname = "yprev"
+    y_levels = factor(1:4),
+    p_var = "yprev"
   )
   boot <- inferences(
     avg_full,
     method = "bootstrap",
-    n_sim = 1,
+    n_draws = 1,
     return_draws = TRUE
   )
   expect_s3_class(boot, "markov_avg_sops")
-  expect_false(is.null(attr(boot, "bootstrap_draws")))
+  expect_false(is.null(attr(boot, "draws")))
 })
 
 test_that("factor visit orm avg_sops requires absorbing state", {
@@ -326,7 +326,7 @@ test_that("factor visit orm avg_sops requires absorbing state", {
       fit,
       variables = list(tx = c(0, 1)),
       times = names(case$visit_days),
-      ylevels = fit$yunique
+      y_levels = fit$yunique
     ),
     "pass it via `absorb`"
   )
@@ -369,7 +369,7 @@ test_that("factor visit orm SOP interpolation uses absorbing state", {
     fit,
     variables = list(tx = c(0, 1)),
     times = names(case$visit_days),
-    ylevels = fit$yunique,
+    y_levels = fit$yunique,
     absorb = case$absorb
   )
   expect_equal(
@@ -381,7 +381,7 @@ test_that("factor visit orm SOP interpolation uses absorbing state", {
   sop_days <- interpolate_sops(
     sop_visit,
     time_map = case$visit_days,
-    xout = 0:max(case$visit_days),
+    target_times = 0:max(case$visit_days),
     origin_time = 0
   )
   expect_false(anyNA(sop_days$estimate))
@@ -395,7 +395,7 @@ test_that("interpolate_sops maps visits, anchors baseline, and normalizes states
   out <- interpolate_sops(
     x,
     time_map = c(v1 = 3, v2 = 7),
-    xout = c(0, 3, 5, 7),
+    target_times = c(0, 3, 5, 7),
     origin_time = 0
   )
 
@@ -420,10 +420,10 @@ test_that("interpolate_sops interpolates stored draws from deterministic origin 
   out <- interpolate_sops(
     x,
     time_map = c(v1 = 3, v2 = 7),
-    xout = 0:7,
+    target_times = 0:7,
     origin_time = 0
   )
-  draws <- attr(out, "simulation_draws")
+  draws <- attr(out, "draws")
 
   expect_s3_class(draws, "data.frame")
   expect_equal(sort(unique(draws$time)), 0:7)
@@ -458,7 +458,7 @@ test_that("interpolate_sops warns when interval-bearing objects do not store dra
     out <- interpolate_sops(
       x,
       time_map = c(v1 = 3, v2 = 7),
-      xout = 1:7,
+      target_times = 1:7,
       origin_time = 0
     ),
     "no stored draws"
@@ -473,7 +473,7 @@ test_that("interpolate_sops warns when interval-bearing objects do not store dra
     interpolate_sops(
       x,
       time_map = c(v1 = 3, v2 = 7),
-      xout = 1:7,
+      target_times = 1:7,
       origin_time = 0
     ),
     "posterior draws"
@@ -484,7 +484,7 @@ test_that("interpolate_sops handles blrm-style stored posterior draws", {
   x <- add_interpolation_intervals(make_interpolation_case())
   draws <- attr(
     add_interpolation_draws(make_interpolation_case()),
-    "simulation_draws"
+    "draws"
   )
   attr(x, "draws") <- draws
   attr(x, "method") <- "posterior"
@@ -494,7 +494,7 @@ test_that("interpolate_sops handles blrm-style stored posterior draws", {
     out <- interpolate_sops(
       x,
       time_map = c(v1 = 3, v2 = 7),
-      xout = 0:7,
+      target_times = 0:7,
       origin_time = 0
     ),
     NA
@@ -531,7 +531,7 @@ test_that("plot_sops bars work with derived facet labels on interpolated draws",
   out <- interpolate_sops(
     x,
     time_map = c(v1 = 3, v2 = 7),
-    xout = 1:7,
+    target_times = 1:7,
     origin_time = 0
   )
   label_tx <- function(x) {
@@ -542,9 +542,9 @@ test_that("plot_sops bars work with derived facet labels on interpolated draws",
     )
   }
   out$tx_label <- label_tx(out$tx)
-  draws <- attr(out, "simulation_draws")
+  draws <- attr(out, "draws")
   draws$tx_label <- label_tx(draws$tx)
-  attr(out, "simulation_draws") <- draws
+  attr(out, "draws") <- draws
 
   expect_equal(anyDuplicated(out[c("time", "state", "tx_label")]), 0L)
   expect_s3_class(
@@ -560,8 +560,8 @@ test_that("interpolate_sops guardrails are clear", {
     "`time_map` is missing entries"
   )
   expect_error(
-    interpolate_sops(x, time_map = c(v1 = 3, v2 = 7), xout = 8),
-    "`xout` must stay within the supported time range"
+    interpolate_sops(x, time_map = c(v1 = 3, v2 = 7), target_times = 8),
+    "`target_times` must stay within the supported time range"
   )
 })
 
@@ -584,7 +584,7 @@ test_that("time_in_state uses trapezoidal AUC on mapped real time", {
     target_states = "1",
     time_map = c(v1 = 3, v2 = 7),
     origin_time = 0,
-    xout = 1:7
+    target_times = 1:7
   )
   day_1_auc <- day_1_auc[order(day_1_auc$tx), , drop = FALSE]
 
@@ -598,7 +598,7 @@ test_that("time_in_state uses trapezoidal AUC on mapped real time", {
   interpolated <- interpolate_sops(
     x,
     time_map = c(v1 = 3, v2 = 7),
-    xout = 1:7,
+    target_times = 1:7,
     origin_time = 0
   )
   interpolated_auc <- time_in_state(interpolated, target_states = "1")

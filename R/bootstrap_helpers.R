@@ -418,7 +418,7 @@ apply_to_fwb_bootstrap <- function(
 #' @param factor_cols Character vector of factor columns to relevel (e.g.,
 #'   c("y", "yprev"))
 #' @param original_data Original data frame before bootstrap sampling
-#' @param ylevels Original state levels (e.g., 1:6)
+#' @param y_levels Original state levels (e.g., 1:6)
 #' @param absorb Absorbing state in original levels
 #' @param update_datadist Logical indicating whether to update datadist
 #'   (only needed for rms::orm models)
@@ -430,7 +430,7 @@ apply_to_fwb_bootstrap <- function(
 #'   \itemize{
 #'     \item model: Refitted model on bootstrap data (or NULL if fitting failed)
 #'     \item data: Bootstrap data with releveled factors
-#'     \item ylevels: Updated ylevels (or NULL if not provided)
+#'     \item y_levels: Updated y_levels (or NULL if not provided)
 #'     \item absorb: Updated absorb (or NULL if not provided)
 #'     \item missing_states: Character vector of missing state levels
 #'   }
@@ -464,7 +464,7 @@ bootstrap_analysis_wrapper <- function(
   model,
   factor_cols,
   original_data,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   update_datadist = TRUE,
   use_coefstart = FALSE,
@@ -491,7 +491,7 @@ bootstrap_analysis_wrapper <- function(
     data = boot_data,
     factor_cols = factor_cols,
     original_data = original_data,
-    ylevels = ylevels,
+    y_levels = y_levels,
     absorb = absorb
   )
 

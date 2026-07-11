@@ -9,21 +9,18 @@ test_that("score-bootstrap simulation adds CIs and metadata for avg_sops", {
     refit_data = case$data,
     variables = list(tx = c(0, 1)),
     times = case$times,
-    ylevels = case$ylevels,
+    y_levels = case$y_levels,
     absorb = case$absorb,
     id_var = "id"
   ) |>
     inferences(
-      method = "simulation",
-      engine = "score_bootstrap",
-      n_sim = 40,
+      method = "score_bootstrap",
+      n_draws = 40,
       return_draws = TRUE
     )
 
-  expect_equal(attr(result, "method"), "simulation")
-  expect_equal(attr(result, "engine"), "score_bootstrap")
-  expect_equal(attr(result, "score_weight_dist"), "exponential")
-  expect_equal(attr(result, "n_sim"), 40)
+  expect_equal(attr(result, "method"), "score_bootstrap")
+  expect_equal(attr(result, "n_draws"), 40)
   expect_true(attr(result, "n_successful") <= 40)
   expect_true(attr(result, "n_successful") > 0)
   expect_inference_intervals(result, require_positive_std_error = TRUE)
@@ -40,14 +37,13 @@ test_that("score-bootstrap simulation stores draw-level output with expected str
     refit_data = case$data,
     variables = list(tx = c(0, 1)),
     times = case$times,
-    ylevels = case$ylevels,
+    y_levels = case$y_levels,
     absorb = case$absorb,
     id_var = "id"
   ) |>
     inferences(
-      method = "simulation",
-      engine = "score_bootstrap",
-      n_sim = 30,
+      method = "score_bootstrap",
+      n_draws = 30,
       return_draws = TRUE
     )
 
@@ -74,7 +70,7 @@ test_that("score-bootstrap treats supplied newdata as fixed profiles", {
     refit_data = case$data,
     variables = list(tx = c(0, 1)),
     times = case$times[1:2],
-    ylevels = case$ylevels,
+    y_levels = case$y_levels,
     absorb = case$absorb,
     id_var = "id"
   )
@@ -83,9 +79,8 @@ test_that("score-bootstrap treats supplied newdata as fixed profiles", {
   expect_warning(
     result <- inferences(
       avg,
-      method = "simulation",
-      engine = "score_bootstrap",
-      n_sim = 3,
+      method = "score_bootstrap",
+      n_draws = 3,
       return_draws = TRUE
     ),
     "baseline weights have been set to NULL"
@@ -110,14 +105,13 @@ test_that("score-bootstrap simulation does not expose draws when return_draws is
     refit_data = case$data,
     variables = list(tx = c(0, 1)),
     times = case$times,
-    ylevels = case$ylevels,
+    y_levels = case$y_levels,
     absorb = case$absorb,
     id_var = "id"
   ) |>
     inferences(
-      method = "simulation",
-      engine = "score_bootstrap",
-      n_sim = 20,
+      method = "score_bootstrap",
+      n_draws = 20,
       return_draws = FALSE
     )
 
@@ -136,7 +130,7 @@ test_that("score-bootstrap simulation rejects user-supplied vcov", {
     refit_data = case$data,
     variables = list(tx = c(0, 1)),
     times = case$times,
-    ylevels = case$ylevels,
+    y_levels = case$y_levels,
     absorb = case$absorb,
     id_var = "id"
   )
@@ -144,16 +138,15 @@ test_that("score-bootstrap simulation rejects user-supplied vcov", {
   expect_error(
     inferences(
       avg_result,
-      method = "simulation",
-      engine = "score_bootstrap",
-      n_sim = 10,
+      method = "score_bootstrap",
+      n_draws = 10,
       vcov = custom_vcov
     ),
     "cannot be supplied"
   )
 })
 
-test_that("score-bootstrap simulation validates score_weight_dist", {
+test_that("score-bootstrap uses the fixed exponential weight distribution", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")
 
@@ -163,20 +156,15 @@ test_that("score-bootstrap simulation validates score_weight_dist", {
     refit_data = case$data,
     variables = list(tx = c(0, 1)),
     times = case$times,
-    ylevels = case$ylevels,
+    y_levels = case$y_levels,
     absorb = case$absorb,
     id_var = "id"
   )
 
-  expect_error(
-    inferences(
-      avg_result,
-      method = "simulation",
-      engine = "score_bootstrap",
-      score_weight_dist = "invalid_dist",
-      n_sim = 10
-    ),
-    "exponential"
+  expect_false("score_weight_dist" %in% names(formals(inferences)))
+  expect_s3_class(
+    inferences(avg_result, method = "score_bootstrap", n_draws = 10),
+    "markov_avg_sops"
   )
 })
 
@@ -194,7 +182,7 @@ test_that("generate_score_bootstrap_draws returns valid dimensions and normalize
     model = case$model,
     baseline_data = case$baseline,
     id_var = "id",
-    n_sim = 25
+    n_draws = 25
   )
 
   expect_true(is.matrix(draws$beta_draws))
@@ -226,7 +214,7 @@ test_that("generate_score_bootstrap_draws is reproducible with a fixed seed", {
     model = model,
     baseline_data = baseline_data,
     id_var = "id",
-    n_sim = 15
+    n_draws = 15
   )
 
   withr::local_seed(9999)
@@ -234,7 +222,7 @@ test_that("generate_score_bootstrap_draws is reproducible with a fixed seed", {
     model = model,
     baseline_data = baseline_data,
     id_var = "id",
-    n_sim = 15
+    n_draws = 15
   )
 
   expect_equal(draws_a$beta_draws, draws_b$beta_draws)
@@ -257,7 +245,7 @@ test_that("generate_score_bootstrap_draws errors when baseline IDs do not match 
       model = model,
       baseline_data = baseline_data,
       id_var = "id",
-      n_sim = 10
+      n_draws = 10
     ),
     "were not found in the cluster variable"
   )
@@ -280,7 +268,7 @@ test_that("generate_score_bootstrap_draws errors when required robust components
       model = broken_model,
       baseline_data = baseline_data,
       id_var = "id",
-      n_sim = 10
+      n_draws = 10
     ),
     "missing required components.*scores"
   )

@@ -4,7 +4,7 @@
 #' probabilities over time, with optional faceting by grouping variables
 #' (typically treatment). Can display as lines (default) or stacked bars.
 #'
-#' @param data A data frame containing trajectory data, typically from
+#' @param x A data frame containing trajectory data, typically from
 #'   `sim_trajectories_markov()` or `sim_trajectories_brownian()`, or a
 #'   model-derived SOP summary such as a `markov_avg_sops` object from
 #'   `avg_sops()` and `inferences()`.
@@ -20,7 +20,7 @@
 #'   (e.g., site) and distinguish groups by linetype (e.g., treatment).
 #' @param geom Character string. Type of plot: "line" for line plot (default)
 #'   or "bar" for stacked bar chart.
-#' @param prob_var Character string or NULL. Name of the probability column for
+#' @param estimate_var Character string or NULL. Name of the probability column for
 #'   model-derived SOP summary data. Defaults to `"estimate"` when present.
 #' @param n_draws Integer. Maximum number of stored inference draws to overlay
 #'   for `markov_avg_sops` bar plots. Draws are selected deterministically.
@@ -86,18 +86,20 @@
 #'
 #' @export
 plot_sops <- function(
-  data,
+  x,
   time_var = "time",
   y_var = "y",
   facet_var = "tx",
   linetype_var = NULL,
   geom = c("line", "bar"),
-  prob_var = NULL,
+  estimate_var = NULL,
   n_draws = 50,
   draw_alpha = 0.06,
   ribbon_alpha = 0.12,
   show_uncertainty = TRUE
 ) {
+  data <- x
+  prob_var <- estimate_var
   geom <- match.arg(geom)
   plot_validate_scalar(n_draws, "n_draws", lower = 0)
   plot_validate_scalar(draw_alpha, "draw_alpha", lower = 0, upper = 1)
@@ -414,9 +416,9 @@ plot_sops_draw_data <- function(
   n_draws,
   state_levels
 ) {
-  draws <- attr(data, "bootstrap_draws")
+  draws <- attr(data, "draws")
   if (is.null(draws)) {
-    draws <- attr(data, "simulation_draws")
+    draws <- attr(data, "draws")
   }
   if (is.null(draws)) {
     draws <- attr(data, "draws")
@@ -467,9 +469,9 @@ plot_sops_select_draw_ids <- function(draw_ids, n_draws) {
 }
 
 plot_sops_state_levels <- function(data, state_var) {
-  ylevels <- attr(data, "ylevels", exact = TRUE)
-  if (!is.null(ylevels)) {
-    return(as_state_labels(ylevels))
+  y_levels <- attr(data, "y_levels", exact = TRUE)
+  if (!is.null(y_levels)) {
+    return(as_state_labels(y_levels))
   }
 
   if (is.factor(data[[state_var]])) {

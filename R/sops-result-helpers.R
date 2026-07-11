@@ -21,26 +21,26 @@ validate_sops_by <- function(by, data, data_arg = "newdata") {
 
 sops_call_args <- function(
   times,
-  ylevels,
+  y_levels,
   absorb,
-  tvarname,
-  pvarname,
-  p2varname,
-  gap,
-  t_covs,
+  time_var,
+  p_var,
+  p2_var,
+  gap_var,
+  time_covariates,
   by = NULL,
   ...
 ) {
   c(
     list(
       times = times,
-      ylevels = ylevels,
+      y_levels = y_levels,
       absorb = absorb,
-      tvarname = tvarname,
-      pvarname = pvarname,
-      p2varname = p2varname,
-      gap = gap,
-      t_covs = t_covs,
+      time_var = time_var,
+      p_var = p_var,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
       by = by
     ),
     list(...)
@@ -52,27 +52,28 @@ set_sops_attrs <- function(
   class_name,
   model,
   call_args,
-  tvarname,
-  pvarname,
-  p2varname,
-  ylevels,
+  time_var,
+  p_var,
+  p2_var,
+  y_levels,
   absorb,
-  gap,
-  t_covs,
+  gap_var,
+  time_covariates,
   by = NULL,
   newdata_orig = NULL,
   avg_args = NULL,
   extra_attrs = list()
 ) {
+  result <- as.data.frame(result)
   attr(result, "model") <- model
   attr(result, "call_args") <- call_args
-  attr(result, "tvarname") <- tvarname
-  attr(result, "pvarname") <- pvarname
-  attr(result, "p2varname") <- p2varname
-  attr(result, "ylevels") <- ylevels
+  attr(result, "time_var") <- time_var
+  attr(result, "p_var") <- p_var
+  attr(result, "p2_var") <- p2_var
+  attr(result, "y_levels") <- y_levels
   attr(result, "absorb") <- absorb
-  attr(result, "gap") <- gap
-  attr(result, "t_covs") <- t_covs
+  attr(result, "gap_var") <- gap_var
+  attr(result, "time_covariates") <- time_covariates
   attr(result, "by") <- by
   attr(result, "newdata_orig") <- newdata_orig
   attr(result, "avg_args") <- avg_args
@@ -83,7 +84,7 @@ set_sops_attrs <- function(
     }
   }
 
-  class(result) <- c(class_name, setdiff(class(result), class_name))
+  class(result) <- c(class_name, "data.frame")
   result
 }
 
@@ -93,8 +94,85 @@ restore_sops_attrs <- function(result, object) {
       attr(result, a) <- attr(object, a)
     }
   }
+  result <- as.data.frame(result)
   class(result) <- class(object)
   result
+}
+
+inference_columns <- function() {
+  c(
+    "estimate",
+    "std.error",
+    "statistic",
+    "p.value",
+    "s.value",
+    "conf.low",
+    "conf.high"
+  )
+}
+
+order_estimate_columns <- function(x) {
+  original_class <- class(x)
+  extra_attrs <- attributes(x)
+  extra_attrs <- extra_attrs[setdiff(
+    names(extra_attrs),
+    c("names", "row.names", "class")
+  )]
+  x <- as.data.frame(x)
+  measures <- intersect(inference_columns(), names(x))
+  identifiers <- setdiff(names(x), inference_columns())
+  out <- x[, c(identifiers, measures), drop = FALSE]
+  for (nm in names(extra_attrs)) {
+    attr(out, nm) <- extra_attrs[[nm]]
+  }
+  class(out) <- original_class
+  out
+}
+
+add_null_test <- function(x, null) {
+  if (is.null(null)) {
+    return(order_estimate_columns(x))
+  }
+  if (!is.numeric(null) || length(null) != 1L || !is.finite(null)) {
+    stop("`null` must be a single finite numeric value.")
+  }
+  if (!"std.error" %in% names(x)) {
+    warning(
+      "A null hypothesis was requested, but no standard errors are available.",
+      call. = FALSE
+    )
+    return(order_estimate_columns(x))
+  }
+  x$statistic <- (x$estimate - null) / x$std.error
+  x$p.value <- 2 * stats::pnorm(-abs(x$statistic))
+  x$s.value <- -log2(x$p.value)
+  attr(x, "null") <- null
+  order_estimate_columns(x)
+}
+
+with_local_seed <- function(seed, code) {
+  if (is.null(seed)) {
+    return(force(code))
+  }
+  if (!is.numeric(seed) || length(seed) != 1L || !is.finite(seed)) {
+    stop("`seed` must be a single finite number or NULL.")
+  }
+  had_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  if (had_seed) {
+    old_seed <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
+  }
+  on.exit(
+    {
+      if (had_seed) {
+        assign(".Random.seed", old_seed, envir = .GlobalEnv)
+      } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
+        rm(".Random.seed", envir = .GlobalEnv)
+      }
+    },
+    add = TRUE
+  )
+  set.seed(as.integer(seed))
+  force(code)
 }
 
 #' Create Counterfactual Datasets for G-Computation
@@ -241,7 +319,7 @@ validate_draw_weight_column_available <- function(newdata, weight_col) {
 #' @param sops_array Array of dimensions (n_pat x n_times x n_states).
 #' @param grid Data frame of variable combinations.
 #' @param times Vector of time points.
-#' @param ylevels Vector of state levels.
+#' @param y_levels Vector of state levels.
 #' @param variables Named list of variables.
 #' @param n_cf Number of counterfactual scenarios.
 #' @param n_each Number of patients per scenario.
@@ -256,7 +334,7 @@ marginalize_sops_array <- function(
   sops_array,
   grid,
   times,
-  ylevels,
+  y_levels,
   variables,
   n_cf,
   n_each,
@@ -265,7 +343,7 @@ marginalize_sops_array <- function(
   newdata = NULL
 ) {
   n_times <- length(times)
-  n_states <- length(ylevels)
+  n_states <- length(y_levels)
   weights <- validate_sops_weights(weights, n_each)
 
   if (!is.null(by)) {
@@ -287,7 +365,7 @@ marginalize_sops_array <- function(
     result <- array_to_df_individual(
       sops_array = sops_array,
       times = times,
-      ylevels = ylevels,
+      y_levels = y_levels,
       newdata = newdata,
       by = NULL,
       weights = expanded_weights,
@@ -332,7 +410,7 @@ marginalize_sops_array <- function(
   for (cf_i in seq_len(n_cf)) {
     avg_sops_mat <- avg_sops_list[[cf_i]]
 
-    df <- expand.grid(time = times, state = ylevels)
+    df <- expand.grid(time = times, state = y_levels)
     df$estimate <- as.vector(avg_sops_mat)
 
     for (v in names(grid)) {
@@ -350,7 +428,7 @@ marginalize_sops_array <- function(
 #'
 #' @param sops_array Array of dimensions (n_pat x n_times x n_states).
 #' @param times Vector of time points.
-#' @param ylevels Vector of state levels.
+#' @param y_levels Vector of state levels.
 #' @param newdata Original data with rowid.
 #' @param by Optional character vector of variables to aggregate by.
 #' @param weights Optional patient-level weights aligned to `newdata`.
@@ -362,7 +440,7 @@ marginalize_sops_array <- function(
 array_to_df_individual <- function(
   sops_array,
   times,
-  ylevels,
+  y_levels,
   newdata,
   by = NULL,
   weights = NULL,
@@ -379,7 +457,7 @@ array_to_df_individual <- function(
   # Construct indices
   idx_pat <- rep(seq_len(n_pat), times = n_times * n_states)
   idx_time <- rep(rep(times, each = n_pat), times = n_states)
-  idx_state <- rep(ylevels, each = n_pat * n_times)
+  idx_state <- rep(y_levels, each = n_pat * n_times)
 
   # Build result by repeating newdata rows
   result <- newdata[idx_pat, , drop = FALSE]

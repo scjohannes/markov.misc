@@ -1,5 +1,13 @@
 # markov.misc 0.1.0
 
+- Standardized SOP outputs as base data frames with package-specific S3
+  classes, canonical estimate/inference columns, and one internal `draws`
+  attribute.
+- Homogenized public SOP and plotting argument names, added `plot_operchar()`,
+  and removed `standardize_sops()` and `plot_results()` without aliases.
+- Simplified `inferences()` to the `mvn`, `score_bootstrap`, `bootstrap`, and
+  `fwb` methods. Percentile and point-centered Wald intervals are available for
+  every frequentist method; tests are added only for explicit null values.
 - Reworked the vignette set
 - `avg_comparisons()` now computes average SOP, time-in-state, and ordinal
   time-benefit contrasts between counterfactual levels, with uncertainty added
@@ -49,7 +57,7 @@
 - Breaking change: the old dotted VGAM wrapper name `vglm.markov()` has been
   removed. Use `vglm_markov()` instead.
 - `soprob_markov()`, `sops()`, and `avg_sops()` now support second-order
-  Markov recursion via `p2varname`, and `rmsb::blrm()` models use sampled
+  Markov recursion via `p2_var`, and `rmsb::blrm()` models use sampled
   posterior draws as the native uncertainty path with optional fitted random
   effects from `cluster()`.
 - `sim_actt2_brownian()` now uses calibrated Brownian-gap defaults that reduce
@@ -70,7 +78,7 @@
   `rms::orm()` as a first-class proportional-odds backend, including fast-path
   SOP prediction, MVN inference with full `rms::robcov()` covariance matrices,
   refit bootstrap inference, and score-bootstrap inference via
-  `inferences(..., engine = "score_bootstrap", cluster = <id>)`.
+  `inferences(..., method = "score_bootstrap", cluster = <id>)`.
 - Added `orm_markov()` and `blrm_markov()`, and expanded
   `vglm_markov(id_var = ...)`, so wrapper-fitted models store their original
   longitudinal data and ID variable, frequentist wrappers compute
@@ -83,7 +91,7 @@
   values, and reserve `id_var` for stored-data extraction, refit bootstrap
   clustering, and `blrm` random-effect prediction.
 - `inferences()` now supports fractional weighted bootstrap refits via
-  `method = "bootstrap", engine = "fwb"`, using mean-one exponential
+  `method = "fwb"`, using mean-one exponential
   patient-level weights for fitting and weighted SOP marginalization.
 - FWB and score-bootstrap inference now use draw-specific patient weights for
   every empirical averaging step in `avg_sops()` and grouped `sops()`, with
@@ -98,7 +106,7 @@
 - `inferences()` now accepts `Matrix` package covariance objects returned by
   `rms::robcov()` for `orm_markov()` fits by coercing them to base matrices
   before coefficient/covariance validation.
-- `inferences(method = "bootstrap", engine = "fwb")` now supports individual
+- `inferences(method = "fwb")` now supports individual
   `sops()` objects when full refit data and `id_var` metadata are available.
   Ordinary standard bootstrap remains limited to `avg_sops()` because it can
   drop state support needed by fixed individual prediction rows.
@@ -110,7 +118,7 @@
   supports model-derived SOP summaries from `avg_sops()` and `inferences()`,
   including confidence ribbons for line plots and low-alpha draw overlays for
   stacked bar plots when draws are stored.
-- `plot_sops()` now respects the stored `ylevels` order on model-derived SOP
+- `plot_sops()` now respects the stored `y_levels` order on model-derived SOP
   objects, so character state labels such as `"10"` no longer sort before
   `"2"` in color and fill scales.
 - `plot_transitions()` now plots empirical or model-based joint transition
@@ -134,6 +142,3 @@
 - `robcov_vglm()` and `get_vcov_robust()` now apply the G/(G-1) small-sample
   correction by default for clustered robust covariance estimates; set
   `adjust = FALSE` to recover the previous unadjusted behavior.
-- `standardize_sops()` now reuses the same sampled `blrm` posterior draws for
-  treatment and control counterfactuals, preserving draw-wise pairing for
-  downstream contrasts.

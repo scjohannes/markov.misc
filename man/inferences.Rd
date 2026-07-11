@@ -5,16 +5,16 @@
 \title{Inference for State Occupation Probabilities}
 \usage{
 inferences(
-  object,
-  method = "simulation",
-  engine = "mvn",
-  score_weight_dist = "exponential",
-  n_sim = 1000,
+  x,
+  method = "mvn",
+  n_draws = 1000,
   vcov = NULL,
   cluster = NULL,
   workers = NULL,
+  seed = NULL,
   conf_level = 0.95,
   conf_type = "perc",
+  null = NULL,
   return_draws = TRUE,
   update_datadist = TRUE,
   use_coefstart = FALSE,
@@ -22,37 +22,21 @@ inferences(
 )
 }
 \arguments{
-\item{object}{A \code{markov_avg_sops} object from \code{avg_sops()}, a
+\item{x}{A \code{markov_avg_sops} object from \code{avg_sops()}, a
 \code{markov_sops} object from \code{sops()}, or a \code{markov_avg_comparisons} object
 from \code{\link[=avg_comparisons]{avg_comparisons()}}.}
 
 \item{method}{Character. Inference method:
 \itemize{
-\item \code{"simulation"} (default): Uses simulation engines that do not
-refit models. Works for both individual and averaged SOPs.
-\item \code{"bootstrap"}: Refits the model on resampled or weighted patient
-data. Standard resampling works for \code{markov_avg_sops}; fractional
-weighted bootstrap also works for individual \code{markov_sops}.
+\item \code{"mvn"}: Multivariate-normal coefficient draws.
+\item \code{"score_bootstrap"}: One-step score perturbation using fixed
+exponential cluster weights.
+\item \code{"bootstrap"}: Ordinary patient-level refit bootstrap.
+\item \code{"fwb"}: Fractional weighted refits using fixed exponential
+patient weights.
 }}
 
-\item{engine}{Character. Inference engine. For \code{method = "simulation"}:
-\itemize{
-\item \code{"mvn"} (default): Draws coefficients from MVN(beta_hat, Sigma).
-\item \code{"score_bootstrap"}: Uses one-step score perturbation with
-cluster-level exponential multipliers. Requires a \code{robcov_vglm} model
-or an \code{orm} model with \code{cluster}.
-}
-For \code{method = "bootstrap"}, use \code{"standard"} for ordinary patient
-resampling with replacement or \code{"fwb"} for fractional weighted bootstrap
-refits using exponential patient-level weights. \code{engine = "fwb"} is the
-only refit-bootstrap engine supported for individual \code{sops()} objects. The
-legacy default \code{"mvn"} maps to \code{"standard"} when
-\code{method = "bootstrap"}.}
-
-\item{score_weight_dist}{Character. Cluster weight distribution for
-\code{engine = "score_bootstrap"}. Currently only \code{"exponential"} is supported.}
-
-\item{n_sim}{Number of simulation draws (for simulation) or bootstrap
+\item{n_draws}{Number of simulation draws (for simulation) or bootstrap
 iterations (for bootstrap). Default is 1000. For \code{blrm} SOP objects this
 argument is ignored; rerun \code{sops()}/\code{avg_sops()} with \code{n_draws} and \code{seed}
 to change posterior draws.}
@@ -60,24 +44,31 @@ to change posterior draws.}
 \item{vcov}{Optional custom variance-covariance matrix. If provided,
 overrides the vcov extracted from the model.}
 
-\item{cluster}{Optional row-level cluster vector for
-\code{engine = "score_bootstrap"} with \code{orm} models. Values should match
+\item{cluster}{Optional row-level cluster vector for score bootstrap with
+\code{orm} models. Values should match
 \code{id_var} in the baseline data used by \code{avg_sops()}.}
 
 \item{workers}{Number of parallel workers. If NULL (default) or 1, uses
 sequential processing. If > 1, uses parallel processing with that many
 workers.}
 
+\item{seed}{Optional integer seed. The caller's complete RNG state is
+restored on exit.}
+
 \item{conf_level}{Confidence level for intervals (default 0.95). For \code{blrm}
 SOP objects this argument is ignored; rerun \code{sops()}/\code{avg_sops()} with
 \code{conf_level} to change posterior intervals.}
 
-\item{conf_type}{Type of confidence interval (simulation method only):
+\item{conf_type}{Type of frequentist confidence interval:
 \itemize{
 \item \code{"perc"} (default): Percentile-based intervals from the simulation
 distribution.
 \item \code{"wald"}: Uses simulation standard errors with normal quantiles.
 }}
+
+\item{null}{Optional single finite numeric null value. Supplying it adds
+Wald \code{statistic}, \code{p.value}, and \code{s.value} columns. A zero null is rejected
+for known ratio comparisons.}
 
 \item{return_draws}{Logical. If TRUE, stores all individual simulation/bootstrap
 draws as an attribute. Extract with \code{get_draws()}. Default is TRUE}
@@ -96,15 +87,16 @@ The input object with added columns:
 \item{conf.high}{Upper confidence bound}
 \item{std.error}{Standard error from simulation/bootstrap}
 
-If \code{return_draws = TRUE}, the object also has a \code{"simulation_draws"} or
-\code{"bootstrap_draws"} attribute containing all individual draws. Extract
+If \code{return_draws = TRUE}, the object also has a \code{"draws"} attribute
+containing all individual draws. Extract
 with \code{get_draws()}. For ungrouped \code{sops()} objects evaluated on the stored
 empirical prediction cohort, score-bootstrap and FWB draws include the
 draw-specific \code{score_weight} or \code{fwb_weight} column.
 }
 \description{
 Adds confidence intervals to SOP objects using simulation-based or bootstrap
-methods. The default method is simulation. For objects produced from
+methods. The default method is multivariate-normal coefficient simulation.
+For objects produced from
 \code{rmsb::blrm()} models, posterior uncertainty is already computed by
 \code{sops()}/\code{avg_sops()}, so \code{inferences()} ignores \code{method} and returns the
 object unchanged.
@@ -115,7 +107,7 @@ object unchanged.
 The simulation method works as follows:
 \enumerate{
 \item Extract coefficient vector beta_hat and (robust) variance-covariance Sigma
-\item Generate n_sim coefficient vectors via the selected engine:
+\item Generate n_draws coefficient vectors via the selected engine:
 \itemize{
 \item \code{engine = "mvn"}: MVN draws from \code{N(beta_hat, Sigma)}.
 \item \code{engine = "score_bootstrap"}: one-step score perturbation with
@@ -187,20 +179,20 @@ result_sim <- avg_sops(
   model = fit_robust,
   variables = list(tx = c(0, 1)),
   times = 1:60,
-  ylevels = factor(1:6),
+  y_levels = factor(1:6),
   absorb = "6"
 ) |>
-  inferences(method = "simulation", n_sim = 1000)
+  inferences(method = "mvn", n_draws = 1000)
 
 # Step 2a-bis: Score bootstrap simulation (requires robcov_vglm)
 result_score <- avg_sops(
   model = fit_robust,
   variables = list(tx = c(0, 1)),
   times = 1:60,
-  ylevels = factor(1:6),
+  y_levels = factor(1:6),
   absorb = "6"
 ) |>
-  inferences(method = "simulation", engine = "score_bootstrap", n_sim = 1000)
+  inferences(method = "score_bootstrap", n_draws = 1000)
 
 # orm_markov() uses rms::robcov() for full robust covariance matrices.
 dd <- rms::datadist(data)
@@ -211,18 +203,17 @@ avg_orm <- avg_sops(
   model = fit_orm,
   variables = list(tx = c(0, 1)),
   times = 1:60,
-  ylevels = factor(1:6),
+  y_levels = factor(1:6),
   absorb = "6"
 )
 result_orm <- avg_orm |>
-  inferences(method = "simulation", engine = "mvn", n_sim = 1000)
+  inferences(method = "mvn", n_draws = 1000)
 
 result_orm_score <- avg_orm |>
   inferences(
-    method = "simulation",
-    engine = "score_bootstrap",
+    method = "score_bootstrap",
     cluster = data$id,
-    n_sim = 1000
+    n_draws = 1000
   )
 
 # Step 2b: Bootstrap inference reuses stored full data
@@ -230,26 +221,26 @@ result_boot <- avg_sops(
   model = fit_robust,
   variables = list(tx = c(0, 1)),
   times = 1:60,
-  ylevels = factor(1:6),
+  y_levels = factor(1:6),
   absorb = "6"
 ) |>
-  inferences(method = "bootstrap", n_sim = 500)
+  inferences(method = "bootstrap", n_draws = 500)
 
 # Individual-level SOPs with simulation inference
 ind_result <- sops(
   model = fit_robust,
   times = 1:60,
-  ylevels = factor(1:6),
+  y_levels = factor(1:6),
   absorb = "6") |>
-  inferences(n_sim = 500)
+  inferences(n_draws = 500)
 
 # Individual-level refit bootstrap uses FWB.
 ind_boot <- sops(
   model = fit_robust,
   times = 1:60,
-  ylevels = factor(1:6),
+  y_levels = factor(1:6),
   absorb = "6") |>
-  inferences(method = "bootstrap", engine = "fwb", n_sim = 500)
+  inferences(method = "fwb", n_draws = 500)
 
 # Extract draws for custom analyses
 get_draws(ind_result)

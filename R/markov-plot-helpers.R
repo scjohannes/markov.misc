@@ -4,9 +4,9 @@ markov_supported_model <- function(object) {
   inherits(object, c("orm", "blrm", "vglm", "vgam", "robcov_vglm"))
 }
 
-markov_model_ylevels <- function(model, ylevels = NULL) {
-  if (!is.null(ylevels)) {
-    return(ylevels)
+markov_model_ylevels <- function(model, y_levels = NULL) {
+  if (!is.null(y_levels)) {
+    return(y_levels)
   }
 
   if (inherits(model, "vglm")) {
@@ -35,7 +35,7 @@ markov_model_ylevels <- function(model, ylevels = NULL) {
     }
   }
 
-  stop("`ylevels` cannot be NULL.")
+  stop("`y_levels` cannot be NULL.")
 }
 
 validate_plot_counterfactual_variables <- function(

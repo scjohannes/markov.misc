@@ -34,9 +34,9 @@ test_that("vglm_markov() supplies rms formula helpers for %ia%", {
 
   out <- markov.misc::soprob_markov(
     fit,
-    data = baseline[1:3, , drop = FALSE],
+    newdata = baseline[1:3, , drop = FALSE],
     times = 1:4,
-    ylevels = 1:6,
+    y_levels = 1:6,
     absorb = "6"
   )
 

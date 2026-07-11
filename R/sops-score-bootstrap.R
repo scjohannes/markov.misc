@@ -12,7 +12,7 @@
 #' @param baseline_data Optional baseline data (one row per patient) used only
 #'   when patient-level averaging weights should be returned.
 #' @param id_var Name of patient ID variable in `baseline_data`.
-#' @param n_sim Number of simulation draws.
+#' @param n_draws Number of simulation draws.
 #' @param score_weight_dist Cluster weight distribution. Currently only
 #'   `"exponential"` is supported.
 #' @param cluster Optional row-level cluster vector for `orm` models.
@@ -22,8 +22,8 @@
 #'
 #' @return A list with:
 #'   \itemize{
-#'     \item `beta_draws`: Matrix `[n_sim x p]` of perturbed coefficients.
-#'     \item `baseline_weights`: Matrix `[n_sim x n_patients]` of normalized
+#'     \item `beta_draws`: Matrix `[n_draws x p]` of perturbed coefficients.
+#'     \item `baseline_weights`: Matrix `[n_draws x n_patients]` of normalized
 #'       patient averaging weights.
 #'   }
 #'
@@ -32,7 +32,7 @@ generate_score_bootstrap_draws <- function(
   model,
   baseline_data,
   id_var,
-  n_sim,
+  n_draws,
   score_weight_dist = "exponential",
   cluster = NULL,
   return_baseline_weights = TRUE
@@ -118,15 +118,15 @@ generate_score_bootstrap_draws <- function(
   n_clusters <- length(cluster_ids)
   p <- length(beta_hat)
 
-  beta_draws <- matrix(NA_real_, nrow = n_sim, ncol = p)
+  beta_draws <- matrix(NA_real_, nrow = n_draws, ncol = p)
   colnames(beta_draws) <- names(beta_hat)
   baseline_weights <- if (isTRUE(return_baseline_weights)) {
-    matrix(NA_real_, nrow = n_sim, ncol = n_pat)
+    matrix(NA_real_, nrow = n_draws, ncol = n_pat)
   } else {
     NULL
   }
 
-  for (i in seq_len(n_sim)) {
+  for (i in seq_len(n_draws)) {
     # Exponential multipliers are centered at 1; centered form drives score perturbation.
     w_cluster <- stats::rexp(n_clusters, rate = 1)
     u_cluster <- w_cluster - 1

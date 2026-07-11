@@ -15,15 +15,15 @@
 #'
 #' @param model Fitted vglm model
 #' @param data Baseline data frame (one row per patient)
-#' @param t_covs Time-dependent covariate lookup (optional)
+#' @param time_covariates Time-dependent covariate lookup (optional)
 #' @param times Time points to predict
-#' @param ylevels State labels
+#' @param y_levels State labels
 #' @param absorb Absorbing state(s). These transition matrices are not needed
 #'   because absorbing states keep their prior probability mass.
-#' @param tvarname Name of time variable
-#' @param pvarname Name of previous state variable
-#' @param gap Optional gap variable. With factor visit time, numeric gap values
-#'   must be supplied in `t_covs`.
+#' @param time_var Name of time variable
+#' @param p_var Name of previous state variable
+#' @param gap_var Optional gap_var variable. With factor visit time, numeric gap_var values
+#'   must be supplied in `time_covariates`.
 #' @param ... Ignored
 #'
 #' @return A list containing pre-calculated matrices and metadata.
@@ -31,18 +31,23 @@
 #' @keywords internal
 markov_msm_build <- function(
   model,
-  data,
-  t_covs = NULL,
+  newdata = NULL,
+  data = NULL,
+  time_covariates = NULL,
   times = NULL,
-  ylevels = 1:6,
+  y_levels = 1:6,
   absorb = NULL,
-  tvarname = "time",
-  pvarname = "yprev",
-  gap = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  gap_var = NULL,
   ...
 ) {
+  data <- newdata %||% data
+  if (is.null(data)) {
+    stop("`newdata` must be supplied.")
+  }
   n_pat <- nrow(data)
-  ylevel_names <- as_state_labels(ylevels)
+  ylevel_names <- as_state_labels(y_levels)
   absorb_names <- as_state_labels(absorb)
   n_states <- length(ylevel_names)
   M <- n_states - 1
@@ -56,24 +61,24 @@ markov_msm_build <- function(
     model,
     data,
     times,
-    tvarname,
-    t_covs = t_covs,
+    time_var,
+    time_covariates = time_covariates,
     default = "fast"
   )
   times <- time_res$times
   time_info <- time_res$time_info
-  validate_factor_gap(gap, t_covs, time_info)
+  validate_factor_gap(gap_var, time_covariates, time_info)
 
   # Need Gamma structure to know which columns to keep
   Gamma_template <- get_effective_coefs(model)
   common_cols <- colnames(Gamma_template)
 
   # Prepare data
-  if (!pvarname %in% names(data)) {
-    data[[pvarname]] <- factor(ylevel_names[1], levels = ylevel_names)
+  if (!p_var %in% names(data)) {
+    data[[p_var]] <- factor(ylevel_names[1], levels = ylevel_names)
   }
-  if (!tvarname %in% names(data)) {
-    data <- assign_sop_time(data, tvarname, times[1], time_info)
+  if (!time_var %in% names(data)) {
+    data <- assign_sop_time(data, time_var, times[1], time_info)
   }
 
   is_vglm <- inherits(model, "vglm")
@@ -121,21 +126,21 @@ markov_msm_build <- function(
   set_time <- function(d, time_idx) {
     assign_sop_visit(
       d,
-      tvarname = tvarname,
+      time_var = time_var,
       times = times,
       index = time_idx,
-      t_covs = t_covs,
-      gap = gap,
+      time_covariates = time_covariates,
+      gap_var = gap_var,
       time_info = time_info
     )
   }
 
   # A. Baseline matrix for T=1 uses each patient's observed previous state.
   d_init <- set_time(data, 1)
-  d_init[[pvarname]] <- normalize_previous_state_column(
-    d_init[[pvarname]],
-    data[[pvarname]],
-    pvarname
+  d_init[[p_var]] <- normalize_previous_state_column(
+    d_init[[p_var]],
+    data[[p_var]],
+    p_var
   )
   X_init <- get_X(d_init)
   if (is.null(X_init)) {
@@ -167,11 +172,11 @@ markov_msm_build <- function(
       }
 
       d_k <- d_time
-      d_k[[pvarname]] <- make_previous_state_column(
+      d_k[[p_var]] <- make_previous_state_column(
         states = ylevel_names[k],
-        prototype = data[[pvarname]],
+        prototype = data[[p_var]],
         n = nrow(d_k),
-        pvarname = pvarname
+        p_var = p_var
       )
       X_transition[[time_idx]][[k]] <- align_X(get_X(d_k))
     }
@@ -183,7 +188,7 @@ markov_msm_build <- function(
     n_pat = n_pat,
     n_states = n_states,
     M = M,
-    ylevels = ylevel_names,
+    y_levels = ylevel_names,
     col_names = col_names
   )
 }
@@ -209,7 +214,7 @@ markov_msm_run <- function(components, Gamma, times, absorb = NULL) {
   n_pat <- components$n_pat
   n_states <- components$n_states
   M <- components$M
-  ylevels <- components$ylevels
+  y_levels <- components$y_levels
   col_names <- components$col_names
   n_times <- length(times)
 
@@ -224,10 +229,10 @@ markov_msm_run <- function(components, Gamma, times, absorb = NULL) {
 
   # Simulation
   P_out <- array(0, dim = c(n_pat, n_times, n_states))
-  dimnames(P_out)[[3]] <- ylevels
+  dimnames(P_out)[[3]] <- y_levels
 
   absorb_idx <- if (!is.null(absorb)) {
-    which(as.character(ylevels) %in% as.character(absorb))
+    which(as.character(y_levels) %in% as.character(absorb))
   } else {
     integer(0)
   }

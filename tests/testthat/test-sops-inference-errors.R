@@ -19,11 +19,11 @@ make_avg_sops_object <- function(model, newdata, by = NULL) {
     times = 1:2,
     id_var = "id"
   )
-  attr(out, "tvarname") <- "time"
-  attr(out, "pvarname") <- "yprev"
-  attr(out, "ylevels") <- 1:2
+  attr(out, "time_var") <- "time"
+  attr(out, "p_var") <- "yprev"
+  attr(out, "y_levels") <- 1:2
   attr(out, "absorb") <- NULL
-  attr(out, "t_covs") <- NULL
+  attr(out, "time_covariates") <- NULL
   out
 }
 
@@ -42,11 +42,11 @@ make_individual_sops_object <- function(model, newdata, by = NULL) {
   attr(out, "model") <- model
   attr(out, "newdata_orig") <- newdata
   attr(out, "call_args") <- list(times = 1:2, by = by)
-  attr(out, "tvarname") <- "time"
-  attr(out, "pvarname") <- "yprev"
-  attr(out, "ylevels") <- 1:2
+  attr(out, "time_var") <- "time"
+  attr(out, "p_var") <- "yprev"
+  attr(out, "y_levels") <- 1:2
   attr(out, "absorb") <- NULL
-  attr(out, "t_covs") <- NULL
+  attr(out, "time_covariates") <- NULL
   attr(out, "by") <- by
   out
 }
@@ -62,7 +62,7 @@ test_that("inferences_simulation() validates stored models and simulation engine
       object,
       engine = "mvn",
       score_weight_dist = "exponential",
-      n_sim = 1,
+      n_draws = 1,
       vcov = NULL,
       cluster = NULL,
       conf_level = 0.95,
@@ -80,7 +80,7 @@ test_that("inferences_simulation() validates stored models and simulation engine
       object,
       engine = "other",
       score_weight_dist = "exponential",
-      n_sim = 1,
+      n_draws = 1,
       vcov = NULL,
       cluster = NULL,
       conf_level = 0.95,
@@ -93,7 +93,7 @@ test_that("inferences_simulation() validates stored models and simulation engine
   )
 })
 
-test_that("inferences() validates method and engine combinations", {
+test_that("inferences() validates the homogenized method interface", {
   model <- structure(list(coefficients = c(a = 0)), class = "mock_model")
   newdata <- data.frame(
     id = rep(1:2, each = 2),
@@ -103,21 +103,9 @@ test_that("inferences() validates method and engine combinations", {
   )
   object <- make_avg_sops_object(model, newdata)
 
-  expect_error(
-    inferences(object, method = "simulation", engine = "fwb", n_sim = 1),
-    "only used when `method = \"bootstrap\"`",
-    fixed = TRUE
-  )
-  expect_error(
-    inferences(
-      object,
-      method = "bootstrap",
-      engine = "score_bootstrap",
-      n_sim = 1
-    ),
-    "only used when `method = \"simulation\"`",
-    fixed = TRUE
-  )
+  expect_error(inferences(object, method = "other", n_draws = 1), "arg")
+  expect_false("engine" %in% names(formals(inferences)))
+  expect_false("score_weight_dist" %in% names(formals(inferences)))
 
   seen_engine <- NULL
   with_mocked_bindings(
@@ -129,15 +117,14 @@ test_that("inferences() validates method and engine combinations", {
     {
       out <- inferences(
         object,
-        method = "bootstrap",
-        engine = "fwb",
-        n_sim = 1
+        method = "fwb",
+        n_draws = 1
       )
     }
   )
 
   expect_equal(seen_engine, "fwb")
-  expect_equal(attr(out, "engine"), "fwb")
+  expect_equal(attr(out, "method"), "fwb")
 })
 
 test_that("inferences_simulation() falls back when fast-path setup fails", {
@@ -181,7 +168,7 @@ test_that("inferences_simulation() falls back when fast-path setup fails", {
           object,
           engine = "mvn",
           score_weight_dist = "exponential",
-          n_sim = 2,
+          n_draws = 2,
           vcov = NULL,
           cluster = NULL,
           conf_level = 0.8,
@@ -197,7 +184,7 @@ test_that("inferences_simulation() falls back when fast-path setup fails", {
   expect_s3_class(out, "markov_avg_sops")
   expect_equal(attr(out, "n_successful"), 2L)
   expect_equal(attr(out, "conf_type"), "wald")
-  expect_s3_class(attr(out, "simulation_draws"), "data.frame")
+  expect_s3_class(attr(out, "draws"), "data.frame")
 })
 
 test_that("inferences_simulation() errors when all fast-path draws fail", {
@@ -222,7 +209,7 @@ test_that("inferences_simulation() errors when all fast-path draws fail", {
             object,
             engine = "mvn",
             score_weight_dist = "exponential",
-            n_sim = 1,
+            n_draws = 1,
             vcov = NULL,
             cluster = NULL,
             conf_level = 0.95,
@@ -267,7 +254,7 @@ test_that("inferences_simulation() preserves individual slow-path grouping", {
         object,
         engine = "mvn",
         score_weight_dist = "exponential",
-        n_sim = 2,
+        n_draws = 2,
         vcov = diag(2),
         cluster = NULL,
         conf_level = 0.95,
@@ -281,7 +268,7 @@ test_that("inferences_simulation() preserves individual slow-path grouping", {
   expect_s3_class(out, "markov_sops")
   expect_equal(attr(out, "n_successful"), 2L)
   expect_true("group" %in% names(out))
-  expect_s3_class(attr(out, "simulation_draws"), "data.frame")
+  expect_s3_class(attr(out, "draws"), "data.frame")
 })
 
 test_that("inferences_simulation() rejects invalid custom vcov objects", {
@@ -302,7 +289,7 @@ test_that("inferences_simulation() rejects invalid custom vcov objects", {
           object,
           engine = "mvn",
           score_weight_dist = "exponential",
-          n_sim = 2,
+          n_draws = 2,
           vcov = data.frame(a = c(1, 0), b = c(0, 1)),
           cluster = NULL,
           conf_level = 0.95,
@@ -367,7 +354,7 @@ test_that("inferences_simulation() applies score-bootstrap slow-path weights", {
         object,
         engine = "score_bootstrap",
         score_weight_dist = "exponential",
-        n_sim = 2,
+        n_draws = 2,
         vcov = NULL,
         cluster = NULL,
         conf_level = 0.8,
@@ -409,11 +396,11 @@ test_that("inferences_simulation() applies score-bootstrap by weights", {
     times = 1,
     id_var = "id"
   )
-  attr(object, "tvarname") <- "time"
-  attr(object, "pvarname") <- "yprev"
-  attr(object, "ylevels") <- 1
+  attr(object, "time_var") <- "time"
+  attr(object, "p_var") <- "yprev"
+  attr(object, "y_levels") <- 1
   attr(object, "absorb") <- NULL
-  attr(object, "t_covs") <- NULL
+  attr(object, "time_covariates") <- NULL
 
   with_mocked_bindings(
     generate_score_bootstrap_draws = function(...) {
@@ -431,7 +418,7 @@ test_that("inferences_simulation() applies score-bootstrap by weights", {
         object,
         engine = "score_bootstrap",
         score_weight_dist = "exponential",
-        n_sim = 1,
+        n_draws = 1,
         vcov = NULL,
         cluster = NULL,
         conf_level = 0.8,
@@ -442,7 +429,7 @@ test_that("inferences_simulation() applies score-bootstrap by weights", {
     }
   )
 
-  draws <- attr(out, "simulation_draws")
+  draws <- attr(out, "draws")
   draws <- draws[order(draws$grp), , drop = FALSE]
 
   expect_equal(draws$estimate, c(0.65, 0.4))
@@ -488,7 +475,7 @@ test_that("inferences_simulation() supports score-bootstrap individual sops", {
         object,
         engine = "score_bootstrap",
         score_weight_dist = "exponential",
-        n_sim = 2,
+        n_draws = 2,
         vcov = NULL,
         cluster = NULL,
         conf_level = 0.8,
@@ -499,11 +486,11 @@ test_that("inferences_simulation() supports score-bootstrap individual sops", {
     }
   )
 
-  draws <- attr(out, "simulation_draws")
+  draws <- attr(out, "draws")
   public_draws <- markov.misc::get_draws(out)
 
   expect_s3_class(out, "markov_sops")
-  expect_equal(attr(out, "engine"), "score_bootstrap")
+  expect_equal(attr(out, "method"), "score_bootstrap")
   expect_equal(attr(out, "draw_weights_attached"), TRUE)
   expect_equal(attr(out, "draw_weight_col"), "score_weight")
   expect_equal(sort(unique(draws$score_weight)), c(0.3, 0.4, 0.6, 0.7))
@@ -542,7 +529,7 @@ test_that("inferences_simulation() rejects reserved score weight columns", {
           object,
           engine = "score_bootstrap",
           score_weight_dist = "exponential",
-          n_sim = 1,
+          n_draws = 1,
           vcov = NULL,
           cluster = NULL,
           conf_level = 0.8,
@@ -576,7 +563,7 @@ test_that("inferences_simulation() reports slow-path SOP failures", {
             object,
             engine = "mvn",
             score_weight_dist = "exponential",
-            n_sim = 1,
+            n_draws = 1,
             vcov = diag(2),
             cluster = NULL,
             conf_level = 0.95,
@@ -596,10 +583,10 @@ test_that("inferences_simulation() reports slow-path SOP failures", {
 test_that("soprob_markov() validates model classes and propagates Bayesian draws", {
   expect_error(
     soprob_markov(
-      object = structure(list(), class = "other"),
-      data = data.frame(yprev = 1),
+      model = structure(list(), class = "other"),
+      newdata = data.frame(yprev = 1),
       times = 1,
-      ylevels = 1
+      y_levels = 1
     ),
     "Object class not supported",
     fixed = TRUE
@@ -610,20 +597,20 @@ test_that("soprob_markov() validates model classes and propagates Bayesian draws
     {
       expect_error(
         soprob_markov(
-          object = structure(list(vglm_fit = NULL), class = "robcov_vglm"),
-          data = data.frame(yprev = 1),
+          model = structure(list(vglm_fit = NULL), class = "robcov_vglm"),
+          newdata = data.frame(yprev = 1),
           times = 1,
-          ylevels = 1:2
+          y_levels = 1:2
         ),
         "does not contain the original vglm fit",
         fixed = TRUE
       )
       expect_error(
         soprob_markov(
-          object = structure(list(), class = "vglm"),
-          data = data.frame(x = 1),
+          model = structure(list(), class = "vglm"),
+          newdata = data.frame(x = 1),
           times = 1,
-          ylevels = 1:2
+          y_levels = 1:2
         ),
         "Previous-state variable",
         fixed = TRUE
@@ -651,13 +638,18 @@ test_that("soprob_markov() validates model classes and propagates Bayesian draws
     },
     {
       out <- soprob_markov(
-        object = blrm,
-        data = data.frame(id = 1:2, yprev = factor(c(1, 1)), gap = 0, z = 0),
+        model = blrm,
+        newdata = data.frame(
+          id = 1:2,
+          yprev = factor(c(1, 1)),
+          gap_var = 0,
+          z = 0
+        ),
         times = 1:2,
-        ylevels = 1:2,
+        y_levels = 1:2,
         absorb = 2,
-        gap = "gap",
-        t_covs = data.frame(z = c(1, 2))
+        gap_var = "gap_var",
+        time_covariates = data.frame(z = c(1, 2))
       )
     }
   )
@@ -696,11 +688,11 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
     id_var = "id"
   )
   attr(object, "call_args") <- list(times = 1:2)
-  attr(object, "tvarname") <- "time"
-  attr(object, "pvarname") <- "yprev"
-  attr(object, "ylevels") <- 1:3
+  attr(object, "time_var") <- "time"
+  attr(object, "p_var") <- "yprev"
+  attr(object, "y_levels") <- 1:3
   attr(object, "absorb") <- 3
-  attr(object, "t_covs") <- NULL
+  attr(object, "time_covariates") <- NULL
 
   expect_error(
     markov.misc:::inferences_bootstrap(
@@ -795,7 +787,7 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
         return(list(
           model = NULL,
           data = transform(newdata, new_id = id),
-          ylevels = 1:3,
+          y_levels = 1:3,
           absorb = 3,
           missing_states = character(0)
         ))
@@ -803,7 +795,7 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
       list(
         model = model,
         data = transform(newdata, new_id = id),
-        ylevels = 1:2,
+        y_levels = 1:2,
         absorb = 2,
         missing_states = 3
       )
@@ -854,7 +846,7 @@ test_that("inferences_bootstrap() validates inputs and records callback outcomes
 
   expect_s3_class(out, "markov_avg_sops")
   expect_equal(attr(out, "n_successful"), 1L)
-  expect_s3_class(attr(out, "bootstrap_draws"), "data.frame")
+  expect_s3_class(attr(out, "draws"), "data.frame")
   expect_equal(as.character(out$grp), rep("a", nrow(out)))
 
   with_mocked_bindings(
@@ -916,7 +908,7 @@ test_that("inferences_bootstrap() supports fractional weighted refits", {
       model,
       factor_cols,
       original_data,
-      ylevels,
+      y_levels,
       absorb,
       update_datadist,
       use_coefstart,
@@ -926,7 +918,7 @@ test_that("inferences_bootstrap() supports fractional weighted refits", {
       list(
         model = model,
         data = boot_data,
-        ylevels = 1:2,
+        y_levels = 1:2,
         absorb = NULL,
         missing_states = character(0)
       )
@@ -969,11 +961,10 @@ test_that("inferences_bootstrap() supports fractional weighted refits", {
   )
 
   expect_equal(fit_weights_seen, c(0.5, 0.5, 1.5, 1.5))
-  expect_equal(attr(out, "method"), "bootstrap")
-  expect_equal(attr(out, "engine"), "fwb")
+  expect_equal(attr(out, "method"), "fwb")
   expect_equal(attr(out, "fwb_weight_type"), "exponential")
   expect_equal(attr(out, "fwb_weight_scale"), "cluster_mean_1")
-  expect_s3_class(attr(out, "bootstrap_draws"), "data.frame")
+  expect_s3_class(attr(out, "draws"), "data.frame")
 })
 
 test_that("inferences_bootstrap() applies FWB by weights", {
@@ -1004,11 +995,11 @@ test_that("inferences_bootstrap() applies FWB by weights", {
     id_var = "id"
   )
   attr(object, "call_args") <- list(times = 1)
-  attr(object, "tvarname") <- "time"
-  attr(object, "pvarname") <- "yprev"
-  attr(object, "ylevels") <- 1
+  attr(object, "time_var") <- "time"
+  attr(object, "p_var") <- "yprev"
+  attr(object, "y_levels") <- 1
   attr(object, "absorb") <- NULL
-  attr(object, "t_covs") <- NULL
+  attr(object, "time_covariates") <- NULL
 
   with_mocked_bindings(
     generate_fwb_bootstrap_weights = function(data, id_var, n_boot) {
@@ -1034,7 +1025,7 @@ test_that("inferences_bootstrap() applies FWB by weights", {
       model,
       factor_cols,
       original_data,
-      ylevels,
+      y_levels,
       absorb,
       update_datadist,
       use_coefstart,
@@ -1043,7 +1034,7 @@ test_that("inferences_bootstrap() applies FWB by weights", {
       list(
         model = model,
         data = boot_data,
-        ylevels = 1,
+        y_levels = 1,
         absorb = NULL,
         missing_states = character(0)
       )
@@ -1065,7 +1056,7 @@ test_that("inferences_bootstrap() applies FWB by weights", {
     }
   )
 
-  draws <- attr(out, "bootstrap_draws")
+  draws <- attr(out, "draws")
   draws <- draws[order(draws$grp), , drop = FALSE]
 
   expect_equal(draws$estimate, c(0.65, 0.4))
@@ -1100,7 +1091,7 @@ test_that("inferences_bootstrap_sops_fwb() attaches stored-data draw weights", {
       model,
       factor_cols,
       original_data,
-      ylevels,
+      y_levels,
       absorb,
       update_datadist,
       use_coefstart,
@@ -1109,7 +1100,7 @@ test_that("inferences_bootstrap_sops_fwb() attaches stored-data draw weights", {
       list(
         model = model,
         data = boot_data,
-        ylevels = 1:2,
+        y_levels = 1:2,
         absorb = NULL,
         missing_states = character(0)
       )
@@ -1142,7 +1133,7 @@ test_that("inferences_bootstrap_sops_fwb() attaches stored-data draw weights", {
     }
   )
 
-  draws <- attr(out, "bootstrap_draws")
+  draws <- attr(out, "draws")
   public_draws <- markov.misc::get_draws(out)
 
   expect_equal(attr(out, "draw_weights_attached"), TRUE)

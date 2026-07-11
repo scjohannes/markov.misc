@@ -5,27 +5,27 @@
 \title{Plot an Empirical or Model-Implied Correlation Variogram}
 \usage{
 plot_variogram(
-  object,
+  x,
   newdata = NULL,
   refit_data = NULL,
   times = NULL,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   id_var = "id",
   time_var = "time",
   y_var = "y",
-  pvarname = "yprev",
-  p2varname = NULL,
+  p_var = "yprev",
+  p2_var = NULL,
   facet_var = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   seed = NULL,
   n_draws = 100L,
   smooth = TRUE
 )
 }
 \arguments{
-\item{object}{A trajectory data frame or a fitted Markov model.}
+\item{x}{A trajectory data frame or a fitted Markov model.}
 
 \item{newdata}{Optional data frame of prediction profiles for model-based
 plots. If \code{NULL}, wrapper-fitted models use their stored data and extract
@@ -36,7 +36,7 @@ resolution in model-based plots.}
 
 \item{times}{Optional time values to include. Required for model-based plots.}
 
-\item{ylevels}{Optional state levels. If supplied for raw trajectory data,
+\item{y_levels}{Optional state levels. If supplied for raw trajectory data,
 state scores follow this order.}
 
 \item{absorb}{Optional absorbing-state label for model-based recursions.}
@@ -48,18 +48,18 @@ extraction.}
 
 \item{y_var}{Character name of the state column in raw trajectory data.}
 
-\item{pvarname}{Character name of the previous-state column for model
+\item{p_var}{Character name of the previous-state column for model
 recursions.}
 
-\item{p2varname}{Optional second previous-state column for second-order
+\item{p2_var}{Optional second previous-state column for second-order
 model recursions.}
 
 \item{facet_var}{Optional grouping variable. Correlations are computed
 separately within each observed stratum.}
 
-\item{gap}{Optional time-gap variable used by the fitted model.}
+\item{gap_var}{Optional time-gap_var variable used by the fitted model.}
 
-\item{t_covs}{Optional time-varying covariate lookup table used by the fitted
+\item{time_covariates}{Optional time-varying covariate lookup table used by the fitted
 model.}
 
 \item{seed}{Optional random seed for \code{blrm} posterior draw selection.}

@@ -1,124 +1,89 @@
 # Operating-characteristic plotting.
 
-#' ggplot wrapper to present simulation results
+#' Plot Operating Characteristics
 #'
-#' A result data frame with operating characteristics estimates is plotted in a
-#' unified way.
+#' Creates one plot for each requested operating-characteristic column.
 #'
-#' @param data A data frame of results.
-#' @param ... Operating characteristics to be displayed on the y-axis (in different plots)
-#' @param x What to plot on the x axis.
-#' @param group Typically different analysis strategies
-#' @param ggplot_options List of further options passed to ggplot
-#' @param combine Should the plots for different operating characteristics
-#                     be combined into a grid?
+#' @param x A data frame of operating-characteristic results.
+#' @param outcomes Character vector of columns to plot on the y axes.
+#' @param x_var Character name of the x-axis column.
+#' @param group_var Character name of the grouping column.
+#' @param ggplot_options List of ggplot layers or scales added to every plot.
+#' @param combine If `TRUE`, return a combined patchwork; otherwise return a
+#'   named list of ggplot objects.
 #'
-#'
-#' @return A ggplot list and optionally a patchwork object
-#'
-#' @details
-#' The input is typically a data frame where in each row the operating characteristics
-#' of a strategy in a certain scenario are contained.
-#'
-#' ... specifies what to plot on the y-axis, which can be different inputs -
-#' typically operating characteristics - and a separate plot for each input is generated.
-#'
-#' x determines the column of values to be plotted on the x-axis.
-#'
-#' group will typically be the analysis strategies compared and will be lines in
-#' different colours. When combined = TRUE, the single plots and a patchwork::wrap_plots
-#' with all plots is returned.
-#'
-#' ggplot_options is integrated into a list of ggplot options and directly passed
-#' to the ggplot calls.
+#' @return A patchwork object when `combine = TRUE`, otherwise a named list of
+#'   ggplot objects.
 #'
 #' @import ggplot2
 #' @importFrom patchwork wrap_plots
-#'
-#'
-#' @examples
-#' \dontrun{
-#' ...
-#' }
-#'
-#'
 #' @export
-plot_results <- function(
-  data,
-  ...,
+plot_operchar <- function(
   x,
-  group,
+  outcomes,
+  x_var,
+  group_var,
   ggplot_options = list(),
   combine = TRUE
 ) {
-  group_name <- as.character(substitute(group))
-  x_name <- as.character(substitute(x))
-
-  # Capture y variables
-  y_vars <- as.character(substitute(list(...)))[-1]
-
-  # Check
-  if (length(group_name) != 1) {
-    stop("Variable name of '", group_name, "' not recognizable")
+  if (!is.data.frame(x)) {
+    stop("`x` must be a data frame.")
   }
-  if (!group_name %in% names(data)) {
-    stop("Variable '", group_name, "' not found in data")
+  for (arg in c("outcomes", "x_var", "group_var")) {
+    value <- get(arg)
+    if (!is.character(value) || length(value) == 0L || any(!nzchar(value))) {
+      stop("`", arg, "` must contain character column names.")
+    }
   }
-  if (!is.factor(data[[group_name]])) {
-    stop("Variable '", group_name, "' must be a factor")
+  if (length(x_var) != 1L || length(group_var) != 1L) {
+    stop("`x_var` and `group_var` must each name one column.")
+  }
+  missing <- setdiff(c(outcomes, x_var, group_var), names(x))
+  if (length(missing) > 0L) {
+    stop("Columns not found in `x`: ", paste(missing, collapse = ", "))
+  }
+  if (!is.factor(x[[group_var]])) {
+    stop("`group_var` must identify a factor column.")
+  }
+  if (!is.list(ggplot_options)) {
+    stop("`ggplot_options` must be a list.")
+  }
+  if (!is.logical(combine) || length(combine) != 1L || is.na(combine)) {
+    stop("`combine` must be TRUE or FALSE.")
   }
 
-  # Check x variable and determine plot type
-  if (!x_name %in% names(data)) {
-    stop("Variable '", x_name, "' not found in data")
-  }
-
-  # Plot defaults
-  default_design <- list(
-    theme_minimal(),
-    scale_color_viridis_d()
-  )
-
-  # Based on x type, choose plot function
-  if (is.factor(data[[x_name]])) {
-    plot_fun <- list(
-      geom_point(stat = 'summary', fun = sum),
-      stat_summary(fun = sum, geom = "line")
+  plots <- lapply(outcomes, function(outcome) {
+    geoms <- if (is.factor(x[[x_var]])) {
+      list(
+        ggplot2::geom_point(stat = "summary", fun = sum),
+        ggplot2::stat_summary(fun = sum, geom = "line")
+      )
+    } else {
+      list(ggplot2::geom_point(), ggplot2::geom_line())
+    }
+    plot <- ggplot2::ggplot(
+      x,
+      ggplot2::aes(
+        x = .data[[x_var]],
+        y = .data[[outcome]],
+        color = .data[[group_var]],
+        group = .data[[group_var]]
+      )
     )
-  } else {
-    plot_fun <- list(geom_point(), geom_line())
+    layers <- c(
+      geoms,
+      list(ggplot2::theme_minimal(), ggplot2::scale_color_viridis_d()),
+      ggplot_options
+    )
+    for (layer in layers) {
+      plot <- plot + layer
+    }
+    plot + ggplot2::labs(y = outcome)
+  })
+  names(plots) <- outcomes
+
+  if (isTRUE(combine)) {
+    return(patchwork::wrap_plots(plotlist = plots))
   }
-
-  default_options <- c(plot_fun, default_design)
-
-  # Update options by user input
-  opt <- utils::modifyList(default_options, ggplot_options)
-
-  # Loop over the operating characteristics and plot
-  plots <- list()
-  for (i in 1:length(y_vars)) {
-    y_col <- y_vars[i]
-    plots[[i]] <-
-      ggplot(
-        data,
-        aes(
-          x = {{ x }},
-          y = .data[[y_col]],
-          color = {{ group }},
-          group = {{ group }}
-        )
-      ) +
-      opt +
-      labs(y = y_col)
-  }
-
-  if (combine == TRUE) {
-    grid <- patchwork::wrap_plots(plotlist = plots)
-  } else {
-    grid <- NULL
-  }
-
-  return(
-    list(single_plots = plots, grid = grid)
-  )
+  plots
 }

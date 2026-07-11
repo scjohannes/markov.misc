@@ -5,20 +5,20 @@
 \title{Plot Empirical or Model-Implied Correlations Over Time}
 \usage{
 plot_correlation(
-  object,
+  x,
   newdata = NULL,
   refit_data = NULL,
   times = NULL,
-  ylevels = NULL,
+  y_levels = NULL,
   absorb = NULL,
   id_var = "id",
   time_var = "time",
   y_var = "y",
-  pvarname = "yprev",
-  p2varname = NULL,
+  p_var = "yprev",
+  p2_var = NULL,
   facet_var = NULL,
-  gap = NULL,
-  t_covs = NULL,
+  gap_var = NULL,
+  time_covariates = NULL,
   seed = NULL,
   n_draws = 100L,
   triangle = c("upper", "full"),
@@ -28,7 +28,7 @@ plot_correlation(
 )
 }
 \arguments{
-\item{object}{A trajectory data frame or a fitted Markov model.}
+\item{x}{A trajectory data frame or a fitted Markov model.}
 
 \item{newdata}{Optional data frame of prediction profiles for model-based
 plots. If \code{NULL}, wrapper-fitted models use their stored data and extract
@@ -39,7 +39,7 @@ resolution in model-based plots.}
 
 \item{times}{Optional time values to include. Required for model-based plots.}
 
-\item{ylevels}{Optional state levels. If supplied for raw trajectory data,
+\item{y_levels}{Optional state levels. If supplied for raw trajectory data,
 state scores follow this order.}
 
 \item{absorb}{Optional absorbing-state label for model-based recursions.}
@@ -51,18 +51,18 @@ extraction.}
 
 \item{y_var}{Character name of the state column in raw trajectory data.}
 
-\item{pvarname}{Character name of the previous-state column for model
+\item{p_var}{Character name of the previous-state column for model
 recursions.}
 
-\item{p2varname}{Optional second previous-state column for second-order
+\item{p2_var}{Optional second previous-state column for second-order
 model recursions.}
 
 \item{facet_var}{Optional grouping variable. Correlations are computed
 separately within each observed stratum.}
 
-\item{gap}{Optional time-gap variable used by the fitted model.}
+\item{gap_var}{Optional time-gap_var variable used by the fitted model.}
 
-\item{t_covs}{Optional time-varying covariate lookup table used by the fitted
+\item{time_covariates}{Optional time-varying covariate lookup table used by the fitted
 model.}
 
 \item{seed}{Optional random seed for \code{blrm} posterior draw selection.}
@@ -91,7 +91,7 @@ computed from model-implied pairwise moments rather than sampled paths.
 Minimum inputs depend on the object type. For trajectory data, \code{object} must
 contain the ID, time, and state columns named by \code{id_var}, \code{time_var}, and
 \code{y_var}. For model-based plots, pass a fitted Markov model and \code{times}; use
-\code{newdata} for explicit prediction profiles and pass \code{ylevels} or \code{absorb}
+\code{newdata} for explicit prediction profiles and pass \code{y_levels} or \code{absorb}
 when needed. Model-based correlations are computed from exact first- or
 second-order Markov recursions. For \code{blrm} fits, posterior draws are kept
 separate through the moment calculation and summarized only after
@@ -100,6 +100,6 @@ correlations are computed for each draw.
 \examples{
 \dontrun{
 plot_correlation(data, id_var = "id", time_var = "day")
-plot_correlation(fit, times = 1:14, ylevels = 1:8, absorb = 8)
+plot_correlation(fit, times = 1:14, y_levels = 1:8, absorb = 8)
 }
 }
