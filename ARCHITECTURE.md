@@ -399,6 +399,13 @@ flowchart TD
   NEXT -- "no" --> ARRAY["Return patient x time x state array"]
 ```
 
+First-order `vglm` and `orm` prediction is planned before recursion. The planner
+builds one aligned design matrix over the requested visits and non-absorbing
+history states, then slices it into reusable transition blocks. Compiled kernels
+in `src/sops.cpp` propagate those transition probabilities without returning to
+R for each origin state. Large designs fall back to bounded per-visit matrix
+construction without changing the numerical contract.
+
 Backend-specific prediction functions live in `R/sops-backends.R`:
 
 - `predict_vglm_response_markov()` handles ordinary `vglm` prediction and the
@@ -407,6 +414,12 @@ Backend-specific prediction functions live in `R/sops-backends.R`:
   threshold linear predictors to category probabilities.
 - `predict_blrm_response_markov()` evaluates posterior draws, optional
   proportional-odds deviations, and optional random effects.
+
+`blrm` calls retain posterior draws as numeric arrays. Design matrices are
+cached across draw chunks, probability normalization and Markov draw updates
+run in compiled code, and grouped or counterfactual averages are reduced before
+any tidy data frame is created. This keeps the unavoidable public draw table at
+the API boundary rather than inside the recursion.
 
 `lp_to_probs()` in `R/sops-fast-path.R` centralizes the conversion from
 cumulative logits to state probabilities.
@@ -418,6 +431,11 @@ When `p2_var` is supplied, `soprob_markov()` dispatches to
 the recursion tracks joint history over `(S(t-2), S(t-1))`. That enables models
 whose transition probability depends on two lagged states, at the cost of a
 larger expanded state space and no fast-path inference.
+
+The R second-order implementation remains the reference path. It shares the
+posterior design cache and compiled probability normalization; the joint-history
+recursion remains explicit so its state-history contract is independently
+testable.
 
 ### Time and Gap Handling
 

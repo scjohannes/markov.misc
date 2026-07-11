@@ -77,8 +77,6 @@ during bootstrap. Default is TRUE.}
 
 \item{use_coefstart}{Logical. Use original coefficients as starting values
 for bootstrap refitting. Default is FALSE.}
-
-\item{...}{Additional arguments (currently unused).}
 }
 \value{
 The input object with added columns:

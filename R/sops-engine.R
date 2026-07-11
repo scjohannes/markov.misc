@@ -10,7 +10,7 @@
 #' @param object A fitted model object. Supported classes include:
 #'   \code{"lrm"}, \code{"orm"} (from package `rms`),
 #'   \code{"blrm"} (from package `rmsb`), and
-#'   \code{"vglm"}, \code{"vgam"} (from package `VGAM`).
+#'   \code{"vglm"} (from package `VGAM`).
 #' @param data A data frame containing the baseline covariates for the prediction.
 #'   Rows represent unique patients. Columns must contain baseline covariates and
 #'   initial values for time-varying variables.
@@ -120,8 +120,8 @@
 #' )
 #' dim(probabilities)
 #'
-#' @export
-soprob_markov <- function(
+#' @noRd
+soprob_markov_reference <- function(
   model,
   newdata,
   times = NULL,
@@ -142,12 +142,16 @@ soprob_markov <- function(
   data <- newdata
   # --- 1. Initial Checks & Setup ---
   dots <- list(...)
-  unknown_dots <- setdiff(names(dots), c(".draw_indices", ".gamma_draws"))
+  unknown_dots <- setdiff(
+    names(dots),
+    c(".draw_indices", ".gamma_draws", ".prediction_cache")
+  )
   if (length(unknown_dots) > 0) {
     stop("Unused arguments: ", paste(unknown_dots, collapse = ", "))
   }
   draw_indices_arg <- dots$.draw_indices
   gamma_draws_arg <- dots$.gamma_draws
+  prediction_cache_arg <- dots$.prediction_cache
 
   cl <- if (inherits(object, "blrm")) {
     "blrm"
@@ -157,16 +161,13 @@ soprob_markov <- function(
     "orm"
   } else if (inherits(object, "vglm")) {
     "vglm"
-  } else if (inherits(object, "vgam")) {
-    "vgam"
   } else {
     class(object)[1]
   }
   ftypes <- c(
     orm = "rms",
     blrm = "rmsb",
-    vglm = "vgam",
-    vgam = "vgam",
+    vglm = "vglm",
     robcov_vglm = "robcov"
   )
   ftype <- ftypes[cl]
@@ -210,7 +211,7 @@ soprob_markov <- function(
   prd <- switch(
     ftype,
     rms = function(obj, d) predict_orm_response_markov(obj, d),
-    vgam = function(obj, d) predict_vglm_response_markov(obj, d),
+    vglm = function(obj, d) predict_vglm_response_markov(obj, d),
     rmsb = function(obj, d) {
       predict_blrm_response_markov(
         obj,
@@ -218,7 +219,8 @@ soprob_markov <- function(
         include_re = include_re,
         id_var = id_var,
         draw_indices = draw_indices,
-        gamma_draws = gamma_draws_arg
+        gamma_draws = gamma_draws_arg,
+        prediction_cache = prediction_cache_arg
       )
     },
     robcov = function(obj, d) {
@@ -379,32 +381,14 @@ soprob_markov <- function(
       P[, it, ] <- p_current
     } else {
       # trans_probs is [draw x (patient * previous state) x state].
-      p_current <- array(0, dim = c(nd, n_pat, n_states))
-      dimnames(p_current) <- list(
-        dimnames(P)[[1]],
-        rownames(data),
-        ylevel_names
+      previous <- P[,, it - 1, , drop = FALSE]
+      previous <- array(previous, dim = c(nd, n_pat, n_states))
+      p_current <- markov_update_draws_native(
+        previous,
+        trans_probs,
+        non_absorb_idx,
+        absorb_idx
       )
-
-      for (i in seq_along(yna)) {
-        prev_state_name <- yna[i]
-        prob_prev <- P[,, it - 1, prev_state_name]
-        row_indices <- ((i - 1) * n_pat + 1):(i * n_pat)
-        probs_transition <- trans_probs[, row_indices, , drop = FALSE]
-
-        for (k in seq_len(n_states)) {
-          p_current[,, k] <- p_current[,, k] +
-            probs_transition[,, k] * prob_prev
-        }
-      }
-
-      if (length(absorb_idx) > 0) {
-        for (a_state in absorb_idx) {
-          # total dead at t = new deaths + already dead
-          p_current[,, a_state] <- p_current[,, a_state] +
-            P[,, it - 1, a_state]
-        }
-      }
       P[,, it, ] <- p_current
     }
   }

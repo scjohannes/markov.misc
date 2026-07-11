@@ -13,7 +13,7 @@
 #' model covariates for the patient or scenario being plotted; `times` and
 #' `previous_states` define the plotting grid.
 #'
-#' @param x A fitted `orm`, `blrm`, `vglm`, `vgam`, or `robcov_vglm` Markov
+#' @param x A fitted `orm`, `blrm`, `vglm`, or `robcov_vglm` Markov
 #'   model.
 #' @param profile One-row data frame containing the covariate profile.
 #' @param variables Named list with one variable and at least two values. The
@@ -61,9 +61,9 @@ plot_lp_difference <- function(
   line_width = 0.7
 ) {
   model <- x
-  if (!inherits(model, c("orm", "blrm", "vglm", "vgam", "robcov_vglm"))) {
+  if (!inherits(model, c("orm", "blrm", "vglm", "robcov_vglm"))) {
     stop(
-      "`model` must be an `orm`, `blrm`, `vglm`, `vgam`, or ",
+      "`model` must be an `orm`, `blrm`, `vglm`, or ",
       "`robcov_vglm` object."
     )
   }
@@ -218,7 +218,7 @@ markov_linear_predictor_matrix <- function(model, newdata) {
     }
     return(markov_vglm_link_matrix(model$vglm_fit, newdata))
   }
-  if (inherits(model, "vglm") || inherits(model, "vgam")) {
+  if (inherits(model, "vglm")) {
     return(markov_vglm_link_matrix(model, newdata))
   }
   if (inherits(model, "blrm")) {

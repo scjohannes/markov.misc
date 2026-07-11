@@ -21,15 +21,15 @@ validate_markov_model <- function(object) {
     stop_unsupported_offset()
   }
 
-  # Check if it's a vglm/vgam model
-  if (inherits(model_chk, c("vglm", "vgam"))) {
+  # Check if it's a vglm model
+  if (inherits(model_chk, "vglm")) {
     # Extract family object
     fam <- model_chk@family
 
     # Check if it's cumulative family
     if (!grepl("cumulative", fam@vfamily[1], ignore.case = TRUE)) {
       stop(
-        "For vglm/vgam models, only the cumulative family is supported.\n",
+        "For vglm models, only the cumulative family is supported.\n",
         "Current family: ",
         fam@vfamily[1],
         "\n",
@@ -65,7 +65,7 @@ validate_markov_model <- function(object) {
     # Check that reverse = TRUE
     if (!isTRUE(reverse_param)) {
       stop(
-        "For vglm/vgam models, the cumulative family must use reverse = TRUE.\n",
+        "For vglm models, the cumulative family must use reverse = TRUE.\n",
         "Current setting: reverse = ",
         reverse_param,
         "\n",
@@ -375,7 +375,8 @@ predict_blrm_response_markov <- function(
   include_re = FALSE,
   id_var = NULL,
   draw_indices = NULL,
-  gamma_draws = NULL
+  gamma_draws = NULL,
+  prediction_cache = NULL
 ) {
   if (is.null(draw_indices)) {
     draw_indices <- seq_len(nrow(object$draws))
@@ -384,7 +385,22 @@ predict_blrm_response_markov <- function(
 
   manual <- tryCatch(
     {
-      X <- blrm_design_matrix(object, newdata = newdata, second = FALSE)
+      cache_index <- NULL
+      if (!is.null(prediction_cache)) {
+        prediction_cache$cursor <- prediction_cache$cursor + 1L
+        cache_index <- prediction_cache$cursor
+      }
+      X <- if (
+        !is.null(cache_index) && length(prediction_cache$X) >= cache_index
+      ) {
+        prediction_cache$X[[cache_index]]
+      } else {
+        value <- blrm_design_matrix(object, newdata = newdata, second = FALSE)
+        if (!is.null(cache_index)) {
+          prediction_cache$X[[cache_index]] <- value
+        }
+        value
+      }
       draws <- object$draws[draw_indices, , drop = FALSE]
       ndraws <- nrow(draws)
       ns <- object$non.slopes
@@ -421,7 +437,17 @@ predict_blrm_response_markov <- function(
       has_npo <- pppo > 0
       if (has_npo) {
         cppo <- resolve_blrm_cppo(object$cppo, envir = parent.frame())
-        Z <- blrm_design_matrix(object, newdata = newdata, second = TRUE)
+        Z <- if (
+          !is.null(cache_index) && length(prediction_cache$Z) >= cache_index
+        ) {
+          prediction_cache$Z[[cache_index]]
+        } else {
+          value <- blrm_design_matrix(object, newdata = newdata, second = TRUE)
+          if (!is.null(cache_index)) {
+            prediction_cache$Z[[cache_index]] <- value
+          }
+          value
+        }
         tau_draws <- draws[, tau_names, drop = FALSE]
         zt <- tau_draws %*% t(Z)
         cppos <- vapply(object$ylevels[-1], cppo, numeric(1))
@@ -646,7 +672,7 @@ get_model_factor_levels <- function(model, varname) {
     model
   }
 
-  if (inherits(model_chk, c("vglm", "vgam"))) {
+  if (inherits(model_chk, "vglm")) {
     xlevels <- tryCatch(
       model_chk@xlevels,
       error = function(e) NULL

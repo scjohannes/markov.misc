@@ -126,7 +126,7 @@ stored with \code{return_draws = TRUE} remain normalized within each draw.
 
 \strong{Model Requirements:}
 
-For \code{vglm}/\code{vgam} models, only the \code{cumulative} family with \code{reverse = TRUE} is
+For \code{vglm} models, only the \code{cumulative} family with \code{reverse = TRUE} is
 supported. This is because the package's Markov simulation logic expects
 higher-numbered states to represent worse outcomes, and uses reverse cumulative
 probabilities to model the probability of being in state k or worse.

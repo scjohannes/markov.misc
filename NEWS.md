@@ -1,5 +1,13 @@
 # markov.misc 0.1.0
 
+- `avg_sops()` now marginalizes counterfactual SOP arrays directly instead of
+  materializing individual prediction data frames, and posterior `blrm`
+  workflows reduce draws natively before constructing public output.
+- `soprob_markov()` and `sops()` now use batched design matrices and compiled
+  first-order Markov propagation for `vglm` and `orm`, while `blrm` prediction
+  caches design matrices across posterior chunks and uses compiled draw updates.
+- Breaking change: legacy `vgam` model support has been removed; use `vglm`
+  cumulative ordinal models instead.
 - Standardized SOP outputs as base data frames with package-specific S3
   classes, canonical estimate/inference columns, and one internal `draws`
   attribute.

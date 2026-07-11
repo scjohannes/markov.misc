@@ -53,7 +53,6 @@
 #'   during bootstrap. Default is TRUE.
 #' @param use_coefstart Logical. Use original coefficients as starting values
 #'   for bootstrap refitting. Default is FALSE.
-#' @param ... Additional arguments (currently unused).
 #'
 #' @return The input object with added columns:
 #'   \item{conf.low}{Lower confidence bound}

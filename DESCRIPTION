@@ -26,6 +26,8 @@ Imports:
     sdprisk,
     stats,
     VGAM
+LinkingTo:
+    cpp11
 Depends: 
     R (>= 4.1.0)
 LazyData: true

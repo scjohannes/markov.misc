@@ -19,7 +19,7 @@
 #' **Supported model classes:**
 #' \itemize{
 #'   \item `orm`, `lrm`, `rms` (S3): Modifies `$coefficients`
-#'   \item `vglm`, `vgam` (S4): Modifies `@coefficients` slot
+#'   \item `vglm` (S4): Modifies `@coefficients` slot
 #'   \item `robcov_vglm`: Modifies `$coefficients`
 #' }
 #'
@@ -147,13 +147,6 @@ set_coef.vglm <- function(model, new_coefs) {
 }
 
 
-#' @rdname set_coef
-#' @export
-set_coef.vgam <- function(model, new_coefs) {
-  set_coef.vglm(model, new_coefs)
-}
-
-
 #' Get Robust Variance-Covariance Matrix
 #'
 #' Extracts or computes a (cluster-)robust variance-covariance matrix for
@@ -246,7 +239,7 @@ get_vcov_robust <- function(
 
   # --- Case 3: No clustering requested ---
   if (is.null(cluster)) {
-    if (inherits(model, c("vglm", "vgam"))) {
+    if (inherits(model, "vglm")) {
       return(robcov_vglm(model, cluster = NULL, adjust = adjust)$var)
     } else if (inherits(model, c("orm", "lrm"))) {
       if (!requireNamespace("rms", quietly = TRUE)) {
@@ -280,8 +273,8 @@ get_vcov_robust <- function(
       model_data <- data
     }
 
-    if (is.null(model_data) && inherits(model, c("vglm", "vgam"))) {
-      # For S4 vglm/vgam objects, try to evaluate the data from the call
+    if (is.null(model_data) && inherits(model, "vglm")) {
+      # For S4 vglm objects, try to evaluate the data from the call
       if (!is.null(model@call$data)) {
         model_data <- tryCatch(
           eval(model@call$data, envir = parent.frame(2)),
@@ -297,7 +290,7 @@ get_vcov_robust <- function(
     }
 
     model_nobs <- tryCatch(
-      if (inherits(model, c("vglm", "vgam"))) {
+      if (inherits(model, "vglm")) {
         stats::nobs(model, type = "lm")
       } else {
         stats::nobs(model)
@@ -342,7 +335,7 @@ get_vcov_robust <- function(
   }
 
   # --- Case 5: Compute robust vcov based on model class ---
-  if (inherits(model, "vglm") || inherits(model, "vgam")) {
+  if (inherits(model, "vglm")) {
     # Use our robcov_vglm function
     robcov_result <- robcov_vglm(model, cluster = cluster, adjust = adjust)
     return(robcov_result$var)
@@ -358,7 +351,7 @@ get_vcov_robust <- function(
       "Unsupported model class for robust vcov: ",
       class(model)[1],
       "\n",
-      "Supported classes: vglm, vgam, orm, lrm, robcov_vglm"
+      "Supported classes: vglm, orm, lrm, robcov_vglm"
     )
   }
 }

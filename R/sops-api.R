@@ -79,7 +79,7 @@
 #'
 #' **Model Requirements:**
 #'
-#' For `vglm`/`vgam` models, only the `cumulative` family with `reverse = TRUE` is
+#' For `vglm` models, only the `cumulative` family with `reverse = TRUE` is
 #' supported. This is because the package's Markov simulation logic expects
 #' higher-numbered states to represent worse outcomes, and uses reverse cumulative
 #' probabilities to model the probability of being in state k or worse.
@@ -340,14 +340,20 @@ sops_blrm <- function(
   n_states <- length(y_levels)
   n_cells <- n_pat * n_times * n_states
   n_requested <- length(draw_indices)
+  group_setup <- if (is.null(by)) NULL else posterior_group_setup(newdata, by)
+  n_output_cells <- if (is.null(group_setup)) {
+    n_cells
+  } else {
+    group_setup$n_groups * n_times * n_states
+  }
   # `sops()` keeps individual-level draw summaries in memory. The default
   # guard is 50 million numeric cells, about 400 MB before data-frame overhead.
   max_draw_cells <- getOption("markov.misc.max_sops_draw_cells", 5e7)
 
-  if (n_cells * n_requested > max_draw_cells) {
+  if (n_output_cells * n_requested > max_draw_cells) {
     stop(
       "`sops()` for `blrm` would require ",
-      format(n_cells * n_requested, scientific = FALSE),
+      format(n_output_cells * n_requested, scientific = FALSE),
       " posterior draw cells, above the current limit of ",
       format(max_draw_cells, scientific = FALSE),
       ". This limit protects memory because individual-level `sops()` stores ",
@@ -357,12 +363,21 @@ sops_blrm <- function(
     )
   }
 
-  draw_values <- matrix(NA_real_, nrow = n_requested, ncol = n_cells)
+  draw_values <- matrix(NA_real_, nrow = n_requested, ncol = n_output_cells)
   rownames(draw_values) <- draw_indices
-  chunks <- split_draw_indices(draw_indices)
+  chunks <- split_draw_indices(
+    draw_indices,
+    chunk_size = getOption("markov.misc.blrm_chunk_size") %||%
+      posterior_chunk_size(n_cells, n_requested)
+  )
   gamma_draws <- cache_blrm_gamma_draws(model, draw_indices, include_re)
+  prediction_cache <- new.env(parent = emptyenv())
+  prediction_cache$cursor <- 0L
+  prediction_cache$X <- list()
+  prediction_cache$Z <- list()
   row_cursor <- 1L
   for (chunk in chunks) {
+    prediction_cache$cursor <- 0L
     arr <- soprob_markov(
       model = model,
       newdata = newdata,
@@ -378,11 +393,31 @@ sops_blrm <- function(
       id_var = id_var,
       n_draws = NULL,
       .draw_indices = chunk,
-      .gamma_draws = subset_cached_draw_matrix(gamma_draws, draw_indices, chunk)
+      .gamma_draws = subset_cached_draw_matrix(
+        gamma_draws,
+        draw_indices,
+        chunk
+      ),
+      .prediction_cache = prediction_cache
     )
-    for (i in seq_along(chunk)) {
-      draw_values[row_cursor, ] <- as.vector(arr[i, , , ])
-      row_cursor <- row_cursor + 1L
+    if (is.null(group_setup)) {
+      for (i in seq_along(chunk)) {
+        draw_values[row_cursor, ] <- as.vector(arr[i, , , ])
+        row_cursor <- row_cursor + 1L
+      }
+    } else {
+      reduced <- reduce_sops_draw_array(
+        arr,
+        group_setup$groups,
+        group_setup$n_groups
+      )
+      reduced <- aperm(reduced, c(1L, 3L, 4L, 2L))
+      rows <- row_cursor:(row_cursor + length(chunk) - 1L)
+      draw_values[rows, ] <- matrix(
+        as.numeric(reduced),
+        nrow = length(chunk)
+      )
+      row_cursor <- row_cursor + length(chunk)
     }
   }
 
@@ -408,23 +443,21 @@ sops_blrm <- function(
       NULL
     }
   } else {
-    draw_list <- vector("list", n_requested)
-    for (i in seq_len(n_requested)) {
-      arr_i <- array(draw_values[i, ], dim = c(n_pat, n_times, n_states))
-      draw_i <- array_to_df_individual(arr_i, times, y_levels, newdata, by = by)
-      draw_i$draw_id <- draw_indices[i]
-      draw_list[[i]] <- draw_i
-    }
-    draws_df <- bind_rows_fill(draw_list)
-    group_cols <- unique(c("time", "state", by))
-    result <- summarize_posterior_draws_df(
-      draws_df,
-      group_cols = group_cols,
+    cells <- posterior_group_cells(
+      group_setup$metadata,
+      times,
+      y_levels
+    )
+    stats <- summarize_posterior_draw_matrix(
+      draw_values,
       posterior_summary = posterior_summary,
       conf_level = conf_level
     )
-    if (!return_draws) {
-      draws_df <- NULL
+    result <- cbind(cells, stats)
+    draws_df <- if (return_draws) {
+      posterior_draw_matrix_to_df(draw_values, cells, draw_indices)
+    } else {
+      NULL
     }
   }
 
@@ -472,6 +505,50 @@ sops_blrm <- function(
       newdata_supplied = newdata_supplied
     )
   )
+}
+
+posterior_group_setup <- function(data, group_cols) {
+  keys <- interaction(
+    data[, group_cols, drop = FALSE],
+    drop = TRUE,
+    lex.order = TRUE
+  )
+  groups <- as.integer(keys)
+  n_groups <- nlevels(keys)
+  first <- vapply(
+    seq_len(n_groups),
+    function(i) which(groups == i)[1L],
+    integer(1)
+  )
+  metadata <- data[first, group_cols, drop = FALSE]
+  rownames(metadata) <- NULL
+  list(groups = groups, n_groups = n_groups, metadata = metadata)
+}
+
+posterior_group_cells <- function(metadata, times, y_levels) {
+  pieces <- vector("list", nrow(metadata))
+  for (i in seq_len(nrow(metadata))) {
+    piece <- expand.grid(
+      time = times,
+      state = y_levels,
+      KEEP.OUT.ATTRS = FALSE
+    )
+    for (nm in names(metadata)) {
+      piece[[nm]] <- metadata[[nm]][i]
+    }
+    pieces[[i]] <- piece
+  }
+  bind_rows_fill(pieces)
+}
+
+posterior_draw_matrix_to_df <- function(draw_values, cells, draw_indices) {
+  n_draws <- nrow(draw_values)
+  n_cells <- ncol(draw_values)
+  out <- cells[rep(seq_len(n_cells), times = n_draws), , drop = FALSE]
+  out$draw_id <- rep(draw_indices, each = n_cells)
+  out$estimate <- as.vector(t(draw_values))
+  rownames(out) <- NULL
+  out
 }
 
 split_draw_indices <- function(draw_indices, chunk_size = NULL) {
@@ -785,6 +862,74 @@ avg_sops <- function(
 
   newdata_expanded <- create_counterfactual_data(baseline_data, grid, var_list)
 
+  direct_backend <- inherits(model, c("vglm", "robcov_vglm", "orm", "blrm"))
+  if (!direct_backend) {
+    sops_ind <- sops(
+      model,
+      newdata = newdata_expanded,
+      refit_data = refit_data,
+      times = times,
+      y_levels = y_levels,
+      absorb = absorb,
+      time_var = time_var,
+      p_var = p_var,
+      id_var = id_var,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      time_covariates = time_covariates,
+      ...
+    )
+    resolved_times <- attr(sops_ind, "call_args")$times
+    group_cols <- unique(c("time", "state", names(var_list), by))
+    missing_groups <- setdiff(group_cols, names(sops_ind))
+    if (length(missing_groups) > 0L) {
+      stop(
+        "Grouping variables missing: ",
+        paste(missing_groups, collapse = ", ")
+      )
+    }
+    result <- aggregate_sops_estimates(sops_ind, group_cols)
+    return(set_sops_attrs(
+      result,
+      class_name = "markov_avg_sops",
+      model = attr(sops_ind, "model"),
+      call_args = attr(sops_ind, "call_args"),
+      time_var = attr(sops_ind, "time_var"),
+      p_var = attr(sops_ind, "p_var"),
+      p2_var = attr(sops_ind, "p2_var"),
+      y_levels = attr(sops_ind, "y_levels"),
+      absorb = attr(sops_ind, "absorb"),
+      gap_var = attr(sops_ind, "gap_var"),
+      time_covariates = attr(sops_ind, "time_covariates"),
+      newdata_orig = newdata_orig,
+      avg_args = list(
+        variables = var_list,
+        by = by,
+        times = resolved_times,
+        id_var = id_var
+      ),
+      extra_attrs = list(
+        newdata_pred = newdata_expanded,
+        refit_data = refit_data,
+        id_var = id_var,
+        newdata_supplied = newdata_supplied
+      )
+    ))
+  }
+
+  if (is.null(y_levels)) {
+    y_levels <- if (inherits(model, "robcov_vglm")) {
+      model$extra$colnames.y
+    } else if (inherits(model, "vglm")) {
+      model@extra$colnames.y
+    } else if (inherits(model, c("orm", "blrm"))) {
+      model$yunique %||% model$ylevels
+    } else {
+      NULL
+    }
+    if (is.null(y_levels)) stop("`y_levels` cannot be NULL")
+  }
+
   if (inherits(model, "blrm")) {
     posterior_summary <- match.arg(posterior_summary)
     result <- avg_sops_blrm(
@@ -818,62 +963,63 @@ avg_sops <- function(
     return(result)
   }
 
-  # --- 4. Compute Individual SOPs ---
-  sops_ind <- sops(
+  # --- 4. Compute and marginalize without materializing individual rows ---
+  time_res <- resolve_sop_times(
     model,
+    newdata_expanded,
+    times,
+    time_var,
+    time_covariates = time_covariates,
+    default = "unique"
+  )
+  resolved_times <- time_res$times
+  validate_factor_gap(gap_var, time_covariates, time_res$time_info)
+  sops_array <- soprob_markov(
+    model = model,
     newdata = newdata_expanded,
-    refit_data = refit_data,
-    times = times,
+    times = resolved_times,
     y_levels = y_levels,
     absorb = absorb,
     time_var = time_var,
     p_var = p_var,
-    id_var = id_var,
     p2_var = p2_var,
     gap_var = gap_var,
     time_covariates = time_covariates,
     ...
   )
-  resolved_times <- attr(sops_ind, "call_args")$times
-
-  # --- 5. Aggregate (Marginalize) ---
-  # Group by time, state, and the variables used for standardization
-  group_cols <- c("time", "state", names(var_list))
-
-  # Add optional 'by' variables
-  if (!is.null(by)) {
-    group_cols <- unique(c(group_cols, by))
-  }
-
-  # Validate grouping columns exist
-  missing_groups <- setdiff(group_cols, names(sops_ind))
-  if (length(missing_groups) > 0) {
-    stop("Grouping variables missing: ", paste(missing_groups, collapse = ", "))
-  }
-
-  # Aggregate
-  agg_formula <- stats::as.formula(
-    paste("estimate ~", paste(group_cols, collapse = " + "))
-  )
-  result <- stats::aggregate(
-    agg_formula,
-    data = sops_ind,
-    FUN = mean,
-    na.rm = TRUE
+  result <- marginalize_sops_array(
+    sops_array = sops_array,
+    grid = grid,
+    times = resolved_times,
+    y_levels = y_levels,
+    variables = var_list,
+    n_cf = nrow(grid),
+    n_each = nrow(baseline_data),
+    by = by,
+    newdata = newdata_expanded
   )
 
   set_sops_attrs(
     result,
     class_name = "markov_avg_sops",
-    model = attr(sops_ind, "model"),
-    call_args = attr(sops_ind, "call_args"),
-    time_var = attr(sops_ind, "time_var"),
-    p_var = attr(sops_ind, "p_var"),
-    p2_var = attr(sops_ind, "p2_var"),
-    y_levels = attr(sops_ind, "y_levels"),
-    absorb = attr(sops_ind, "absorb"),
-    gap_var = attr(sops_ind, "gap_var"),
-    time_covariates = attr(sops_ind, "time_covariates"),
+    model = model,
+    call_args = sops_call_args(
+      resolved_times,
+      y_levels,
+      absorb,
+      time_var,
+      p_var,
+      p2_var,
+      gap_var,
+      time_covariates
+    ),
+    time_var = time_var,
+    p_var = p_var,
+    p2_var = p2_var,
+    y_levels = y_levels,
+    absorb = absorb,
+    gap_var = gap_var,
+    time_covariates = time_covariates,
     newdata_orig = newdata_orig,
     avg_args = list(
       variables = var_list,
@@ -931,15 +1077,40 @@ avg_sops_blrm <- function(
   draw_indices <- select_posterior_draws(model, n_draws, seed)
   chunks <- split_draw_indices(
     draw_indices,
-    chunk_size = getOption("markov.misc.blrm_avg_chunk_size", 50L)
+    chunk_size = getOption("markov.misc.blrm_avg_chunk_size") %||%
+      posterior_chunk_size(
+        nrow(newdata_expanded) * length(times) * length(y_levels),
+        length(draw_indices)
+      )
   )
   gamma_draws <- cache_blrm_gamma_draws(model, draw_indices, include_re)
   n_cf <- nrow(grid)
   n_each <- nrow(newdata_expanded) / n_cf
-  draw_results <- vector("list", length(draw_indices))
-  out_i <- 1L
+  group_cols <- unique(c(names(variables), by))
+  group_setup <- if (is.null(by)) {
+    list(
+      groups = rep(seq_len(n_cf), each = n_each),
+      n_groups = n_cf,
+      metadata = grid[, names(variables), drop = FALSE]
+    )
+  } else {
+    posterior_group_setup(newdata_expanded, group_cols)
+  }
+  n_cells <- group_setup$n_groups * length(times) * length(y_levels)
+  draw_values <- matrix(
+    NA_real_,
+    nrow = length(draw_indices),
+    ncol = n_cells,
+    dimnames = list(draw_indices, NULL)
+  )
+  prediction_cache <- new.env(parent = emptyenv())
+  prediction_cache$cursor <- 0L
+  prediction_cache$X <- list()
+  prediction_cache$Z <- list()
+  row_cursor <- 1L
 
   for (chunk in chunks) {
+    prediction_cache$cursor <- 0L
     arr <- soprob_markov(
       model = model,
       newdata = newdata_expanded,
@@ -955,58 +1126,36 @@ avg_sops_blrm <- function(
       id_var = id_var,
       n_draws = NULL,
       .draw_indices = chunk,
-      .gamma_draws = subset_cached_draw_matrix(gamma_draws, draw_indices, chunk)
+      .gamma_draws = subset_cached_draw_matrix(
+        gamma_draws,
+        draw_indices,
+        chunk
+      ),
+      .prediction_cache = prediction_cache
     )
-
-    for (i in seq_along(chunk)) {
-      arr_i <- arr[i, , , , drop = FALSE]
-      arr_i <- array(arr_i, dim = dim(arr_i)[-1])
-      if (is.null(by)) {
-        draw_i <- marginalize_sops_array(
-          sops_array = arr_i,
-          grid = grid,
-          times = times,
-          y_levels = y_levels,
-          variables = variables,
-          n_cf = n_cf,
-          n_each = n_each
-        )
-      } else {
-        draw_i <- array_to_df_individual(
-          sops_array = arr_i,
-          times = times,
-          y_levels = y_levels,
-          newdata = newdata_expanded,
-          by = NULL
-        )
-        group_cols <- unique(c("time", "state", names(variables), by))
-        agg_formula <- stats::as.formula(
-          paste("estimate ~", paste(group_cols, collapse = " + "))
-        )
-        draw_i <- stats::aggregate(
-          agg_formula,
-          data = draw_i,
-          FUN = mean,
-          na.rm = TRUE
-        )
-      }
-      draw_i$draw_id <- chunk[i]
-      draw_results[[out_i]] <- draw_i
-      out_i <- out_i + 1L
-    }
+    reduced <- reduce_sops_draw_array(
+      arr,
+      group_setup$groups,
+      group_setup$n_groups
+    )
+    reduced <- aperm(reduced, c(1L, 3L, 4L, 2L))
+    rows <- row_cursor:(row_cursor + length(chunk) - 1L)
+    draw_values[rows, ] <- matrix(as.numeric(reduced), nrow = length(chunk))
+    row_cursor <- row_cursor + length(chunk)
   }
 
-  draws_df <- bind_rows_fill(draw_results)
-  group_cols <- c("time", "state", names(variables))
-  if (!is.null(by)) {
-    group_cols <- unique(c(group_cols, by))
-  }
-  result <- summarize_posterior_draws_df(
-    draws_df,
-    group_cols = group_cols,
+  cells <- posterior_group_cells(group_setup$metadata, times, y_levels)
+  stats <- summarize_posterior_draw_matrix(
+    draw_values,
     posterior_summary = posterior_summary,
     conf_level = conf_level
   )
+  result <- cbind(cells, stats)
+  draws_df <- if (return_draws) {
+    posterior_draw_matrix_to_df(draw_values, cells, draw_indices)
+  } else {
+    NULL
+  }
 
   set_sops_attrs(
     result,
@@ -1049,7 +1198,13 @@ avg_sops_blrm <- function(
       draw_ids = draw_indices,
       conf_level = conf_level,
       posterior_summary = posterior_summary,
-      draws = if (return_draws) draws_df else NULL
+      draws = draws_df
     )
   )
+}
+
+posterior_chunk_size <- function(cells_per_draw, n_draws) {
+  budget <- getOption("markov.misc.posterior_working_bytes", 256 * 1024^2)
+  bytes_per_draw <- max(1, cells_per_draw * 8 * 3)
+  max(1L, min(as.integer(n_draws), floor(budget / bytes_per_draw)))
 }

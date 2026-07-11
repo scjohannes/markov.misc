@@ -195,7 +195,7 @@ model_uses_offset <- function(model) {
 
   offset_obj <- tryCatch(
     {
-      if (inherits(model_chk, c("vglm", "vgam"))) {
+      if (inherits(model_chk, "vglm")) {
         methods::slot(model_chk, "offset")
       } else {
         model_chk$offset
@@ -214,7 +214,7 @@ model_uses_offset <- function(model) {
 
   call_obj <- tryCatch(
     {
-      if (inherits(model_chk, c("vglm", "vgam"))) {
+      if (inherits(model_chk, "vglm")) {
         methods::slot(model_chk, "call")
       } else {
         model_chk$call

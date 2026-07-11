@@ -1,7 +1,7 @@
 # Internal fitted-model plotting helpers.
 
 markov_supported_model <- function(object) {
-  inherits(object, c("orm", "blrm", "vglm", "vgam", "robcov_vglm"))
+  inherits(object, c("orm", "blrm", "vglm", "robcov_vglm"))
 }
 
 markov_model_ylevels <- function(model, y_levels = NULL) {

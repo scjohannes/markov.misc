@@ -193,6 +193,136 @@ markov_msm_build <- function(
   )
 }
 
+markov_msm_build_batched <- function(
+  model,
+  newdata,
+  time_covariates = NULL,
+  times,
+  y_levels,
+  absorb = NULL,
+  time_var = "time",
+  p_var = "yprev",
+  gap_var = NULL
+) {
+  n_pat <- nrow(newdata)
+  ylevel_names <- as_state_labels(y_levels)
+  absorb_idx <- which(ylevel_names %in% as_state_labels(absorb))
+  non_absorb_idx <- setdiff(seq_along(ylevel_names), absorb_idx)
+  time_res <- resolve_sop_times(
+    model,
+    newdata,
+    times,
+    time_var,
+    time_covariates = time_covariates,
+    default = "fast"
+  )
+  times <- time_res$times
+  time_info <- time_res$time_info
+  validate_factor_gap(gap_var, time_covariates, time_info)
+
+  if (!p_var %in% names(newdata)) {
+    stop("Previous-state variable `", p_var, "` not found in `newdata`.")
+  }
+
+  model_rows <- n_pat * (1L + length(times) * length(non_absorb_idx))
+  if (model_rows > getOption("markov.misc.max_batched_design_rows", 2e6)) {
+    return(markov_msm_build(
+      model = model,
+      newdata = newdata,
+      time_covariates = time_covariates,
+      times = times,
+      y_levels = y_levels,
+      absorb = absorb,
+      time_var = time_var,
+      p_var = p_var,
+      gap_var = gap_var
+    ))
+  }
+
+  set_time <- function(d, time_idx) {
+    assign_sop_visit(
+      d,
+      time_var = time_var,
+      times = times,
+      index = time_idx,
+      time_covariates = time_covariates,
+      gap_var = gap_var,
+      time_info = time_info
+    )
+  }
+
+  d_init <- set_time(newdata, 1L)
+  d_init[[p_var]] <- normalize_previous_state_column(
+    d_init[[p_var]],
+    newdata[[p_var]],
+    p_var
+  )
+
+  pieces <- list(d_init)
+  block_map <- vector("list", length(times))
+  cursor <- n_pat + 1L
+  for (time_idx in seq_along(times)) {
+    block_map[[time_idx]] <- vector("list", length(ylevel_names))
+    d_time <- set_time(newdata, time_idx)
+    for (state_idx in non_absorb_idx) {
+      d_state <- d_time
+      d_state[[p_var]] <- make_previous_state_column(
+        states = ylevel_names[state_idx],
+        prototype = newdata[[p_var]],
+        n = n_pat,
+        p_var = p_var
+      )
+      pieces[[length(pieces) + 1L]] <- d_state
+      block_map[[time_idx]][[state_idx]] <- cursor:(cursor + n_pat - 1L)
+      cursor <- cursor + n_pat
+    }
+  }
+  design_data <- do.call(rbind, pieces)
+
+  Gamma <- get_effective_coefs(model)
+  if (inherits(model, "orm")) {
+    X <- orm_model_matrix(model, design_data, include_intercept = TRUE)
+  } else {
+    tt <- stats::delete.response(stats::terms(model))
+    X <- stats::model.matrix(
+      tt,
+      data = design_data,
+      contrasts.arg = if (length(model@contrasts)) model@contrasts else NULL,
+      xlev = model@xlevels
+    )
+  }
+  missing_cols <- setdiff(colnames(Gamma), colnames(X))
+  if (length(missing_cols) > 0L) {
+    stop(
+      "Design matrix columns missing during batched build: ",
+      paste(missing_cols, collapse = ", ")
+    )
+  }
+  X <- X[, colnames(Gamma), drop = FALSE]
+
+  X_transition <- vector("list", length(times))
+  for (time_idx in seq_along(times)) {
+    X_transition[[time_idx]] <- vector("list", length(ylevel_names))
+    for (state_idx in non_absorb_idx) {
+      X_transition[[time_idx]][[state_idx]] <- X[
+        block_map[[time_idx]][[state_idx]],
+        ,
+        drop = FALSE
+      ]
+    }
+  }
+
+  list(
+    X_init = X[seq_len(n_pat), , drop = FALSE],
+    X_transition = X_transition,
+    n_pat = n_pat,
+    n_states = length(ylevel_names),
+    M = length(ylevel_names) - 1L,
+    y_levels = ylevel_names,
+    col_names = colnames(X)
+  )
+}
+
 
 #' Run Fast Markov Simulation (Internal)
 #'
@@ -227,10 +357,6 @@ markov_msm_run <- function(components, Gamma, times, absorb = NULL) {
     X %*% Gamma_t
   }
 
-  # Simulation
-  P_out <- array(0, dim = c(n_pat, n_times, n_states))
-  dimnames(P_out)[[3]] <- y_levels
-
   absorb_idx <- if (!is.null(absorb)) {
     which(as.character(y_levels) %in% as.character(absorb))
   } else {
@@ -238,32 +364,26 @@ markov_msm_run <- function(components, Gamma, times, absorb = NULL) {
   }
   non_absorb_idx <- setdiff(1:n_states, absorb_idx)
 
-  # T=1
-  P_out[, 1, ] <- lp_to_probs(calc_lp(X_init), M)
-
-  # Loop 2..T
-  if (n_times >= 2) {
+  initial <- lp_to_probs(calc_lp(X_init), M)
+  transitions <- vector("list", max(0L, n_times - 1L))
+  if (n_times >= 2L) {
     for (t_idx in 2:n_times) {
-      p_current <- matrix(0, nrow = n_pat, ncol = n_states)
-
-      for (k in non_absorb_idx) {
-        p_prev_k <- P_out[, t_idx - 1, k]
-        if (max(p_prev_k) < 1e-12) {
-          next
-        }
-
-        LP_k <- calc_lp(X_transition[[t_idx]][[k]])
-        trans_k <- lp_to_probs(LP_k, M)
-        p_current <- p_current + (trans_k * p_prev_k)
-      }
-
-      for (a in absorb_idx) {
-        p_current[, a] <- p_current[, a] + P_out[, t_idx - 1, a]
-      }
-      P_out[, t_idx, ] <- p_current
+      transitions[[t_idx - 1L]] <- do.call(
+        rbind,
+        lapply(
+          non_absorb_idx,
+          function(k) lp_to_probs(calc_lp(X_transition[[t_idx]][[k]]), M)
+        )
+      )
     }
   }
-
+  P_out <- markov_native_run(
+    initial,
+    transitions,
+    as.integer(non_absorb_idx),
+    as.integer(absorb_idx)
+  )
+  dimnames(P_out) <- list(NULL, NULL, y_levels)
   P_out
 }
 
@@ -302,14 +422,7 @@ normalize_probability_rows <- function(probs) {
 }
 
 normalize_probability_array <- function(probs) {
-  totals <- apply(probs, c(1L, 2L), sum, na.rm = TRUE)
-  valid <- is.finite(totals) & totals > 0
-  for (k in seq_len(dim(probs)[3])) {
-    slice <- probs[,, k]
-    slice[valid] <- slice[valid] / totals[valid]
-    probs[,, k] <- slice
-  }
-  probs
+  normalize_probability_array_native(probs)
 }
 
 

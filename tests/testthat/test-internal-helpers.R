@@ -116,7 +116,7 @@ test_that("validate_coef_vcov accepts Matrix covariance objects", {
   )
 })
 
-test_that("set_coef() updates nested robcov_vglm fits and vgam aliases", {
+test_that("set_coef() updates nested robcov_vglm fits", {
   skip_if_not_installed("VGAM")
 
   data <- data.frame(y = c(0, 1, 0, 1, 0, 1), x = c(0, 0, 1, 1, 2, 2))
@@ -134,11 +134,9 @@ test_that("set_coef() updates nested robcov_vglm fits and vgam aliases", {
     class = "robcov_vglm"
   )
   robust2 <- set_coef(robust, new_coefs)
-  alias <- markov.misc:::set_coef.vgam(fit, new_coefs)
 
   expect_equal(robust2$coefficients, new_coefs)
   expect_equal(stats::coef(robust2$vglm_fit), new_coefs)
-  expect_equal(stats::coef(alias), new_coefs)
 })
 
 test_that("get_effective_coefs() reports unsupported and mismatched coefficients", {
