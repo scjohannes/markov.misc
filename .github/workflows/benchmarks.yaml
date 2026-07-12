@@ -26,8 +26,12 @@ jobs:
         with:
           extra-packages: any::devtools
           needs: check
+      - name: Install release package
+        run: R CMD INSTALL .
       - name: Run serial benchmark gates
-        run: Rscript benchmarks/benchmark-sops.R
+        run: |
+          Rscript benchmarks/benchmark-sops.R
+          MARKOV_MISC_BENCH_INSTALLED=true Rscript benchmarks/benchmark-missing-workflows.R
       - name: Record environment
         run: Rscript -e 'writeLines(c(capture.output(sessionInfo()), paste("commit:", system("git rev-parse HEAD", intern = TRUE))), "benchmark-session.txt")'
       - uses: actions/upload-artifact@v4

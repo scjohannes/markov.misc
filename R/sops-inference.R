@@ -548,7 +548,8 @@ inferences_simulation <- function(
   # The fast path uses pre-computed design matrix decompositions for supported
   # ordinal model backends.
   model_chk <- if (inherits(model, "robcov_vglm")) model$vglm_fit else model
-  use_fast_path <- inherits(model_chk, c("vglm", "orm")) && is.null(p2_var)
+  use_fast_path <- inherits(model_chk, c("vglm", "orm")) &&
+    !inherits(model_chk, "blrm")
 
   if (use_fast_path) {
     # --- FAST PATH: Pre-build components once, then run efficient Markov loop ---
@@ -562,6 +563,7 @@ inferences_simulation <- function(
         absorb = absorb,
         time_var = time_var,
         p_var = p_var,
+        p2_var = p2_var,
         gap_var = gap_var,
         builder = "streamed",
         output = if (is_avg) "average" else "individual"

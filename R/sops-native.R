@@ -20,8 +20,8 @@ markov_update_po_native <- function(
 ) {
   cpp_markov_update_po(
     previous,
-    as.numeric(scalar_predictor),
-    as.numeric(cutpoints),
+    scalar_predictor,
+    cutpoints,
     non_absorb,
     absorb
   )
@@ -77,6 +77,63 @@ markov_update_draws_native <- function(
     dims[2],
     dims[3],
     as.integer(non_absorb),
+    as.integer(absorb)
+  )
+}
+
+markov_update_second_order_native <- function(
+  previous,
+  transition,
+  older,
+  current,
+  absorb
+) {
+  dims <- dim(previous)
+  cpp_markov_update_second_order(
+    previous,
+    transition,
+    dims[1L],
+    dims[2L],
+    as.integer(older),
+    as.integer(current),
+    as.integer(absorb)
+  )
+}
+
+blrm_probabilities_native <- function(
+  base_eta,
+  intercepts,
+  threshold_eta = numeric(),
+  threshold_scale = numeric()
+) {
+  cpp_blrm_probabilities(
+    base_eta,
+    intercepts,
+    threshold_eta,
+    threshold_scale,
+    nrow(base_eta),
+    ncol(base_eta),
+    ncol(intercepts)
+  )
+}
+
+markov_update_second_order_po_native <- function(
+  previous,
+  scalar_predictor,
+  cutpoints,
+  older,
+  current,
+  absorb
+) {
+  dims <- dim(previous)
+  cpp_markov_update_second_order_po(
+    previous,
+    scalar_predictor,
+    cutpoints,
+    dims[1L],
+    dims[2L],
+    as.integer(older),
+    as.integer(current),
     as.integer(absorb)
   )
 }

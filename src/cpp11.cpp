@@ -54,16 +54,40 @@ extern "C" SEXP _markov_misc_cpp_markov_update_draws(SEXP previous, SEXP transit
     return cpp11::as_sexp(cpp_markov_update_draws(cpp11::as_cpp<cpp11::decay_t<doubles>>(previous), cpp11::as_cpp<cpp11::decay_t<doubles>>(transition), cpp11::as_cpp<cpp11::decay_t<int>>(draws), cpp11::as_cpp<cpp11::decay_t<int>>(observations), cpp11::as_cpp<cpp11::decay_t<int>>(states), cpp11::as_cpp<cpp11::decay_t<integers>>(non_absorb), cpp11::as_cpp<cpp11::decay_t<integers>>(absorb)));
   END_CPP11
 }
+// sops.cpp
+doubles cpp_markov_update_second_order(doubles previous, doubles transition, int observations, int states, integers older, integers current, integers absorb);
+extern "C" SEXP _markov_misc_cpp_markov_update_second_order(SEXP previous, SEXP transition, SEXP observations, SEXP states, SEXP older, SEXP current, SEXP absorb) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(cpp_markov_update_second_order(cpp11::as_cpp<cpp11::decay_t<doubles>>(previous), cpp11::as_cpp<cpp11::decay_t<doubles>>(transition), cpp11::as_cpp<cpp11::decay_t<int>>(observations), cpp11::as_cpp<cpp11::decay_t<int>>(states), cpp11::as_cpp<cpp11::decay_t<integers>>(older), cpp11::as_cpp<cpp11::decay_t<integers>>(current), cpp11::as_cpp<cpp11::decay_t<integers>>(absorb)));
+  END_CPP11
+}
+// sops.cpp
+doubles cpp_blrm_probabilities(doubles base_eta, doubles intercepts, doubles threshold_eta, doubles threshold_scale, int draws, int observations, int thresholds);
+extern "C" SEXP _markov_misc_cpp_blrm_probabilities(SEXP base_eta, SEXP intercepts, SEXP threshold_eta, SEXP threshold_scale, SEXP draws, SEXP observations, SEXP thresholds) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(cpp_blrm_probabilities(cpp11::as_cpp<cpp11::decay_t<doubles>>(base_eta), cpp11::as_cpp<cpp11::decay_t<doubles>>(intercepts), cpp11::as_cpp<cpp11::decay_t<doubles>>(threshold_eta), cpp11::as_cpp<cpp11::decay_t<doubles>>(threshold_scale), cpp11::as_cpp<cpp11::decay_t<int>>(draws), cpp11::as_cpp<cpp11::decay_t<int>>(observations), cpp11::as_cpp<cpp11::decay_t<int>>(thresholds)));
+  END_CPP11
+}
+// sops.cpp
+doubles cpp_markov_update_second_order_po(doubles previous, doubles scalar_predictor, doubles cutpoints, int observations, int states, integers older, integers current, integers absorb);
+extern "C" SEXP _markov_misc_cpp_markov_update_second_order_po(SEXP previous, SEXP scalar_predictor, SEXP cutpoints, SEXP observations, SEXP states, SEXP older, SEXP current, SEXP absorb) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(cpp_markov_update_second_order_po(cpp11::as_cpp<cpp11::decay_t<doubles>>(previous), cpp11::as_cpp<cpp11::decay_t<doubles>>(scalar_predictor), cpp11::as_cpp<cpp11::decay_t<doubles>>(cutpoints), cpp11::as_cpp<cpp11::decay_t<int>>(observations), cpp11::as_cpp<cpp11::decay_t<int>>(states), cpp11::as_cpp<cpp11::decay_t<integers>>(older), cpp11::as_cpp<cpp11::decay_t<integers>>(current), cpp11::as_cpp<cpp11::decay_t<integers>>(absorb)));
+  END_CPP11
+}
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
-    {"_markov_misc_cpp_markov_propagate",            (DL_FUNC) &_markov_misc_cpp_markov_propagate,            4},
-    {"_markov_misc_cpp_markov_update_draws",         (DL_FUNC) &_markov_misc_cpp_markov_update_draws,         7},
-    {"_markov_misc_cpp_markov_update_logits",        (DL_FUNC) &_markov_misc_cpp_markov_update_logits,        4},
-    {"_markov_misc_cpp_markov_update_po",            (DL_FUNC) &_markov_misc_cpp_markov_update_po,            5},
-    {"_markov_misc_cpp_normalize_probability_array", (DL_FUNC) &_markov_misc_cpp_normalize_probability_array, 4},
-    {"_markov_misc_cpp_reduce_sops_draws",           (DL_FUNC) &_markov_misc_cpp_reduce_sops_draws,           7},
-    {"_markov_misc_cpp_sample_categorical_rows",     (DL_FUNC) &_markov_misc_cpp_sample_categorical_rows,     1},
+    {"_markov_misc_cpp_blrm_probabilities",            (DL_FUNC) &_markov_misc_cpp_blrm_probabilities,            7},
+    {"_markov_misc_cpp_markov_propagate",              (DL_FUNC) &_markov_misc_cpp_markov_propagate,              4},
+    {"_markov_misc_cpp_markov_update_draws",           (DL_FUNC) &_markov_misc_cpp_markov_update_draws,           7},
+    {"_markov_misc_cpp_markov_update_logits",          (DL_FUNC) &_markov_misc_cpp_markov_update_logits,          4},
+    {"_markov_misc_cpp_markov_update_po",              (DL_FUNC) &_markov_misc_cpp_markov_update_po,              5},
+    {"_markov_misc_cpp_markov_update_second_order",    (DL_FUNC) &_markov_misc_cpp_markov_update_second_order,    7},
+    {"_markov_misc_cpp_markov_update_second_order_po", (DL_FUNC) &_markov_misc_cpp_markov_update_second_order_po, 8},
+    {"_markov_misc_cpp_normalize_probability_array",   (DL_FUNC) &_markov_misc_cpp_normalize_probability_array,   4},
+    {"_markov_misc_cpp_reduce_sops_draws",             (DL_FUNC) &_markov_misc_cpp_reduce_sops_draws,             7},
+    {"_markov_misc_cpp_sample_categorical_rows",       (DL_FUNC) &_markov_misc_cpp_sample_categorical_rows,       1},
     {NULL, NULL, 0}
 };
 }

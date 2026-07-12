@@ -518,15 +518,6 @@ soprob_markov_second_order_run <- function(
     )
 
     if (nd == 0) {
-      joint_current <- array(0, dim = c(n_pat, n_states, n_states))
-      for (pair_i in which(pair_grid$j %in% absorb_idx)) {
-        h <- pair_grid$h[pair_i]
-        j <- pair_grid$j[pair_i]
-        prob_prev <- joint_prev[, h, j]
-        if (any(prob_prev != 0)) {
-          joint_current[, j, j] <- joint_current[, j, j] + prob_prev
-        }
-      }
       active <- which(
         predictable_pair &
           vapply(
@@ -538,6 +529,7 @@ soprob_markov_second_order_run <- function(
           )
       )
       chunks <- split(active, ceiling(seq_along(active) / pair_chunk_size))
+      joint_current <- array(0, dim = c(n_pat, n_states, n_states))
       for (chunk in chunks) {
         edata <- data_time[
           rep(seq_len(n_pat), times = length(chunk)),
@@ -561,18 +553,24 @@ soprob_markov_second_order_run <- function(
           trans_probs,
           paste0("second-order SOP time point ", it)
         )
-        for (chunk_pos in seq_along(chunk)) {
-          pair_i <- chunk[chunk_pos]
-          h <- pair_grid$h[pair_i]
-          j <- pair_grid$j[pair_i]
-          prob_prev <- joint_prev[, h, j]
-          rows <- (chunk_pos - 1L) * n_pat + seq_len(n_pat)
-          transition <- trans_probs[rows, , drop = FALSE]
-          for (l in seq_len(n_states)) {
-            joint_current[, j, l] <- joint_current[, j, l] +
-              transition[, l] * prob_prev
-          }
-        }
+        contribution <- markov_update_second_order_native(
+          joint_prev,
+          trans_probs,
+          pair_grid$h[chunk],
+          pair_grid$j[chunk],
+          integer()
+        )
+        joint_current <- joint_current + contribution
+      }
+      if (length(absorb_idx) > 0L) {
+        joint_current <- joint_current +
+          markov_update_second_order_native(
+            joint_prev,
+            matrix(numeric(), nrow = 0L, ncol = n_states),
+            integer(),
+            integer(),
+            absorb_idx
+          )
       }
       P[, it, ] <- apply(joint_current, c(1, 3), sum)
       joint_prev <- joint_current

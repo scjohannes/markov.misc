@@ -438,10 +438,9 @@ predict_blrm_response_markov <- function(
       draws <- object$draws[draw_indices, , drop = FALSE]
       ndraws <- nrow(draws)
       ns <- object$non.slopes
-      K <- ns + 1L
       cn <- colnames(draws)
       tauinfo <- object$tauInfo
-      tau_names <- if (!is.null(tauinfo) && length(tauinfo$name)) {
+      tau_names <- if (!is.null(tauinfo) && length(tauinfo$name) > 0L) {
         tauinfo$name
       } else {
         character()
@@ -504,34 +503,15 @@ predict_blrm_response_markov <- function(
       } else {
         as_state_labels(object$ylevels)
       }
-      out <- array(
-        NA_real_,
-        dim = c(ndraws, nrow(newdata), K),
-        dimnames = list(draw_indices, rownames(newdata), ynam)
-      )
-
       base_eta <- xb + u_draws
-      cum_probs <- array(
-        NA_real_,
-        dim = c(ndraws, nrow(newdata), ns)
+      out <- blrm_probabilities_native(
+        base_eta,
+        intercept_draws,
+        threshold_eta = if (has_npo) zt else numeric(),
+        threshold_scale = if (has_npo) cppos else numeric()
       )
-      for (k in seq_len(ns)) {
-        ep <- sweep(base_eta, 1L, intercept_draws[, k], "+")
-        if (has_npo) {
-          ep <- ep + cppos[k] * zt
-        }
-        cum_probs[,, k] <- stats::plogis(ep)
-      }
-
-      out[,, 1] <- 1 - cum_probs[,, 1]
-      if (K > 2) {
-        out[,, 2:(K - 1)] <- cum_probs[,, 1:(K - 2), drop = FALSE] -
-          cum_probs[,, 2:(K - 1), drop = FALSE]
-      }
-      out[,, K] <- cum_probs[,, K - 1]
-      out[out < 0] <- 0
-
-      normalize_probability_array(out)
+      dimnames(out) <- list(draw_indices, rownames(newdata), ynam)
+      out
     },
     error = function(e) {
       manual_error <<- e

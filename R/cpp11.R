@@ -27,3 +27,15 @@ cpp_reduce_sops_draws <- function(values, draws, observations, times, states, gr
 cpp_markov_update_draws <- function(previous, transition, draws, observations, states, non_absorb, absorb) {
   .Call(`_markov_misc_cpp_markov_update_draws`, previous, transition, draws, observations, states, non_absorb, absorb)
 }
+
+cpp_markov_update_second_order <- function(previous, transition, observations, states, older, current, absorb) {
+  .Call(`_markov_misc_cpp_markov_update_second_order`, previous, transition, observations, states, older, current, absorb)
+}
+
+cpp_blrm_probabilities <- function(base_eta, intercepts, threshold_eta, threshold_scale, draws, observations, thresholds) {
+  .Call(`_markov_misc_cpp_blrm_probabilities`, base_eta, intercepts, threshold_eta, threshold_scale, draws, observations, thresholds)
+}
+
+cpp_markov_update_second_order_po <- function(previous, scalar_predictor, cutpoints, observations, states, older, current, absorb) {
+  .Call(`_markov_misc_cpp_markov_update_second_order_po`, previous, scalar_predictor, cutpoints, observations, states, older, current, absorb)
+}

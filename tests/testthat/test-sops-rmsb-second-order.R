@@ -221,6 +221,55 @@ test_that("soprob_markov carries absorbing labels that are not column positions"
   )
 })
 
+test_that("compiled second-order ORM plans match the reference recursion", {
+  set.seed(119)
+  data <- expand.grid(
+    id = seq_len(20L),
+    time = seq_len(6L),
+    KEEP.OUT.ATTRS = FALSE
+  )
+  data <- data[order(data$id, data$time), , drop = FALSE]
+  data$tx <- rep(rep(0:1, each = 10L), each = 6L)
+  data$y <- factor(sample(1:3, nrow(data), replace = TRUE), levels = 1:3)
+  data$yprev <- ave(as.integer(data$y), data$id, FUN = function(value) {
+    c(value[1L], value[-length(value)])
+  })
+  data$ypprev <- ave(data$yprev, data$id, FUN = function(value) {
+    c(value[1L], value[-length(value)])
+  })
+  data$yprev <- factor(data$yprev, levels = 1:3)
+  data$ypprev <- factor(data$ypprev, levels = 1:3)
+  model <- rms::orm(
+    y ~ tx + time + yprev + ypprev,
+    data = data[data$time > 2L, ],
+    x = TRUE,
+    y = TRUE
+  )
+  baseline <- data[data$time == 1L, ]
+  plan <- markov.misc:::compile_sop_execution_plan(
+    model,
+    baseline,
+    times = 1:6,
+    y_levels = 1:3,
+    p2_var = "ypprev"
+  )
+  actual <- markov.misc:::run_sop_execution_plan(
+    plan,
+    markov.misc:::get_effective_coefs(model)
+  )
+  expected <- markov.misc:::soprob_markov_reference(
+    model,
+    baseline,
+    times = 1:6,
+    y_levels = 1:3,
+    p2_var = "ypprev"
+  )
+
+  expect_equal(plan$recursion_order, 2L)
+  expect_lte(plan$design_bytes, plan$workspace_bytes)
+  expect_equal(actual, expected, tolerance = 1e-11, ignore_attr = TRUE)
+})
+
 test_that("blrm posterior draw sampling is random, capped, and reproducible", {
   model <- make_fake_blrm(draws = matrix(0, nrow = 150, ncol = 3))
 

@@ -95,6 +95,7 @@ soprob_markov <- function(
     absorb = absorb,
     time_var = time_var,
     p_var = p_var,
+    p2_var = p2_var,
     gap_var = gap_var,
     builder = "batched",
     output = "array"

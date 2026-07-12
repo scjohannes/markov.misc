@@ -399,12 +399,13 @@ flowchart TD
   NEXT -- "no" --> ARRAY["Return patient x time x state array"]
 ```
 
-First-order `vglm` and `orm` prediction is represented by a serializable
+Frequentist `vglm` and `orm` prediction is represented by a serializable
 `markov_sop_exec_plan` from `R/sops-execution-plan.R`. The plan fixes visits,
 states, absorbing indices, model columns, fitted basis metadata, output mode,
-and visit-streamed design blocks. It never builds the unused visit-1 transition
-design. Full proportional-odds models project one scalar predictor per
-patient/origin; other constraints project one visit's bounded logit block.
+recursion order, and visit-streamed design blocks. It never builds the unused
+visit-1 transition design. Full proportional-odds models project one scalar
+predictor per patient/origin; other constraints project one visit's bounded
+logit block.
 `src/sops.cpp` converts and normalizes each origin distribution while it is
 propagated, so no patient-by-origin-by-target transition tensor is retained.
 
@@ -418,10 +419,11 @@ Backend-specific prediction functions live in `R/sops-backends.R`:
   proportional-odds deviations, and optional random effects.
 
 `blrm` calls retain posterior draws as numeric arrays. Design matrices are
-cached across draw chunks, probability normalization and Markov draw updates
-run in compiled code, and grouped or counterfactual averages are reduced before
-any tidy data frame is created. This keeps the unavoidable public draw table at
-the API boundary rather than inside the recursion.
+cached across draw chunks, cumulative-logit conversion, probability
+normalization, and Markov draw updates run in compiled code, and grouped or
+counterfactual averages are reduced before any tidy data frame is created. This
+keeps the unavoidable public draw table at the API boundary rather than inside
+the recursion.
 
 `lp_to_probs()` in `R/sops-fast-path.R` remains the R oracle for conversion from
 cumulative logits to state probabilities. Native PO and general-logit updates
@@ -436,11 +438,11 @@ model.
 
 ### Second-Order Recursion
 
-When `p2_var` is supplied, `soprob_markov()` dispatches to
-`soprob_markov_second_order_run()`. The state distribution is no longer enough;
-the recursion tracks joint history over `(S(t-2), S(t-1))`. That enables models
-whose transition probability depends on two lagged states, at the cost of a
-larger expanded state space and no fast-path inference.
+When `p2_var` is supplied, the state distribution is no longer enough; the
+recursion tracks joint history over `(S(t-2), S(t-1))`. Point prediction uses
+`soprob_markov_second_order_run()`. Frequentist inference compiles the fitted
+visit/pair designs once into a recursion-order-two execution plan and replays
+coefficient draws without rebuilding model frames or fitted transformations.
 
 The second-order implementation retains only the rolling patient-by-state-pair
 joint distribution. At each visit it identifies exact nonzero predictable
@@ -448,6 +450,12 @@ pairs, groups them into a byte-budgeted chunk, predicts that chunk, and updates
 the joint state immediately. It therefore avoids patient-by-origin-pair-by-
 target transition storage while keeping the recursion explicit and independently
 testable.
+
+For compiled proportional-odds plans, `src/sops.cpp` fuses stable cumulative-
+logit conversion with the joint-state update. Neither the pair transition
+tensor nor an origin-by-target probability matrix is materialized. Compiled
+design storage is measured while the plan is built and plans above the 256 MiB
+ceiling fall back to the bounded reference recursion.
 
 ### Time and Gap Handling
 
@@ -526,7 +534,9 @@ continue through fitted `model.matrix()` or `predictrms()` reconstruction.
 
 Adding another RMS numeric transformation requires a registry descriptor,
 evaluator, and matrix-equivalence tests; execution-plan dispatch, recursion,
-inference, and native kernels do not change.
+inference, and native kernels do not change. Package-internal or test handlers
+can be supplied through the `markov.misc.rms_basis_handlers` option; descriptors
+are validated before they are merged with the shipped registry.
 
 ### `robcov_vglm`
 

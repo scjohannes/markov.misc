@@ -34,6 +34,40 @@ test_that("RMS basis registry compiles rcs and lsp bases", {
   )
 })
 
+test_that("a third RMS basis handler extends evaluation without dispatch changes", {
+  hinge2 <- list(
+    id = "hinge2",
+    helper = "hinge2",
+    assume = "hinge2",
+    assume_code = 99L,
+    pattern = "(^|:)\\s*hinge2\\(",
+    evaluate = function(values, knots) {
+      cbind(values, pmax(values - knots[1L], 0)^2)
+    }
+  )
+  withr::local_options(
+    markov.misc.rms_basis_handlers = list(hinge2 = hinge2)
+  )
+  basis <- markov.misc:::new_compiled_rms_basis(
+    "hinge2",
+    variable = "time",
+    parameters = 2,
+    columns = c("time", "time_hinge2")
+  )
+  actual <- markov.misc:::evaluate_compiled_rms_basis(basis, c(1, 2, 4))
+
+  expect_equal(as.vector(actual), as.vector(cbind(c(1, 2, 4), c(0, 0, 4))))
+  expect_equal(attr(actual, "nonlinear"), c(FALSE, TRUE))
+  expect_equal(
+    markov.misc:::rms_basis_handler_for_design("hinge2", 99L)$id,
+    "hinge2"
+  )
+  expect_equal(
+    markov.misc:::rms_basis_handlers_for_term("hinge2(time)"),
+    "hinge2"
+  )
+})
+
 test_that("RMS basis registry recognizes fitted Design metadata", {
   expect_equal(
     markov.misc:::rms_basis_handler_for_design("rcspline", 4L)$id,

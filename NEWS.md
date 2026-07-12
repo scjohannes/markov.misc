@@ -5,6 +5,9 @@
 - `inferences()` now reuses serial execution plans, evaluates fixed-order draw
   cells, and generates score-bootstrap perturbations in deterministic bounded
   matrix blocks instead of binding one data frame per draw.
+- `inferences()` now compiles second-order ORM/VGLM visit-pair designs once and
+  replays coefficient draws through a fused proportional-odds joint-state
+  kernel, retaining bounded rolling state without transition tensors.
 - `interpolate_sops()` now applies one compiled interpolation plan across
   canonical point and stored-draw grids, with the existing generic fallback for
   irregular or duplicate grids.
@@ -13,6 +16,8 @@
 - `soprob_markov()` now streams visit designs into fused PO or general-logit
   propagation kernels and chunks active second-order state pairs, avoiding dense
   first- and second-order transition tensors.
+- `sops()` and `avg_sops()` now fuse BLRM posterior cumulative-logit conversion,
+  category differencing, clipping, and normalization in one serial native pass.
 - `states_to_tte_v2()` now collapses trajectories with a linear indexed run
   scan, and bootstrap samples are materialized from reusable row-index plans.
 - `vglm_markov()` now uses an extensible RMS basis registry and ships first-class

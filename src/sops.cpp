@@ -461,3 +461,252 @@ double stable_logistic(const double value) {
   out.attr("dim") = writable::integers({draws, observations, states});
   return out;
 }
+
+[[cpp11::register]] doubles cpp_markov_update_second_order(
+    doubles previous,
+    doubles transition,
+    int observations,
+    int states,
+    integers older,
+    integers current,
+    integers absorb) {
+  const int pairs = older.size();
+  if (current.size() != pairs) {
+    cpp11::stop("Second-order state-pair indices are not aligned.");
+  }
+  const R_xlen_t joint_size = checked_product({observations, states, states});
+  const R_xlen_t transition_size =
+    checked_product({observations, pairs, states});
+  if (previous.size() != joint_size || transition.size() != transition_size) {
+    cpp11::stop("Second-order transition dimensions do not match the state plan.");
+  }
+  for (int pair = 0; pair < pairs; ++pair) {
+    if (older[pair] < 1 || older[pair] > states ||
+        current[pair] < 1 || current[pair] > states) {
+      cpp11::stop("Second-order state-pair index is out of range.");
+    }
+  }
+  for (R_xlen_t pos = 0; pos < absorb.size(); ++pos) {
+    if (absorb[pos] < 1 || absorb[pos] > states) {
+      cpp11::stop("Absorbing state index is out of range.");
+    }
+  }
+
+  writable::doubles out(joint_size);
+  std::fill(out.begin(), out.end(), 0.0);
+  auto joint_index = [observations, states](
+      const int i, const int older_state, const int current_state) -> R_xlen_t {
+    return static_cast<R_xlen_t>(i) +
+      static_cast<R_xlen_t>(observations) * older_state +
+      static_cast<R_xlen_t>(observations) * states * current_state;
+  };
+  auto transition_index = [observations, pairs](
+      const int i, const int pair, const int target) -> R_xlen_t {
+    return static_cast<R_xlen_t>(i) +
+      static_cast<R_xlen_t>(observations) * pair +
+      static_cast<R_xlen_t>(observations) * pairs * target;
+  };
+
+  for (int pair = 0; pair < pairs; ++pair) {
+    const int h = older[pair] - 1;
+    const int j = current[pair] - 1;
+    for (int target = 0; target < states; ++target) {
+      for (int i = 0; i < observations; ++i) {
+        out[joint_index(i, j, target)] +=
+          previous[joint_index(i, h, j)] *
+          transition[transition_index(i, pair, target)];
+      }
+    }
+    if ((pair & 7) == 0) {
+      cpp11::check_user_interrupt();
+    }
+  }
+
+  for (R_xlen_t pos = 0; pos < absorb.size(); ++pos) {
+    const int j = absorb[pos] - 1;
+    for (int h = 0; h < states; ++h) {
+      for (int i = 0; i < observations; ++i) {
+        out[joint_index(i, j, j)] += previous[joint_index(i, h, j)];
+      }
+    }
+  }
+  out.attr("dim") = writable::integers({observations, states, states});
+  return out;
+}
+
+[[cpp11::register]] doubles cpp_blrm_probabilities(
+    doubles base_eta,
+    doubles intercepts,
+    doubles threshold_eta,
+    doubles threshold_scale,
+    int draws,
+    int observations,
+    int thresholds) {
+  const R_xlen_t eta_size = checked_product({draws, observations});
+  const R_xlen_t intercept_size = checked_product({draws, thresholds});
+  if (base_eta.size() != eta_size || intercepts.size() != intercept_size) {
+    cpp11::stop("BLRM predictor dimensions do not match the posterior plan.");
+  }
+  const bool partial = threshold_eta.size() != 0 || threshold_scale.size() != 0;
+  if (partial &&
+      (threshold_eta.size() != eta_size || threshold_scale.size() != thresholds)) {
+    cpp11::stop("BLRM partial-PO dimensions do not match the posterior plan.");
+  }
+  const int states = thresholds + 1;
+  writable::doubles out(checked_product({draws, observations, states}));
+  auto matrix_index = [draws](const int d, const int i) -> R_xlen_t {
+    return static_cast<R_xlen_t>(d) + static_cast<R_xlen_t>(draws) * i;
+  };
+  auto output_index = [draws, observations](
+      const int d, const int i, const int state) -> R_xlen_t {
+    return static_cast<R_xlen_t>(d) +
+      static_cast<R_xlen_t>(draws) * i +
+      static_cast<R_xlen_t>(draws) * observations * state;
+  };
+  auto logistic = [](const double value) -> double {
+    if (value >= 0.0) {
+      const double z = std::exp(-value);
+      return 1.0 / (1.0 + z);
+    }
+    const double z = std::exp(value);
+    return z / (1.0 + z);
+  };
+
+  std::vector<double> cumulative(static_cast<size_t>(thresholds));
+  for (int i = 0; i < observations; ++i) {
+    for (int d = 0; d < draws; ++d) {
+      const R_xlen_t eta_pos = matrix_index(d, i);
+      for (int k = 0; k < thresholds; ++k) {
+        double value = base_eta[eta_pos] + intercepts[matrix_index(d, k)];
+        if (partial) {
+          value += threshold_scale[k] * threshold_eta[eta_pos];
+        }
+        cumulative[static_cast<size_t>(k)] = logistic(value);
+      }
+      double total = 0.0;
+      for (int state = 0; state < states; ++state) {
+        double probability;
+        if (state == 0) {
+          probability = 1.0 - cumulative[0];
+        } else if (state == states - 1) {
+          probability = cumulative[static_cast<size_t>(thresholds - 1)];
+        } else {
+          probability = cumulative[static_cast<size_t>(state - 1)] -
+            cumulative[static_cast<size_t>(state)];
+        }
+        probability = std::max(0.0, probability);
+        out[output_index(d, i, state)] = probability;
+        total += probability;
+      }
+      if (!std::isfinite(total) || total <= 0.0) {
+        cpp11::stop("BLRM prediction produced invalid probability mass.");
+      }
+      for (int state = 0; state < states; ++state) {
+        out[output_index(d, i, state)] /= total;
+      }
+    }
+    if ((i & 255) == 0) {
+      cpp11::check_user_interrupt();
+    }
+  }
+  out.attr("dim") = writable::integers({draws, observations, states});
+  return out;
+}
+
+[[cpp11::register]] doubles cpp_markov_update_second_order_po(
+    doubles previous,
+    doubles scalar_predictor,
+    doubles cutpoints,
+    int observations,
+    int states,
+    integers older,
+    integers current,
+    integers absorb) {
+  const int pairs = older.size();
+  const int thresholds = states - 1;
+  if (current.size() != pairs || cutpoints.size() != thresholds) {
+    cpp11::stop("Second-order PO metadata does not match the state plan.");
+  }
+  if (previous.size() != checked_product({observations, states, states}) ||
+      scalar_predictor.size() != checked_product({observations, pairs})) {
+    cpp11::stop("Second-order PO dimensions do not match the state plan.");
+  }
+  for (int pair = 0; pair < pairs; ++pair) {
+    if (older[pair] < 1 || older[pair] > states ||
+        current[pair] < 1 || current[pair] > states) {
+      cpp11::stop("Second-order PO state-pair index is out of range.");
+    }
+  }
+  for (R_xlen_t pos = 0; pos < absorb.size(); ++pos) {
+    if (absorb[pos] < 1 || absorb[pos] > states) {
+      cpp11::stop("Second-order PO absorbing index is out of range.");
+    }
+  }
+
+  writable::doubles out(checked_product({observations, states, states}));
+  std::fill(out.begin(), out.end(), 0.0);
+  auto joint_index = [observations, states](
+      const int i, const int older_state, const int current_state) -> R_xlen_t {
+    return static_cast<R_xlen_t>(i) +
+      static_cast<R_xlen_t>(observations) * older_state +
+      static_cast<R_xlen_t>(observations) * states * current_state;
+  };
+  auto scalar_index = [observations](const int i, const int pair) -> R_xlen_t {
+    return static_cast<R_xlen_t>(i) +
+      static_cast<R_xlen_t>(observations) * pair;
+  };
+  auto logistic = [](const double value) -> double {
+    if (value >= 0.0) {
+      const double z = std::exp(-value);
+      return 1.0 / (1.0 + z);
+    }
+    const double z = std::exp(value);
+    return z / (1.0 + z);
+  };
+
+  std::vector<double> probabilities(static_cast<size_t>(states));
+  for (int pair = 0; pair < pairs; ++pair) {
+    const int h = older[pair] - 1;
+    const int j = current[pair] - 1;
+    for (int i = 0; i < observations; ++i) {
+      const double mass = previous[joint_index(i, h, j)];
+      if (mass == 0.0) {
+        continue;
+      }
+      const double scalar = scalar_predictor[scalar_index(i, pair)];
+      double prior_cumulative = logistic(scalar + cutpoints[0]);
+      probabilities[0] = std::max(0.0, 1.0 - prior_cumulative);
+      double total = probabilities[0];
+      for (int target = 1; target < thresholds; ++target) {
+        const double cumulative = logistic(scalar + cutpoints[target]);
+        probabilities[static_cast<size_t>(target)] =
+          std::max(0.0, prior_cumulative - cumulative);
+        total += probabilities[static_cast<size_t>(target)];
+        prior_cumulative = cumulative;
+      }
+      probabilities[static_cast<size_t>(states - 1)] =
+        std::max(0.0, prior_cumulative);
+      total += probabilities[static_cast<size_t>(states - 1)];
+      if (!std::isfinite(total) || total <= 0.0) {
+        cpp11::stop("Second-order PO prediction produced invalid probability mass.");
+      }
+      for (int target = 0; target < states; ++target) {
+        out[joint_index(i, j, target)] += mass *
+          probabilities[static_cast<size_t>(target)] / total;
+      }
+    }
+    if ((pair & 7) == 0) {
+      cpp11::check_user_interrupt();
+    }
+  }
+  for (R_xlen_t pos = 0; pos < absorb.size(); ++pos) {
+    const int j = absorb[pos] - 1;
+    for (int h = 0; h < states; ++h) {
+      for (int i = 0; i < observations; ++i) {
+        out[joint_index(i, j, j)] += previous[joint_index(i, h, j)];
+      }
+    }
+  }
+  out.attr("dim") = writable::integers({observations, states, states});
+  return out;
+}

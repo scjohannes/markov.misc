@@ -73,6 +73,64 @@ test_that("native PO updates match the general logit kernel", {
   expect_equal(actual, expected, tolerance = 1e-15)
 })
 
+test_that("native second-order updates match direct pair accumulation", {
+  previous <- array(seq_len(2 * 3 * 3), dim = c(2, 3, 3)) / 100
+  older <- c(1L, 2L, 1L)
+  current <- c(1L, 1L, 2L)
+  transition <- matrix(
+    seq_len(2 * length(older) * 3) / 50,
+    nrow = 2 * length(older)
+  )
+  expected <- array(0, dim = c(2, 3, 3))
+  for (pair in seq_along(older)) {
+    rows <- (pair - 1L) * 2L + seq_len(2L)
+    for (target in seq_len(3L)) {
+      expected[, current[pair], target] <-
+        expected[, current[pair], target] +
+        previous[, older[pair], current[pair]] * transition[rows, target]
+    }
+  }
+  expected[, 3L, 3L] <- expected[, 3L, 3L] +
+    apply(previous[,, 3L, drop = FALSE], 1L, sum)
+
+  actual <- markov.misc:::markov_update_second_order_native(
+    previous,
+    transition,
+    older,
+    current,
+    absorb = 3L
+  )
+  expect_equal(actual, expected, tolerance = 1e-15)
+})
+
+test_that("native BLRM probability conversion preserves R semantics", {
+  base_eta <- matrix(c(-2, 1, 0.5, -0.2), nrow = 2)
+  intercepts <- matrix(c(2, 1, 0, -1), nrow = 2)
+  threshold_eta <- matrix(c(0.2, -0.1, 0.4, 0.3), nrow = 2)
+  threshold_scale <- c(0.5, -0.25)
+  cumulative <- array(NA_real_, dim = c(2, 2, 2))
+  for (threshold in seq_len(2L)) {
+    cumulative[,, threshold] <- stats::plogis(
+      sweep(base_eta, 1L, intercepts[, threshold], "+") +
+        threshold_scale[threshold] * threshold_eta
+    )
+  }
+  expected <- array(NA_real_, dim = c(2, 2, 3))
+  expected[,, 1L] <- 1 - cumulative[,, 1L]
+  expected[,, 2L] <- cumulative[,, 1L] - cumulative[,, 2L]
+  expected[,, 3L] <- cumulative[,, 2L]
+  expected[expected < 0] <- 0
+  expected <- markov.misc:::normalize_probability_array(expected)
+
+  actual <- markov.misc:::blrm_probabilities_native(
+    base_eta,
+    intercepts,
+    threshold_eta,
+    threshold_scale
+  )
+  expect_equal(actual, expected, tolerance = 1e-15)
+})
+
 test_that("PO structure detection requires threshold-invariant slopes", {
   X <- cbind("(Intercept)" = 1, x = c(-1, 0, 1))
   po <- markov.misc:::markov_po_structure(

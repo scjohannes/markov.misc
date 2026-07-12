@@ -1,7 +1,7 @@
 # Internal registry for fitted numeric basis transformations used by SOP plans.
 
 rms_basis_registry <- function() {
-  list(
+  registry <- list(
     rcs = list(
       id = "rcs",
       helper = "rcs",
@@ -19,6 +19,40 @@ rms_basis_registry <- function() {
       evaluate = evaluate_lsp_basis
     )
   )
+  extensions <- getOption("markov.misc.rms_basis_handlers", list())
+  if (length(extensions) > 0L) {
+    if (is.null(names(extensions)) || any(!nzchar(names(extensions)))) {
+      stop("Extended RMS basis handlers must be a named list.", call. = FALSE)
+    }
+    required <- c(
+      "id",
+      "helper",
+      "assume",
+      "assume_code",
+      "pattern",
+      "evaluate"
+    )
+    for (name in names(extensions)) {
+      handler <- extensions[[name]]
+      missing <- setdiff(required, names(handler))
+      if (length(missing) > 0L || !is.function(handler$evaluate)) {
+        stop(
+          "Extended RMS basis handler `",
+          name,
+          "` is invalid.",
+          call. = FALSE
+        )
+      }
+      if (!identical(handler$id, name)) {
+        stop(
+          "Extended RMS basis handler names must match their IDs.",
+          call. = FALSE
+        )
+      }
+    }
+    registry[names(extensions)] <- extensions
+  }
+  registry
 }
 
 rms_basis_handler <- function(id) {
