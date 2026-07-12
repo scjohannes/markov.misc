@@ -549,6 +549,7 @@ test_that("low-level SOP helpers validate model families and state metadata", {
   )
 
   model@family <- methods::new("vglmff", vfamily = "cumulative")
+  model@misc$link <- "logitlink"
   model@call <- quote(VGAM::vglm(y ~ x, family = VGAM::cumulative()))
   expect_error(
     markov.misc:::validate_markov_model(model),

@@ -117,13 +117,59 @@ states_to_tte_v2 <- function(
     stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
   }
 
+  if (
+    is.factor(data$id) ||
+      !is.numeric(data$time) ||
+      anyNA(data[, c("id", "time", "y")])
+  ) {
+    return(states_to_tte_v2_reference(data, covariates, absorbing_state))
+  }
+
+  keep <- is.na(data$yprev) |
+    as.character(data$yprev) != as.character(absorbing_state)
+  data <- data[keep, , drop = FALSE]
+  data <- data[order(data$id, data$time, method = "radix"), , drop = FALSE]
+  available_covs <- intersect(covariates, names(data))
+
+  if (nrow(data) == 0L) {
+    return(states_to_tte_v2_reference(data, covariates, absorbing_state))
+  }
+
+  n <- nrow(data)
+  new_id <- c(TRUE, data$id[-1L] != data$id[-n])
+  state_change <- c(TRUE, as.character(data$y[-1L]) != as.character(data$y[-n]))
+  run_start <- new_id | state_change
+  start_rows <- which(run_start)
+  end_rows <- c(start_rows[-1L] - 1L, n)
+  raw_start <- numeric(length(start_rows))
+  prior_rows <- start_rows - 1L
+  has_prior <- !new_id[start_rows]
+  raw_start[has_prior] <- data$time[prior_rows[has_prior]]
+
+  result <- data.frame(
+    id = data$id[start_rows],
+    tx = data$tx[start_rows],
+    start = raw_start,
+    stop = data$time[end_rows],
+    y = data$y[start_rows],
+    yprev = data$yprev[start_rows],
+    check.names = FALSE
+  )
+  for (cov in available_covs) {
+    result[[cov]] <- data[[cov]][start_rows]
+  }
+  rownames(result) <- NULL
+  result
+}
+
+states_to_tte_v2_reference <- function(data, covariates, absorbing_state) {
   keep <- is.na(data$yprev) |
     as.character(data$yprev) != as.character(absorbing_state)
   data <- data[keep, , drop = FALSE]
   data <- data[order(data$id, data$time), , drop = FALSE]
   available_covs <- intersect(covariates, names(data))
 
-  result <- bind_rows_fill(lapply(unique(data$id), function(id) {
+  bind_rows_fill(lapply(unique(data$id), function(id) {
     group_data <- data[data$id == id, , drop = FALSE]
     raw_start <- c(0, utils::head(group_data$time, -1))
     raw_stop <- group_data$time
@@ -147,8 +193,6 @@ states_to_tte_v2 <- function(
       out
     }))
   }))
-
-  return(result)
 }
 
 

@@ -399,12 +399,14 @@ flowchart TD
   NEXT -- "no" --> ARRAY["Return patient x time x state array"]
 ```
 
-First-order `vglm` and `orm` prediction is planned before recursion. The planner
-builds one aligned design matrix over the requested visits and non-absorbing
-history states, then slices it into reusable transition blocks. Compiled kernels
-in `src/sops.cpp` propagate those transition probabilities without returning to
-R for each origin state. Large designs fall back to bounded per-visit matrix
-construction without changing the numerical contract.
+First-order `vglm` and `orm` prediction is represented by a serializable
+`markov_sop_exec_plan` from `R/sops-execution-plan.R`. The plan fixes visits,
+states, absorbing indices, model columns, fitted basis metadata, output mode,
+and visit-streamed design blocks. It never builds the unused visit-1 transition
+design. Full proportional-odds models project one scalar predictor per
+patient/origin; other constraints project one visit's bounded logit block.
+`src/sops.cpp` converts and normalizes each origin distribution while it is
+propagated, so no patient-by-origin-by-target transition tensor is retained.
 
 Backend-specific prediction functions live in `R/sops-backends.R`:
 
@@ -421,8 +423,16 @@ run in compiled code, and grouped or counterfactual averages are reduced before
 any tidy data frame is created. This keeps the unavoidable public draw table at
 the API boundary rather than inside the recursion.
 
-`lp_to_probs()` in `R/sops-fast-path.R` centralizes the conversion from
-cumulative logits to state probabilities.
+`lp_to_probs()` in `R/sops-fast-path.R` remains the R oracle for conversion from
+cumulative logits to state probabilities. Native PO and general-logit updates
+retain its origin-wise clipping and normalization semantics, including crossed
+threshold draws.
+
+Markov/SOP adapters are intentionally cumulative-logit only. VGLM link metadata
+must resolve to `logitlink`, ORM family metadata must resolve to `logistic`, and
+unknown or non-logit links fail before prediction with the stable
+`markov_misc_unsupported_link` condition. BLRM uses its native logistic ordinal
+model.
 
 ### Second-Order Recursion
 
@@ -432,9 +442,11 @@ the recursion tracks joint history over `(S(t-2), S(t-1))`. That enables models
 whose transition probability depends on two lagged states, at the cost of a
 larger expanded state space and no fast-path inference.
 
-The R second-order implementation remains the reference path. It shares the
-posterior design cache and compiled probability normalization; the joint-history
-recursion remains explicit so its state-history contract is independently
+The second-order implementation retains only the rolling patient-by-state-pair
+joint distribution. At each visit it identifies exact nonzero predictable
+pairs, groups them into a byte-budgeted chunk, predicts that chunk, and updates
+the joint state immediately. It therefore avoids patient-by-origin-pair-by-
+target transition storage while keeping the recursion explicit and independently
 testable.
 
 ### Time and Gap Handling
@@ -479,13 +491,15 @@ VGAM support has two paths:
 - A package-native model-matrix path for `vglm_markov()` fits and inline spline
   metadata.
 
+Both paths are cumulative-logit only for Markov/SOP prediction.
+
 `vglm_markov()` in `R/vglm_helpers.R` mirrors `VGAM::vglm()` but adds package
 behaviors:
 
-- It injects `rms` formula helpers such as `rcs()` and `%ia%` while constructing
-  model frames and prediction matrices.
-- It splits inline restricted cubic spline assignment metadata by generated
-  basis column so partial proportional-odds constraints can target those columns.
+- It injects registered `rms` formula helpers such as `rcs()`, `lsp()`, and
+  `%ia%` while constructing model frames and prediction matrices.
+- It splits registered multi-column basis assignment metadata by generated
+  column so partial proportional-odds constraints can target each column.
 - It stores the row-aligned original data and `id_var` metadata when a data
   frame is supplied.
 - When `id_var` is supplied, it returns `robcov_vglm()` directly so MVN
@@ -498,6 +512,21 @@ compatibility alias.
 `get_effective_coefs_vglm()` combines VGAM constraint matrices with raw
 coefficients so the fast path can compute threshold linear predictors with
 matrix multiplication.
+
+### RMS Basis Registry
+
+`R/sops-basis-registry.R` isolates fitted numeric transformations from the SOP
+engine. A handler identifies its RMS helper and `Design` assumption, freezes
+fitted parameters and column metadata, evaluates the basis on unique prediction
+values, and validates the result against the backend matrix. The shipped
+handlers are restricted cubic splines (`rcs`, `rcspline`, assume code 4) and
+linear splines (`lsp`, `lspline`, assume code 3). Interactions and `%ia%` consume
+the handler's column and nonlinear masks generically. Unregistered transforms
+continue through fitted `model.matrix()` or `predictrms()` reconstruction.
+
+Adding another RMS numeric transformation requires a registry descriptor,
+evaluator, and matrix-equivalence tests; execution-plan dispatch, recursion,
+inference, and native kernels do not change.
 
 ### `robcov_vglm`
 
@@ -546,17 +575,19 @@ the native uncertainty path.
 for common first-order models. It precomputes the pieces needed for repeated
 prediction:
 
-1. `markov_msm_build()` resolves design information, effective coefficients,
-   transition state support, and prediction scaffolds.
-2. `compute_Gamma()` turns a coefficient vector into threshold-specific
+1. `compile_sop_execution_plan()` resolves model, link, design, state, time,
+   basis, workspace, and output metadata.
+2. `markov_msm_build()` or `markov_msm_build_batched()` creates reusable,
+   visit-streamed numeric design blocks.
+3. `compute_Gamma()` turns a coefficient vector into threshold-specific
    effective coefficients.
-3. `markov_msm_run()` runs the Markov recursion for a coefficient vector without
+4. `markov_msm_run()` runs the Markov recursion for a coefficient vector without
    calling high-level `predict()` repeatedly.
 
-The fast path is used when inference can be expressed as many draws of the same
-first-order `orm` or `vglm` model. It is deliberately bypassed for second-order
-models and model configurations whose prediction data cannot be reconstructed by
-the fast-path scaffolding.
+Inference reuses the same plan across coefficient draws and returns fixed-order
+numeric draw cells. Confidence summaries attach by known cell position rather
+than binding and merging a data frame per draw. Second-order and model
+configurations requiring backend reconstruction use bounded streamed paths.
 
 ## Bootstrap Design
 
@@ -582,10 +613,11 @@ flowchart TD
 ```
 
 The key design choice is just-in-time materialization. `fast_group_bootstrap()`
-stores only sampled IDs and unique bootstrap IDs. Workers receive a lookup
-table, join it to the original data, refit, and return only the requested
-result. This avoids storing all bootstrap data sets at once and keeps repeated
-patient samples identifiable through `new_id`. The fractional weighted
+stores only sampled IDs and unique bootstrap IDs. A row-index plan is compiled
+once from the original longitudinal data; every bootstrap lookup expands that
+integer plan with one subset rather than constructing and binding one data frame
+per sampled ID. This avoids storing all bootstrap data sets at once and keeps
+repeated patient samples identifiable through `new_id`. The fractional weighted
 bootstrap path follows the same just-in-time style but stores patient-level
 exponential weights instead of duplicated ID lookups.
 
@@ -638,7 +670,10 @@ Follow-up TODO:
 The score-bootstrap engine in `R/sops-score-bootstrap.R` provides a middle path
 between MVN simulation and full refitting.
 
-For each draw it:
+Exponential multipliers are generated in canonical, byte-budgeted draw blocks.
+Clustered score perturbations and bread updates are matrix operations, while the
+random-number order remains independent of the working-memory chunk. For each
+draw the engine:
 
 1. Computes or extracts observation-level score contributions.
 2. Aggregates scores by cluster when a cluster variable is provided.
@@ -686,7 +721,10 @@ with downstream sampling configuration.
 `interpolate_sops()` and `time_in_state()` are closely related. Interpolation
 maps visit labels to real time, optionally adds an empirical baseline anchor
 from `newdata_orig`, interpolates draw-level outputs when available, and
-recomputes intervals from interpolated draws. `time_in_state()` then integrates
+recomputes intervals from interpolated draws. Canonical shared grids compile
+left/right indices and weights once and apply them to all series as matrices;
+irregular, duplicate, or missing-value grids retain the generic path.
+`time_in_state()` then integrates
 probabilities by summing visit-scale probabilities or using trapezoidal AUC on
 real-time grids.
 
@@ -698,6 +736,8 @@ preserving draw IDs when `inferences()` replays uncertainty. The ordinal
 distributions, so it is computed from paired patient/profile-level SOPs before
 averaging over profiles or `by` strata. Its point and draw-level inference paths
 share the same real-time interpolation semantics when `time_map` is supplied.
+The ordinal pairwise expectation uses prefix/suffix probability mass in O(S)
+rather than constructing an S-by-S score matrix.
 
 `plot_comparisons()` is the visualization layer for `markov_avg_comparisons`.
 It plots the estimate column on the contrast scale, using a 0 reference line for

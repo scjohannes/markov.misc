@@ -1,5 +1,6 @@
 ^markov\.misc\.Rproj$
 ^\.Rproj\.user$
+^\.github$
 ^LICENSE\.md$
 ^data-raw$
 ^scripts$

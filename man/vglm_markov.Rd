@@ -222,9 +222,9 @@ column in \code{data}. When supplied, \code{\link[=robcov_vglm]{robcov_vglm()}} 
 
   }
 
-\item{constraints}{Optional VGAM constraints list. For inline \code{rcs()} terms,
-names should match the column-level constraint names in a full proportional
-odds fit returned by \code{vglm_markov()}.}
+\item{constraints}{Optional VGAM constraints list. For inline registered RMS
+basis terms, names should match the column-level constraint names in a full
+proportional odds fit returned by \code{vglm_markov()}.}
 
 \item{extra}{
     an optional list with any extra information that
@@ -280,15 +280,17 @@ a \code{robcov_vglm} object when \code{id_var} is supplied.
 \code{markov.misc} SOP workflows. It follows \code{VGAM::vglm()} closely, stores the
 row-aligned fitting data for downstream SOP inference, and marks the fit so
 the SOP prediction code can use package-native Markov prediction. For inline
-restricted cubic spline terms such as \code{rcs(time, 4)} or \code{rms::rcs(time, 4)},
-the internal VGAM assignment metadata is split by generated spline column.
+registered RMS spline terms such as \code{rcs(time, 4)}, \code{lsp(time, 5)}, or their
+namespace-qualified forms, the internal VGAM assignment metadata is split by
+generated spline column.
 This makes it possible to give individual spline basis columns separate
 constraint matrices for partial proportional odds models. Inline splines may
 be used for time or for numeric previous-state effects such as
 \code{rcs(yprev, 6)}.
 }
 \details{
-\code{vglm_markov()} also makes the \code{rms} formula helpers \code{rcs()} and \verb{\%ia\%}
+\code{vglm_markov()} also makes the registered \code{rms} formula helpers \code{rcs()},
+\code{lsp()}, and \verb{\%ia\%}
 available while building model frames and prediction design matrices. This
 lets formulas use \code{time \%ia\% yprev} for a linear-time by previous-state
 interaction without requiring \code{library(rms)} in the user's session.

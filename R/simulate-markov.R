@@ -247,31 +247,38 @@ sim_trajectories_markov <- function(
       lp_args[["tx"]] <- X_active[["tx"]]
     }
 
-    # Calculate linear predictor for each active patient. Each call may return
-    # one shared PO value or one value per threshold for PPO simulation.
-    lp_list <- do.call(
-      mapply,
-      c(
-        list(FUN = lp_function, SIMPLIFY = FALSE, USE.NAMES = FALSE),
-        lp_args,
-        list(MoreArgs = more_args)
-      )
-    )
-
     n_thresholds <- length(intercepts)
-    lp_values <- vapply(
-      seq_along(lp_list),
-      function(i) {
-        normalize_markov_lp(lp_list[[i]], n_thresholds, active_idx[i], t)
-      },
-      numeric(n_thresholds)
-    )
-    lp_matrix <- matrix(
-      as.numeric(lp_values),
-      nrow = length(active_idx),
-      ncol = n_thresholds,
-      byrow = TRUE
-    )
+    if (identical(lp_function, lp_violet)) {
+      lp <- do.call(lp_function, c(lp_args, more_args))
+      lp_matrix <- matrix(
+        lp,
+        nrow = length(active_idx),
+        ncol = n_thresholds
+      )
+    } else {
+      # Arbitrary user functions retain scalar invocation and validation.
+      lp_list <- do.call(
+        mapply,
+        c(
+          list(FUN = lp_function, SIMPLIFY = FALSE, USE.NAMES = FALSE),
+          lp_args,
+          list(MoreArgs = more_args)
+        )
+      )
+      lp_values <- vapply(
+        seq_along(lp_list),
+        function(i) {
+          normalize_markov_lp(lp_list[[i]], n_thresholds, active_idx[i], t)
+        },
+        numeric(n_thresholds)
+      )
+      lp_matrix <- matrix(
+        as.numeric(lp_values),
+        nrow = length(active_idx),
+        ncol = n_thresholds,
+        byrow = TRUE
+      )
+    }
 
     # Calculate transition probabilities using scalar PO or threshold-specific
     # PPO linear predictors.
@@ -285,7 +292,14 @@ sim_trajectories_markov <- function(
         lp_matrix
     )
 
-    if (n_thresholds > 1 && any(t(apply(cum_probs, 1, diff)) < -1e-12)) {
+    if (
+      n_thresholds > 1 &&
+        any(
+          cum_probs[, -1L, drop = FALSE] -
+            cum_probs[, -n_thresholds, drop = FALSE] <
+            -1e-12
+        )
+    ) {
       stop(
         "lp_function produced threshold-specific linear predictors that ",
         "create decreasing cumulative probabilities. This implies negative ",
@@ -297,13 +311,8 @@ sim_trajectories_markov <- function(
     # Convert cumulative probabilities to individual state probabilities
     prob_matrix <- cbind(cum_probs, 1) - cbind(0, cum_probs)
 
-    # States in descending order (highest to lowest)
-    states_vec <- n_states:1
-
-    # Sample next state for each active patient
-    y_new_active <- apply(prob_matrix, 1, function(p) {
-      sample(states_vec, size = 1, prob = p)
-    })
+    # Probability columns run from the highest to the lowest state.
+    y_new_active <- n_states + 1L - sample_categorical_rows(prob_matrix)
 
     # Update state matrix
     # First, carry forward previous state for all patients
@@ -312,19 +321,22 @@ sim_trajectories_markov <- function(
     state_matrix[active_idx, t + 1] <- y_new_active
   }
 
-  # Convert matrix to long format data frame.
-  result <- matrix_to_long(state_matrix, value_name = "y")
-  id_key <- as.character(baseline_data$id)
-  id_match <- match(result$id, id_key)
-  result$id <- baseline_data$id[id_match]
-  result$time <- as.integer(result$time)
-  result <- left_join_preserve_order(result, baseline_data, by = "id")
-  id_order <- match(as.character(result$id), id_key)
-  result <- result[order(id_order, result$time), , drop = FALSE]
-  result$yprev <- ave(result$y, result$id, FUN = function(x) {
-    c(NA, utils::head(x, -1))
-  })
-  result <- result[result$time > 0, , drop = FALSE] # Remove time 0.
+  # Construct the patient-major long result directly.
+  patient_rows <- rep(seq_len(N), each = follow_up_time)
+  result <- data.frame(
+    id = baseline_data$id[patient_rows],
+    time = rep(seq_len(follow_up_time), times = N),
+    y = as.vector(t(state_matrix[, -1L, drop = FALSE])),
+    check.names = FALSE
+  )
+  baseline_columns <- setdiff(names(baseline_data), "id")
+  result <- cbind(
+    result,
+    baseline_data[patient_rows, baseline_columns, drop = FALSE]
+  )
+  result$yprev <- as.vector(t(
+    state_matrix[, -(follow_up_time + 1L), drop = FALSE]
+  ))
   rownames(result) <- NULL
 
   return(result)

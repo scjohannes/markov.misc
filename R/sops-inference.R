@@ -532,6 +532,18 @@ inferences_simulation <- function(
   n_times <- length(times)
   n_states <- length(y_levels)
 
+  if (is_avg) {
+    group_cols <- c("time", "state", names(variables))
+    if (!is.null(by)) {
+      group_cols <- unique(c(group_cols, by))
+    }
+  } else if (is.null(by)) {
+    group_cols <- c("rowid", "time", "state")
+  } else {
+    group_cols <- unique(c("time", "state", by))
+  }
+  object_keys <- sop_draw_cell_key(object, group_cols)
+
   # --- 4. Detect Fast Path Eligibility ---
   # The fast path uses pre-computed design matrix decompositions for supported
   # ordinal model backends.
@@ -540,8 +552,8 @@ inferences_simulation <- function(
 
   if (use_fast_path) {
     # --- FAST PATH: Pre-build components once, then run efficient Markov loop ---
-    components <- tryCatch(
-      markov_msm_build(
+    execution_plan <- tryCatch(
+      compile_sop_execution_plan(
         model = model_chk,
         newdata = newdata_pred,
         time_covariates = time_covariates,
@@ -550,7 +562,9 @@ inferences_simulation <- function(
         absorb = absorb,
         time_var = time_var,
         p_var = p_var,
-        gap_var = gap_var
+        gap_var = gap_var,
+        builder = "streamed",
+        output = if (is_avg) "average" else "individual"
       ),
       error = function(e) {
         warning(
@@ -561,7 +575,7 @@ inferences_simulation <- function(
       }
     )
 
-    if (!is.null(components)) {
+    if (!is.null(execution_plan)) {
       # Define fast analysis function
       analysis_fn <- function(i) {
         baseline_weights <- NULL
@@ -574,7 +588,7 @@ inferences_simulation <- function(
 
         # Run fast Markov simulation
         sops_array <- tryCatch(
-          markov_msm_run(components, Gamma_i, times, absorb),
+          run_sop_execution_plan(execution_plan, Gamma_i),
           error = function(e) {
             warning("markov_msm_run failed in draw ", i, ": ", e$message)
             return(NULL)
@@ -612,7 +626,12 @@ inferences_simulation <- function(
           )
         }
 
-        result
+        pack_sop_draw_result(
+          result,
+          group_cols,
+          object_keys,
+          draw_weight_col
+        )
       }
     } else {
       # Fast path build failed, fall back to slow path
@@ -682,7 +701,12 @@ inferences_simulation <- function(
         )
       }
 
-      result
+      pack_sop_draw_result(
+        result,
+        group_cols,
+        object_keys,
+        draw_weight_col
+      )
     }
   }
 
@@ -707,11 +731,13 @@ inferences_simulation <- function(
     "n_each",
     "baseline_weights_draws",
     "draw_weight_col",
+    "group_cols",
+    "object_keys",
     "use_fast_path",
     "by"
   )
   if (use_fast_path) {
-    globals_list <- c(globals_list, "components")
+    globals_list <- c(globals_list, "execution_plan")
   }
 
   sim_results <- apply_sop_simulation_draws(
@@ -721,54 +747,37 @@ inferences_simulation <- function(
     globals = globals_list
   )
 
-  # --- 6. Combine Results ---
-  sim_results <- Filter(Negate(is.null), sim_results)
+  # --- 6. Combine fixed-order draw cells ---
+  successful_ids <- which(!vapply(sim_results, is.null, logical(1)))
+  sim_results <- sim_results[successful_ids]
 
   if (length(sim_results) == 0) {
     stop("All simulation draws failed.")
   }
 
-  # Add draw_id
-  for (i in seq_along(sim_results)) {
-    sim_results[[i]]$draw_id <- i
+  draw_values <- do.call(rbind, lapply(sim_results, `[[`, "estimate"))
+  weight_values <- NULL
+  has_weights <- vapply(sim_results, function(x) !is.null(x$weight), logical(1))
+  if (any(has_weights) && !all(has_weights)) {
+    stop("Simulation draw weights are not aligned across successful draws.")
   }
-  draws_df <- bind_rows_fill(sim_results)
+  if (all(has_weights)) {
+    weight_values <- do.call(rbind, lapply(sim_results, `[[`, "weight"))
+  }
 
   # --- 7. Compute Confidence Intervals ---
-  if (is_avg) {
-    group_cols <- c("time", "state", names(variables))
-    if (!is.null(by)) {
-      group_cols <- unique(c(group_cols, by))
-    }
-  } else {
-    # For individual SOPs: include rowid unless 'by' is specified
-    if (is.null(by)) {
-      group_cols <- c("rowid", "time", "state")
-    } else {
-      group_cols <- unique(c("time", "state", by))
-    }
-  }
-
-  summary_stats <- compute_ci_from_draws(
-    draws_df = draws_df,
-    group_cols = group_cols,
+  summary_stats <- summarize_sop_draw_matrix(
+    draw_values = draw_values,
     conf_level = conf_level,
     conf_type = conf_type,
-    point_estimates = as.data.frame(object)
+    point_estimates = object$estimate
   )
 
-  # --- 8. Merge with Original Object ---
-  object$.sop_order <- seq_len(nrow(object))
-  final_result <- merge(
-    object,
-    summary_stats,
-    by = group_cols,
-    all.x = TRUE,
-    sort = FALSE
-  )
-  final_result <- final_result[order(final_result$.sop_order), , drop = FALSE]
-  final_result$.sop_order <- NULL
-  rownames(final_result) <- NULL
+  # --- 8. Attach summaries by the already-known cell order ---
+  final_result <- object
+  final_result$conf.low <- summary_stats$conf.low
+  final_result$conf.high <- summary_stats$conf.high
+  final_result$std.error <- summary_stats$std.error
 
   final_result <- restore_sops_attrs(final_result, object)
   # Add metadata
@@ -788,10 +797,110 @@ inferences_simulation <- function(
   }
 
   if (return_draws) {
-    attr(final_result, "draws") <- draws_df
+    attr(final_result, "draws") <- sop_draw_matrix_to_df(
+      draw_values,
+      object,
+      successful_ids,
+      draw_weight_col,
+      weight_values
+    )
   }
 
   final_result
+}
+
+sop_draw_cell_key <- function(data, group_cols) {
+  missing <- setdiff(group_cols, names(data))
+  if (length(missing)) {
+    stop("SOP draw cells are missing: ", paste(missing, collapse = ", "), ".")
+  }
+  key <- do.call(
+    paste,
+    c(lapply(data[, group_cols, drop = FALSE], as.character), sep = "\r")
+  )
+  if (anyDuplicated(key)) {
+    stop("SOP draw cell identifiers are not unique.")
+  }
+  key
+}
+
+pack_sop_draw_result <- function(result, group_cols, object_keys, weight_col) {
+  result_keys <- sop_draw_cell_key(result, group_cols)
+  index <- match(object_keys, result_keys)
+  if (anyNA(index)) {
+    stop("A simulation draw did not return every requested SOP cell.")
+  }
+  list(
+    estimate = result$estimate[index],
+    weight = if (!is.null(weight_col) && weight_col %in% names(result)) {
+      result[[weight_col]][index]
+    } else {
+      NULL
+    }
+  )
+}
+
+summarize_sop_draw_matrix <- function(
+  draw_values,
+  conf_level,
+  conf_type,
+  point_estimates
+) {
+  alpha <- 1 - validate_conf_level(conf_level)
+  standard_error <- apply(draw_values, 2L, stats::sd, na.rm = TRUE)
+  if (identical(conf_type, "perc")) {
+    lower <- apply(
+      draw_values,
+      2L,
+      stats::quantile,
+      probs = alpha / 2,
+      na.rm = TRUE,
+      names = FALSE,
+      type = 7L
+    )
+    upper <- apply(
+      draw_values,
+      2L,
+      stats::quantile,
+      probs = 1 - alpha / 2,
+      na.rm = TRUE,
+      names = FALSE,
+      type = 7L
+    )
+  } else {
+    critical <- abs(stats::qnorm(alpha / 2))
+    lower <- point_estimates - critical * standard_error
+    upper <- point_estimates + critical * standard_error
+  }
+  data.frame(
+    conf.low = as.numeric(lower),
+    conf.high = as.numeric(upper),
+    std.error = as.numeric(standard_error)
+  )
+}
+
+sop_draw_matrix_to_df <- function(
+  draw_values,
+  object,
+  draw_ids,
+  weight_col = NULL,
+  weight_values = NULL
+) {
+  metadata_cols <- setdiff(names(object), inference_columns())
+  metadata <- as.data.frame(object)[, metadata_cols, drop = FALSE]
+  n_cells <- nrow(metadata)
+  out <- metadata[
+    rep(seq_len(n_cells), times = length(draw_ids)),
+    ,
+    drop = FALSE
+  ]
+  out$estimate <- as.vector(t(draw_values))
+  if (!is.null(weight_col) && !is.null(weight_values)) {
+    out[[weight_col]] <- as.vector(t(weight_values))
+  }
+  out$draw_id <- rep(draw_ids, each = n_cells)
+  rownames(out) <- NULL
+  out
 }
 
 warn_fixed_profile_bootstrap_weights <- function(engine) {

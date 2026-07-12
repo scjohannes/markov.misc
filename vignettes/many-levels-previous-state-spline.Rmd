@@ -35,6 +35,7 @@ N_PATIENTS <- 220
 FOLLOW_UP <- 14
 N_QOL <- 30
 STATE_LEVELS <- as.character(seq_len(N_QOL))
+ABSORB <- NULL
 SEED <- 20260530
 
 thresholds <- stats::qnorm(seq(0.02, 0.98, length.out = N_QOL - 1L))

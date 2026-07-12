@@ -1,5 +1,22 @@
 # markov.misc 0.1.0
 
+- Markov/SOP workflows now reject non-logit `orm` and cumulative `vglm` links
+  before prediction instead of applying logistic algebra to incompatible fits.
+- `inferences()` now reuses serial execution plans, evaluates fixed-order draw
+  cells, and generates score-bootstrap perturbations in deterministic bounded
+  matrix blocks instead of binding one data frame per draw.
+- `interpolate_sops()` now applies one compiled interpolation plan across
+  canonical point and stored-draw grids, with the existing generic fallback for
+  irregular or duplicate grids.
+- `sim_trajectories_brownian()` and the default `sim_trajectories_markov()` path
+  now use fused serial categorical sampling and direct long-output construction.
+- `soprob_markov()` now streams visit designs into fused PO or general-logit
+  propagation kernels and chunks active second-order state pairs, avoiding dense
+  first- and second-order transition tensors.
+- `states_to_tte_v2()` now collapses trajectories with a linear indexed run
+  scan, and bootstrap samples are materialized from reusable row-index plans.
+- `vglm_markov()` now uses an extensible RMS basis registry and ships first-class
+  assignment metadata for both `rcs()` and `lsp()` terms.
 - `avg_sops()` now marginalizes counterfactual SOP arrays directly instead of
   materializing individual prediction data frames, and posterior `blrm`
   workflows reduce draws natively before constructing public output.

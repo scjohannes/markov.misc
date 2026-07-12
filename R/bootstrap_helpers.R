@@ -145,14 +145,51 @@ fast_group_bootstrap <- function(data, id_var = "id", n_boot) {
 #' @export
 
 materialize_bootstrap_sample <- function(boot_ids, data, id_var) {
-  # Rename original_id to match id_var for joining
+  row_plan <- bootstrap_row_plan(data, id_var)
+  materialize_bootstrap_sample_indexed(boot_ids, data, id_var, row_plan)
+}
+
+bootstrap_row_plan <- function(data, id_var) {
+  ids <- as.character(data[[id_var]])
+  unique_ids <- unique(ids)
+  group <- match(ids, unique_ids)
+  list(
+    ids = unique_ids,
+    rows = split(seq_len(nrow(data)), group, drop = TRUE)
+  )
+}
+
+materialize_bootstrap_sample_indexed <- function(
+  boot_ids,
+  data,
+  id_var,
+  row_plan
+) {
+  required <- c("original_id", "new_id", "boot_id")
+  if (!all(required %in% names(boot_ids))) {
+    stop("`boot_ids` must contain original_id, new_id, and boot_id columns.")
+  }
+
+  group <- match(as.character(boot_ids$original_id), row_plan$ids)
+  row_blocks <- lapply(group, function(index) {
+    if (is.na(index)) {
+      return(NA_integer_)
+    }
+    row_plan$rows[[index]]
+  })
+  counts <- lengths(row_blocks)
+  data_rows <- unlist(row_blocks, use.names = FALSE)
+  boot_rows <- rep.int(seq_len(nrow(boot_ids)), counts)
+
   boot_ids_renamed <- boot_ids
   names(boot_ids_renamed)[names(boot_ids_renamed) == "original_id"] <- id_var
-
-  # Join with original data, preserving bootstrap sampling order.
-  boot_sample <- left_join_preserve_order(boot_ids_renamed, data, by = id_var)
-
-  return(boot_sample)
+  left <- boot_ids_renamed[boot_rows, , drop = FALSE]
+  right <- data[data_rows, setdiff(names(data), id_var), drop = FALSE]
+  rownames(left) <- NULL
+  rownames(right) <- NULL
+  out <- cbind(left, right)
+  rownames(out) <- NULL
+  out
 }
 
 generate_fwb_bootstrap_weights <- function(
@@ -339,11 +376,18 @@ apply_to_bootstrap <- function(
 
   # Determine whether to parallelize based on workers
   use_parallel <- !is.null(workers) && workers > 1
+  row_plan <- bootstrap_row_plan(data, id_var)
+  materialize_indexed <- materialize_bootstrap_sample_indexed
 
   # Wrapper function that materializes data then runs analysis
   wrapper_fn <- function(boot_ids) {
     # Materialize bootstrap sample from ID lookup
-    boot_data <- materialize_bootstrap_sample(boot_ids, data, id_var)
+    boot_data <- materialize_indexed(
+      boot_ids,
+      data,
+      id_var,
+      row_plan
+    )
 
     # Run user's analysis function
     analysis_fn(boot_data)
@@ -360,7 +404,14 @@ apply_to_bootstrap <- function(
       wrapper_fn,
       .options = furrr::furrr_options(
         packages = c(packages),
-        globals = c(globals, "data", "id_var", "analysis_fn")
+        globals = c(
+          globals,
+          "data",
+          "id_var",
+          "analysis_fn",
+          "row_plan",
+          "materialize_indexed"
+        )
       )
     )
   } else {

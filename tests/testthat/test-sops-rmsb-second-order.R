@@ -83,7 +83,19 @@ test_that("soprob_markov handles second-order recursion and absorbing states", {
         yprev = factor(1, levels = 1:3)
       )
 
+      withr::local_options(markov.misc.second_order_working_bytes = 1)
       out <- soprob_markov(
+        model = model,
+        newdata = data,
+        times = 1:2,
+        y_levels = 1:3,
+        absorb = 3,
+        p2_var = "ypprev"
+      )
+      withr::local_options(
+        markov.misc.second_order_working_bytes = 256 * 1024^2
+      )
+      out_large_chunk <- soprob_markov(
         model = model,
         newdata = data,
         times = 1:2,
@@ -122,6 +134,7 @@ test_that("soprob_markov handles second-order recursion and absorbing states", {
     c("1" = 0, "2" = 0, "3" = 1),
     tolerance = 1e-12
   )
+  expect_identical(out, out_large_chunk)
 })
 
 test_that("soprob_markov handles single first-order time points", {

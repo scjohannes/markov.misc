@@ -21,6 +21,10 @@ validate_markov_model <- function(object) {
     stop_unsupported_offset()
   }
 
+  if (inherits(model_chk, "blrm")) {
+    return(invisible(NULL))
+  }
+
   # Check if it's a vglm model
   if (inherits(model_chk, "vglm")) {
     # Extract family object
@@ -35,6 +39,11 @@ validate_markov_model <- function(object) {
         "\n",
         "Please refit your model with: family = cumulative(reverse = TRUE, ...)"
       )
+    }
+
+    link <- unique(as.character(model_chk@misc$link))
+    if (length(link) != 1L || !identical(tolower(link), "logitlink")) {
+      stop_unsupported_markov_link(link)
     }
 
     # Check reverse coding
@@ -74,11 +83,36 @@ validate_markov_model <- function(object) {
     }
   }
 
-  # orm models are always compatible (they use reverse coding by default)
-  # blrm models inherit from orm, so also OK
+  if (inherits(model_chk, "orm")) {
+    family <- model_chk$family
+    if (
+      is.null(family) ||
+        length(family) != 1L ||
+        !identical(tolower(as.character(family)), "logistic")
+    ) {
+      stop_unsupported_markov_link(family)
+    }
+  }
+
   # Other model types will be caught by the existing class check in soprob_markov
 
   invisible(NULL)
+}
+
+stop_unsupported_markov_link <- function(link = NULL) {
+  message <- paste0(
+    "Only cumulative-logit models are supported; ",
+    "refit the model with a logit link."
+  )
+  condition <- structure(
+    list(
+      message = message,
+      call = NULL,
+      link = if (length(link)) as.character(link) else NA_character_
+    ),
+    class = c("markov_misc_unsupported_link", "error", "condition")
+  )
+  stop(condition)
 }
 
 predict_vglm_response_markov <- function(object, newdata) {

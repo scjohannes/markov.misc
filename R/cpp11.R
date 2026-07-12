@@ -4,6 +4,18 @@ cpp_markov_propagate <- function(initial, transitions, non_absorb, absorb) {
   .Call(`_markov_misc_cpp_markov_propagate`, initial, transitions, non_absorb, absorb)
 }
 
+cpp_markov_update_logits <- function(previous, logits, non_absorb, absorb) {
+  .Call(`_markov_misc_cpp_markov_update_logits`, previous, logits, non_absorb, absorb)
+}
+
+cpp_markov_update_po <- function(previous, scalar_predictor, cutpoints, non_absorb, absorb) {
+  .Call(`_markov_misc_cpp_markov_update_po`, previous, scalar_predictor, cutpoints, non_absorb, absorb)
+}
+
+cpp_sample_categorical_rows <- function(probabilities) {
+  .Call(`_markov_misc_cpp_sample_categorical_rows`, probabilities)
+}
+
 cpp_normalize_probability_array <- function(values, draws, observations, states) {
   .Call(`_markov_misc_cpp_normalize_probability_array`, values, draws, observations, states)
 }

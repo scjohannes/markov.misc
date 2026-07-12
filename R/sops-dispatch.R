@@ -86,7 +86,7 @@ soprob_markov <- function(
     y_levels = y_levels,
     absorb = absorb
   )
-  components <- markov_msm_build_batched(
+  plan <- compile_sop_execution_plan(
     model = model_fast,
     newdata = newdata,
     time_covariates = time_covariates,
@@ -95,22 +95,12 @@ soprob_markov <- function(
     absorb = absorb,
     time_var = time_var,
     p_var = p_var,
-    gap_var = gap_var
+    gap_var = gap_var,
+    builder = "batched",
+    output = "array"
   )
-  resolved_times <- resolve_sop_times(
-    model_fast,
-    newdata,
-    times,
-    time_var,
-    time_covariates = time_covariates,
-    default = "fast"
-  )$times
-  out <- markov_msm_run(
-    components,
-    get_effective_coefs(model_fast),
-    times = resolved_times,
-    absorb = absorb
-  )
+  resolved_times <- plan$times
+  out <- run_sop_execution_plan(plan, get_effective_coefs(model_fast))
   dimnames(out) <- list(
     rownames(newdata),
     resolved_times,

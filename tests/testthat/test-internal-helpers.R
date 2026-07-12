@@ -669,7 +669,7 @@ test_that("markov_msm_build validates model classes and design alignment", {
         markov.misc:::markov_msm_build(
           structure(list(), class = "orm"),
           data.frame(id = 1, time = 2, yprev = 1),
-          times = NULL,
+          times = c(2, 3),
           y_levels = 1:2
         ),
         "Design matrix columns missing",

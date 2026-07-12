@@ -7,7 +7,8 @@
 #' variables.
 #'
 #' @param model A fitted model object (e.g., `vglm`, `orm`, or `blrm`). For
-#'   `vglm` models, the family must be `cumulative(reverse = TRUE, ...)`.
+#'   `vglm` models, the family must be cumulative-logit with `reverse = TRUE`.
+#'   For `orm` models, the family must be logistic.
 #' @param newdata Optional. A data frame of prediction profiles. When supplied,
 #'   every row is treated as a separate baseline profile and the internal
 #'   `rowid` column is regenerated. If `NULL`, uses the data stored by
@@ -38,8 +39,9 @@
 #'   first-order Markov recursion; a non-`NULL` column name uses a second-order
 #'   recursion.
 #' @param gap_var Name of the time gap_var variable (if used).
-#' @param time_covariates Optional time-varying covariate lookup table for explicit
-#'   basis columns. Inline terms such as `rms::rcs(time, 4)` can be used without
+#' @param time_covariates Optional time-varying covariate lookup table for
+#'   explicit basis columns. Registered inline terms such as
+#'   `rms::rcs(time, 4)` and `rms::lsp(time, c(3, 7))` can be used without
 #'   supplying `time_covariates`.
 #' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
 #'   fitted random-effect draws in posterior predictions for known IDs.
@@ -79,8 +81,9 @@
 #'
 #' **Model Requirements:**
 #'
-#' For `vglm` models, only the `cumulative` family with `reverse = TRUE` is
-#' supported. This is because the package's Markov simulation logic expects
+#' For `vglm` models, only the cumulative-logit family with `reverse = TRUE` is
+#' supported. For `orm` models, only the logistic family is supported. This is
+#' because the package's Markov simulation logic expects
 #' higher-numbered states to represent worse outcomes, and uses reverse cumulative
 #' probabilities to model the probability of being in state k or worse.
 #'
@@ -657,7 +660,8 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #' distribution.
 #'
 #' @param model A fitted model object (e.g., `vglm`, `orm`, or `blrm`). For
-#'   `vglm` models, the family **must** be `cumulative(reverse = TRUE, ...)`.
+#'   `vglm` models, the family must be cumulative-logit with `reverse = TRUE`.
+#'   For `orm` models, the family must be logistic.
 #' @param newdata Optional data frame of standardization profiles. When
 #'   supplied, every row is treated as a separate baseline profile and the
 #'   internal `rowid` column is regenerated. If `NULL`, uses data stored by
@@ -690,9 +694,9 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'   first-order Markov recursion; a non-`NULL` column name uses a second-order
 #'   recursion.
 #' @param gap_var Name of the time gap_var variable, if used.
-#' @param time_covariates Optional time-varying covariate lookup table for explicit
-#'   precomputed time-basis columns. Inline terms such as `rms::rcs(time, 4)`
-#'   can be used without it.
+#' @param time_covariates Optional time-varying covariate lookup table for
+#'   explicit precomputed time-basis columns. Registered inline terms such as
+#'   `rms::rcs(time, 4)` and `rms::lsp(time, c(3, 7))` can be used without it.
 #' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
 #'   fitted random-effect draws in posterior predictions for known IDs.
 #' @param n_draws Integer number of posterior draws to sample for `blrm`, or

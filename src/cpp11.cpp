@@ -13,6 +13,27 @@ extern "C" SEXP _markov_misc_cpp_markov_propagate(SEXP initial, SEXP transitions
   END_CPP11
 }
 // sops.cpp
+doubles cpp_markov_update_logits(doubles_matrix<> previous, doubles_matrix<> logits, integers non_absorb, integers absorb);
+extern "C" SEXP _markov_misc_cpp_markov_update_logits(SEXP previous, SEXP logits, SEXP non_absorb, SEXP absorb) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(cpp_markov_update_logits(cpp11::as_cpp<cpp11::decay_t<doubles_matrix<>>>(previous), cpp11::as_cpp<cpp11::decay_t<doubles_matrix<>>>(logits), cpp11::as_cpp<cpp11::decay_t<integers>>(non_absorb), cpp11::as_cpp<cpp11::decay_t<integers>>(absorb)));
+  END_CPP11
+}
+// sops.cpp
+doubles cpp_markov_update_po(doubles_matrix<> previous, doubles scalar_predictor, doubles cutpoints, integers non_absorb, integers absorb);
+extern "C" SEXP _markov_misc_cpp_markov_update_po(SEXP previous, SEXP scalar_predictor, SEXP cutpoints, SEXP non_absorb, SEXP absorb) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(cpp_markov_update_po(cpp11::as_cpp<cpp11::decay_t<doubles_matrix<>>>(previous), cpp11::as_cpp<cpp11::decay_t<doubles>>(scalar_predictor), cpp11::as_cpp<cpp11::decay_t<doubles>>(cutpoints), cpp11::as_cpp<cpp11::decay_t<integers>>(non_absorb), cpp11::as_cpp<cpp11::decay_t<integers>>(absorb)));
+  END_CPP11
+}
+// sops.cpp
+integers cpp_sample_categorical_rows(doubles_matrix<> probabilities);
+extern "C" SEXP _markov_misc_cpp_sample_categorical_rows(SEXP probabilities) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(cpp_sample_categorical_rows(cpp11::as_cpp<cpp11::decay_t<doubles_matrix<>>>(probabilities)));
+  END_CPP11
+}
+// sops.cpp
 doubles cpp_normalize_probability_array(doubles values, int draws, int observations, int states);
 extern "C" SEXP _markov_misc_cpp_normalize_probability_array(SEXP values, SEXP draws, SEXP observations, SEXP states) {
   BEGIN_CPP11
@@ -38,8 +59,11 @@ extern "C" {
 static const R_CallMethodDef CallEntries[] = {
     {"_markov_misc_cpp_markov_propagate",            (DL_FUNC) &_markov_misc_cpp_markov_propagate,            4},
     {"_markov_misc_cpp_markov_update_draws",         (DL_FUNC) &_markov_misc_cpp_markov_update_draws,         7},
+    {"_markov_misc_cpp_markov_update_logits",        (DL_FUNC) &_markov_misc_cpp_markov_update_logits,        4},
+    {"_markov_misc_cpp_markov_update_po",            (DL_FUNC) &_markov_misc_cpp_markov_update_po,            5},
     {"_markov_misc_cpp_normalize_probability_array", (DL_FUNC) &_markov_misc_cpp_normalize_probability_array, 4},
     {"_markov_misc_cpp_reduce_sops_draws",           (DL_FUNC) &_markov_misc_cpp_reduce_sops_draws,           7},
+    {"_markov_misc_cpp_sample_categorical_rows",     (DL_FUNC) &_markov_misc_cpp_sample_categorical_rows,     1},
     {NULL, NULL, 0}
 };
 }

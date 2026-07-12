@@ -150,7 +150,7 @@ test_that("inferences_simulation() falls back when fast-path setup fails", {
     get_coef = function(model) c(a = 0, b = 0),
     get_vcov_robust = function(model) diag(2),
     validate_coef_vcov = function(beta, Sigma, arg = "vcov") Sigma,
-    markov_msm_build = function(...) stop("build failed"),
+    compile_sop_execution_plan = function(...) stop("build failed"),
     set_coef = function(model, new_coefs) model,
     soprob_markov = function(...) {
       array(
@@ -210,11 +210,13 @@ test_that("inferences_simulation() errors when all fast-path draws fail", {
     get_coef = function(model) c(a = 0, b = 0),
     get_vcov_robust = function(model) diag(2),
     validate_coef_vcov = function(beta, Sigma, arg = "vcov") Sigma,
-    markov_msm_build = function(...) list(ok = TRUE),
+    compile_sop_execution_plan = function(...) {
+      structure(list(ok = TRUE), class = "markov_sop_exec_plan")
+    },
     get_effective_coefs = function(model, beta = NULL) {
       matrix(c(0, 0), nrow = 1)
     },
-    markov_msm_run = function(...) stop("run failed"),
+    run_sop_execution_plan = function(...) stop("run failed"),
     {
       withr::local_seed(2)
       expect_warning(
@@ -338,7 +340,7 @@ test_that("inferences_simulation() applies score-bootstrap slow-path weights", {
         baseline_weights = matrix(c(0.7, 0.3, 0.4, 0.6), nrow = 2, byrow = TRUE)
       )
     },
-    markov_msm_build = function(...) stop("build failed"),
+    compile_sop_execution_plan = function(...) stop("build failed"),
     set_coef = function(model, new_coefs) model,
     soprob_markov = function(...) {
       array(

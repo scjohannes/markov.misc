@@ -2,10 +2,36 @@ markov_native_run <- function(initial, transitions, non_absorb, absorb) {
   cpp_markov_propagate(initial, transitions, non_absorb, absorb)
 }
 
+markov_update_logits_native <- function(
+  previous,
+  logits,
+  non_absorb,
+  absorb
+) {
+  cpp_markov_update_logits(previous, logits, non_absorb, absorb)
+}
+
+markov_update_po_native <- function(
+  previous,
+  scalar_predictor,
+  cutpoints,
+  non_absorb,
+  absorb
+) {
+  cpp_markov_update_po(
+    previous,
+    as.numeric(scalar_predictor),
+    as.numeric(cutpoints),
+    non_absorb,
+    absorb
+  )
+}
+
 normalize_probability_array_native <- function(probs) {
   dims <- dim(probs)
+  values <- if (is.double(probs)) probs else as.numeric(probs)
   out <- cpp_normalize_probability_array(
-    as.numeric(probs),
+    values,
     dims[1],
     dims[2],
     dims[3]
@@ -19,8 +45,9 @@ reduce_sops_draw_array <- function(probs, groups, group_count) {
   if (length(dims) != 4L || length(groups) != dims[2]) {
     stop("Posterior SOP array and grouping index are not aligned.")
   }
+  values <- if (is.double(probs)) probs else as.numeric(probs)
   cpp_reduce_sops_draws(
-    as.numeric(probs),
+    values,
     dims[1],
     dims[2],
     dims[3],
@@ -37,9 +64,15 @@ markov_update_draws_native <- function(
   absorb
 ) {
   dims <- dim(previous)
+  previous_values <- if (is.double(previous)) previous else as.numeric(previous)
+  transition_values <- if (is.double(transition)) {
+    transition
+  } else {
+    as.numeric(transition)
+  }
   cpp_markov_update_draws(
-    as.numeric(previous),
-    as.numeric(transition),
+    previous_values,
+    transition_values,
     dims[1],
     dims[2],
     dims[3],

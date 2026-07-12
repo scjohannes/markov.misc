@@ -1,0 +1,101 @@
+name: R CMD check
+
+on:
+  push:
+    branches: [main, optim]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ${{ matrix.config.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - { os: ubuntu-latest, r: release }
+          - { os: ubuntu-latest, r: devel }
+          - { os: windows-latest, r: release }
+          - { os: macos-latest, r: release }
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-pandoc@v2
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.config.r }}
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::rcmdcheck
+          needs: check
+      - name: Check package
+        run: rcmdcheck::rcmdcheck(args = c("--no-manual", "--as-cran"), error_on = "warning")
+        shell: Rscript {0}
+
+  native-safety:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, undefined]
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+      ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::devtools
+          needs: check
+      - name: Configure sanitizer
+        run: |
+          mkdir -p ~/.R
+          cat > ~/.R/Makevars <<EOF
+          CXX17FLAGS=-O1 -g -Wall -Wextra -Werror -fno-omit-frame-pointer -fsanitize=${{ matrix.sanitizer }}
+          SHLIB_CXX17LD=g++ -shared -fsanitize=${{ matrix.sanitizer }}
+          EOF
+      - name: Run native and recursion tests
+        run: |
+          Rscript -e 'devtools::test(filter = "sops-native|fast_vs_slow_equivalence|orm-fast-path|sops-rmsb-second-order", stop_on_failure = TRUE)'
+
+  valgrind:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      OMP_NUM_THREADS: 1
+      OPENBLAS_NUM_THREADS: 1
+      MKL_NUM_THREADS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::devtools
+          needs: check
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Install package
+        run: R CMD INSTALL .
+      - name: Run native smoke tests under Valgrind
+        run: |
+          R -d "valgrind --tool=memcheck --leak-check=full --error-exitcode=1" --vanilla -e 'library(markov.misc); testthat::test_file("tests/testthat/test-sops-native.R", stop_on_failure = TRUE)'

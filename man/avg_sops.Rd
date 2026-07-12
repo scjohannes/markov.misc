@@ -30,7 +30,8 @@ avg_sops(
 }
 \arguments{
 \item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, or \code{blrm}). For
-\code{vglm} models, the family \strong{must} be \code{cumulative(reverse = TRUE, ...)}.}
+\code{vglm} models, the family must be cumulative-logit with \code{reverse = TRUE}.
+For \code{orm} models, the family must be logistic.}
 
 \item{newdata}{Optional data frame of standardization profiles. When
 supplied, every row is treated as a separate baseline profile and the
@@ -76,9 +77,9 @@ recursion.}
 
 \item{gap_var}{Name of the time gap_var variable, if used.}
 
-\item{time_covariates}{Optional time-varying covariate lookup table for explicit
-precomputed time-basis columns. Inline terms such as \code{rms::rcs(time, 4)}
-can be used without it.}
+\item{time_covariates}{Optional time-varying covariate lookup table for
+explicit precomputed time-basis columns. Registered inline terms such as
+\code{rms::rcs(time, 4)} and \code{rms::lsp(time, c(3, 7))} can be used without it.}
 
 \item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
 fitted random-effect draws in posterior predictions for known IDs.}

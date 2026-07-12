@@ -4,14 +4,16 @@
 #' `markov.misc` SOP workflows. It follows `VGAM::vglm()` closely, stores the
 #' row-aligned fitting data for downstream SOP inference, and marks the fit so
 #' the SOP prediction code can use package-native Markov prediction. For inline
-#' restricted cubic spline terms such as `rcs(time, 4)` or `rms::rcs(time, 4)`,
-#' the internal VGAM assignment metadata is split by generated spline column.
+#' registered RMS spline terms such as `rcs(time, 4)`, `lsp(time, 5)`, or their
+#' namespace-qualified forms, the internal VGAM assignment metadata is split by
+#' generated spline column.
 #' This makes it possible to give individual spline basis columns separate
 #' constraint matrices for partial proportional odds models. Inline splines may
 #' be used for time or for numeric previous-state effects such as
 #' `rcs(yprev, 6)`.
 #'
-#' `vglm_markov()` also makes the `rms` formula helpers `rcs()` and `%ia%`
+#' `vglm_markov()` also makes the registered `rms` formula helpers `rcs()`,
+#' `lsp()`, and `%ia%`
 #' available while building model frames and prediction design matrices. This
 #' lets formulas use `time %ia% yprev` for a linear-time by previous-state
 #' interaction without requiring `library(rms)` in the user's session.
@@ -30,9 +32,9 @@
 #' @param family A VGAM family object, e.g. `VGAM::cumulative()`.
 #' @param id_var Optional character scalar naming the patient or cluster ID
 #'   column in `data`. When supplied, [robcov_vglm()] is applied automatically.
-#' @param constraints Optional VGAM constraints list. For inline `rcs()` terms,
-#'   names should match the column-level constraint names in a full proportional
-#'   odds fit returned by `vglm_markov()`.
+#' @param constraints Optional VGAM constraints list. For inline registered RMS
+#'   basis terms, names should match the column-level constraint names in a full
+#'   proportional odds fit returned by `vglm_markov()`.
 #'
 #' @return A fitted S4 `vglm` object with internal Markov marker attributes, or
 #'   a `robcov_vglm` object when `id_var` is supplied.
@@ -200,7 +202,7 @@ vglm_markov <- function(
     matrix(, NROW(y), 0)
   }
 
-  split_assign <- split_rcs_assign(x, mt)
+  split_assign <- split_rms_basis_assign(x, mt)
   attr(x, "assign") <- split_assign$assign
   attr(x, "orig.assign.lm") <- split_assign$orig_assign
 
@@ -386,7 +388,8 @@ vglm_markov <- function(
   }
 
   attr(answer, "markov_vglm") <- TRUE
-  attr(answer, "markov_split_assign") <- split_assign$has_rcs
+  attr(answer, "markov_split_assign") <- split_assign$has_basis
+  attr(answer, "markov_basis_terms") <- split_assign$basis_terms
   answer <- markov_attach_model_data(answer, fit_data, id_var)
 
   if (!is.null(id_var)) {
@@ -410,8 +413,15 @@ add_rms_formula_helpers <- function(formula) {
 
   helper_env <- new.env(parent = formula_env)
 
-  if (!exists("rcs", envir = formula_env, inherits = TRUE)) {
-    assign("rcs", utils::getFromNamespace("rcs", "rms"), envir = helper_env)
+  for (handler in rms_basis_registry()) {
+    helper <- handler$helper
+    if (!exists(helper, envir = formula_env, inherits = TRUE)) {
+      assign(
+        helper,
+        utils::getFromNamespace(helper, "rms"),
+        envir = helper_env
+      )
+    }
   }
   if (!exists("%ia%", envir = formula_env, inherits = TRUE)) {
     assign(
@@ -425,15 +435,26 @@ add_rms_formula_helpers <- function(formula) {
   formula
 }
 
-split_rcs_assign <- function(x, terms) {
+split_rms_basis_assign <- function(x, terms) {
   attrassigndefault <- utils::getFromNamespace("attrassigndefault", "VGAM")
   orig_assign <- attr(x, "assign")
   assign <- attrassigndefault(x, terms)
 
-  rcs_terms <- names(assign)[has_inline_rcs(names(assign))]
+  basis_terms <- names(assign)[vapply(
+    names(assign),
+    has_registered_rms_basis,
+    logical(1)
+  )]
+  basis_metadata <- vector("list", length(basis_terms))
+  names(basis_metadata) <- basis_terms
 
-  for (term in rcs_terms) {
+  for (term in basis_terms) {
     cols <- assign[[term]]
+    basis_metadata[[term]] <- list(
+      handlers = rms_basis_handlers_for_term(term),
+      columns = colnames(x)[cols],
+      column_indices = as.integer(cols)
+    )
     pos <- match(term, names(assign))
     assign[term] <- NULL
     split_cols <- stats::setNames(as.list(cols), colnames(x)[cols])
@@ -443,12 +464,23 @@ split_rcs_assign <- function(x, terms) {
   list(
     assign = assign,
     orig_assign = orig_assign,
-    has_rcs = length(rcs_terms) > 0
+    has_basis = length(basis_terms) > 0L,
+    basis_terms = basis_metadata
   )
 }
 
+split_rcs_assign <- function(x, terms) {
+  out <- split_rms_basis_assign(x, terms)
+  out$has_rcs <- any(vapply(
+    out$basis_terms,
+    function(term) "rcs" %in% term$handlers,
+    logical(1)
+  ))
+  out
+}
+
 has_inline_rcs <- function(term) {
-  grepl("(^|:)\\s*(rms::)?rcs\\(", term)
+  "rcs" %in% rms_basis_handlers_for_term(term)
 }
 
 make_vgam_vcontrol_eval <- function() {

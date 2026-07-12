@@ -53,25 +53,17 @@ left_join_preserve_order <- function(x, y, by) {
   x_key <- key_frame(x)
   y_key <- key_frame(y)
   y_split <- split(seq_len(nrow(y)), y_key, drop = TRUE)
-
-  pieces <- vector("list", nrow(x))
-  for (i in seq_len(nrow(x))) {
-    key <- x_key[i]
-    y_rows <- y_split[[key]]
-
-    if (is.null(y_rows)) {
-      y_part <- y[NA_integer_, y_cols, drop = FALSE]
-    } else {
-      y_part <- y[y_rows, y_cols, drop = FALSE]
-    }
-
-    x_part <- x[rep(i, nrow(y_part)), , drop = FALSE]
-    rownames(x_part) <- NULL
-    rownames(y_part) <- NULL
-    pieces[[i]] <- cbind(x_part, y_part)
-  }
-
-  bind_rows_fill(pieces)
+  y_rows <- lapply(x_key, function(key) y_split[[key]] %||% NA_integer_)
+  counts <- lengths(y_rows)
+  left_rows <- rep.int(seq_len(nrow(x)), counts)
+  right_rows <- unlist(y_rows, use.names = FALSE)
+  left <- x[left_rows, , drop = FALSE]
+  right <- y[right_rows, y_cols, drop = FALSE]
+  rownames(left) <- NULL
+  rownames(right) <- NULL
+  out <- cbind(left, right)
+  rownames(out) <- NULL
+  out
 }
 
 matrix_to_long <- function(

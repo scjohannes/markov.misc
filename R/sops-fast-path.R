@@ -159,26 +159,27 @@ markov_msm_build <- function(
     X[, col_names, drop = FALSE]
   }
 
-  # B. Transition matrices: one matrix for each time and previous-state value.
+  # B. Visit-streamed transition designs. Each visit stores one stacked matrix
+  # with patient rows nested inside non-absorbing origin-state blocks.
+  non_absorb_idx <- setdiff(seq_len(n_states), absorb_idx)
   X_transition <- vector("list", length(times))
-  for (time_idx in seq_along(times)) {
-    X_transition[[time_idx]] <- vector("list", n_states)
-    d_time <- set_time(data, time_idx)
+  if (length(times) >= 2L) {
+    for (time_idx in 2:length(times)) {
+      origin_blocks <- vector("list", length(non_absorb_idx))
+      d_time <- set_time(data, time_idx)
 
-    for (k in seq_len(n_states)) {
-      if (k %in% absorb_idx) {
-        X_transition[[time_idx]][[k]] <- NULL
-        next
+      for (origin_pos in seq_along(non_absorb_idx)) {
+        k <- non_absorb_idx[origin_pos]
+        d_k <- d_time
+        d_k[[p_var]] <- make_previous_state_column(
+          states = ylevel_names[k],
+          prototype = data[[p_var]],
+          n = nrow(d_k),
+          p_var = p_var
+        )
+        origin_blocks[[origin_pos]] <- align_X(get_X(d_k))
       }
-
-      d_k <- d_time
-      d_k[[p_var]] <- make_previous_state_column(
-        states = ylevel_names[k],
-        prototype = data[[p_var]],
-        n = nrow(d_k),
-        p_var = p_var
-      )
-      X_transition[[time_idx]][[k]] <- align_X(get_X(d_k))
+      X_transition[[time_idx]] <- do.call(rbind, origin_blocks)
     }
   }
 
@@ -189,7 +190,9 @@ markov_msm_build <- function(
     n_states = n_states,
     M = M,
     y_levels = ylevel_names,
-    col_names = col_names
+    col_names = col_names,
+    transition_layout = "stacked",
+    transition_origins = non_absorb_idx
   )
 }
 
@@ -224,8 +227,8 @@ markov_msm_build_batched <- function(
     stop("Previous-state variable `", p_var, "` not found in `newdata`.")
   }
 
-  model_rows <- n_pat * (1L + length(times) * length(non_absorb_idx))
-  if (model_rows > getOption("markov.misc.max_batched_design_rows", 2e6)) {
+  rows_per_visit <- n_pat * length(non_absorb_idx)
+  if (rows_per_visit > getOption("markov.misc.max_batched_design_rows", 2e6)) {
     return(markov_msm_build(
       model = model,
       newdata = newdata,
@@ -258,68 +261,63 @@ markov_msm_build_batched <- function(
     p_var
   )
 
-  pieces <- list(d_init)
-  block_map <- vector("list", length(times))
-  cursor <- n_pat + 1L
-  for (time_idx in seq_along(times)) {
-    block_map[[time_idx]] <- vector("list", length(ylevel_names))
-    d_time <- set_time(newdata, time_idx)
-    for (state_idx in non_absorb_idx) {
-      d_state <- d_time
-      d_state[[p_var]] <- make_previous_state_column(
-        states = ylevel_names[state_idx],
+  Gamma <- get_effective_coefs(model)
+  tt <- if (inherits(model, "vglm")) {
+    stats::delete.response(stats::terms(model))
+  } else {
+    NULL
+  }
+  get_X <- function(d) {
+    X <- if (inherits(model, "orm")) {
+      orm_model_matrix(model, d, include_intercept = TRUE)
+    } else {
+      stats::model.matrix(
+        tt,
+        data = d,
+        contrasts.arg = if (length(model@contrasts)) model@contrasts else NULL,
+        xlev = model@xlevels
+      )
+    }
+    missing_cols <- setdiff(colnames(Gamma), colnames(X))
+    if (length(missing_cols) > 0L) {
+      stop(
+        "Design matrix columns missing during batched build: ",
+        paste(missing_cols, collapse = ", ")
+      )
+    }
+    X[, colnames(Gamma), drop = FALSE]
+  }
+
+  X_init <- get_X(d_init)
+  X_transition <- vector("list", length(times))
+  if (length(times) >= 2L) {
+    for (time_idx in 2:length(times)) {
+      d_time <- set_time(newdata, time_idx)
+      d_visit <- d_time[
+        rep(seq_len(n_pat), times = length(non_absorb_idx)),
+        ,
+        drop = FALSE
+      ]
+      d_visit[[p_var]] <- make_previous_state_column(
+        states = ylevel_names[non_absorb_idx],
         prototype = newdata[[p_var]],
         n = n_pat,
         p_var = p_var
       )
-      pieces[[length(pieces) + 1L]] <- d_state
-      block_map[[time_idx]][[state_idx]] <- cursor:(cursor + n_pat - 1L)
-      cursor <- cursor + n_pat
-    }
-  }
-  design_data <- do.call(rbind, pieces)
-
-  Gamma <- get_effective_coefs(model)
-  if (inherits(model, "orm")) {
-    X <- orm_model_matrix(model, design_data, include_intercept = TRUE)
-  } else {
-    tt <- stats::delete.response(stats::terms(model))
-    X <- stats::model.matrix(
-      tt,
-      data = design_data,
-      contrasts.arg = if (length(model@contrasts)) model@contrasts else NULL,
-      xlev = model@xlevels
-    )
-  }
-  missing_cols <- setdiff(colnames(Gamma), colnames(X))
-  if (length(missing_cols) > 0L) {
-    stop(
-      "Design matrix columns missing during batched build: ",
-      paste(missing_cols, collapse = ", ")
-    )
-  }
-  X <- X[, colnames(Gamma), drop = FALSE]
-
-  X_transition <- vector("list", length(times))
-  for (time_idx in seq_along(times)) {
-    X_transition[[time_idx]] <- vector("list", length(ylevel_names))
-    for (state_idx in non_absorb_idx) {
-      X_transition[[time_idx]][[state_idx]] <- X[
-        block_map[[time_idx]][[state_idx]],
-        ,
-        drop = FALSE
-      ]
+      X_transition[[time_idx]] <- get_X(d_visit)
     }
   }
 
   list(
-    X_init = X[seq_len(n_pat), , drop = FALSE],
+    X_init = X_init,
     X_transition = X_transition,
     n_pat = n_pat,
     n_states = length(ylevel_names),
     M = length(ylevel_names) - 1L,
     y_levels = ylevel_names,
-    col_names = colnames(X)
+    col_names = colnames(X_init),
+    transition_layout = "stacked",
+    transition_origins = non_absorb_idx
   )
 }
 
@@ -364,27 +362,89 @@ markov_msm_run <- function(components, Gamma, times, absorb = NULL) {
   }
   non_absorb_idx <- setdiff(1:n_states, absorb_idx)
 
-  initial <- lp_to_probs(calc_lp(X_init), M)
-  transitions <- vector("list", max(0L, n_times - 1L))
+  po <- markov_po_structure(Gamma, col_names, X_init)
+  initial <- if (is.null(po)) {
+    lp_to_probs(calc_lp(X_init), M)
+  } else {
+    scalar <- drop(X_init %*% po$beta)
+    lp_to_probs(outer(scalar, po$cutpoints, "+"), M)
+  }
+  P_out <- array(0, dim = c(n_pat, n_times, n_states))
+  P_out[, 1L, ] <- initial
+  previous <- initial
+
   if (n_times >= 2L) {
     for (t_idx in 2:n_times) {
-      transitions[[t_idx - 1L]] <- do.call(
-        rbind,
-        lapply(
-          non_absorb_idx,
-          function(k) lp_to_probs(calc_lp(X_transition[[t_idx]][[k]]), M)
+      X_visit <- X_transition[[t_idx]]
+      if (!identical(components$transition_layout, "stacked")) {
+        X_visit <- do.call(rbind, X_visit[non_absorb_idx])
+      } else {
+        built_origins <- components$transition_origins %||% non_absorb_idx
+        origin_positions <- match(non_absorb_idx, built_origins)
+        if (anyNA(origin_positions)) {
+          stop("Transition design is missing a required origin state.")
+        }
+        if (!identical(origin_positions, seq_along(built_origins))) {
+          block_rows <- unlist(lapply(origin_positions, function(position) {
+            start <- (position - 1L) * n_pat + 1L
+            start:(start + n_pat - 1L)
+          }))
+          X_visit <- X_visit[block_rows, , drop = FALSE]
+        }
+      }
+      if (!is.matrix(X_visit)) {
+        stop("Missing transition design for SOP visit ", t_idx, ".")
+      }
+      if (is.null(po)) {
+        logits <- calc_lp(X_visit)
+        check_transition_probabilities(logits, paste0("SOP time point ", t_idx))
+        previous <- markov_update_logits_native(
+          previous,
+          logits,
+          as.integer(non_absorb_idx),
+          as.integer(absorb_idx)
         )
-      )
+      } else {
+        scalar <- drop(X_visit %*% po$beta)
+        check_transition_probabilities(scalar, paste0("SOP time point ", t_idx))
+        previous <- markov_update_po_native(
+          previous,
+          scalar,
+          po$cutpoints,
+          as.integer(non_absorb_idx),
+          as.integer(absorb_idx)
+        )
+      }
+      P_out[, t_idx, ] <- previous
     }
   }
-  P_out <- markov_native_run(
-    initial,
-    transitions,
-    as.integer(non_absorb_idx),
-    as.integer(absorb_idx)
-  )
   dimnames(P_out) <- list(NULL, NULL, y_levels)
   P_out
+}
+
+markov_po_structure <- function(Gamma, col_names, X_init) {
+  intercept <- grep("Intercept", col_names, fixed = TRUE)
+  if (length(intercept) != 1L || any(X_init[, intercept] != 1)) {
+    return(NULL)
+  }
+  slopes <- setdiff(seq_along(col_names), intercept)
+  if (
+    length(slopes) &&
+      any(vapply(
+        slopes,
+        function(j) !all(Gamma[, j] == Gamma[1L, j]),
+        logical(1)
+      ))
+  ) {
+    return(NULL)
+  }
+  beta <- Gamma[1L, ]
+  beta[intercept] <- 0
+  list(
+    beta = beta,
+    cutpoints = as.numeric(Gamma[, intercept]),
+    intercept = intercept
+  )
 }
 
 

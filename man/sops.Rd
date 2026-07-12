@@ -29,7 +29,8 @@ sops(
 }
 \arguments{
 \item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, or \code{blrm}). For
-\code{vglm} models, the family must be \code{cumulative(reverse = TRUE, ...)}.}
+\code{vglm} models, the family must be cumulative-logit with \code{reverse = TRUE}.
+For \code{orm} models, the family must be logistic.}
 
 \item{newdata}{Optional. A data frame of prediction profiles. When supplied,
 every row is treated as a separate baseline profile and the internal
@@ -72,8 +73,9 @@ recursion.}
 
 \item{gap_var}{Name of the time gap_var variable (if used).}
 
-\item{time_covariates}{Optional time-varying covariate lookup table for explicit
-basis columns. Inline terms such as \code{rms::rcs(time, 4)} can be used without
+\item{time_covariates}{Optional time-varying covariate lookup table for
+explicit basis columns. Registered inline terms such as
+\code{rms::rcs(time, 4)} and \code{rms::lsp(time, c(3, 7))} can be used without
 supplying \code{time_covariates}.}
 
 \item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
@@ -126,8 +128,9 @@ stored with \code{return_draws = TRUE} remain normalized within each draw.
 
 \strong{Model Requirements:}
 
-For \code{vglm} models, only the \code{cumulative} family with \code{reverse = TRUE} is
-supported. This is because the package's Markov simulation logic expects
+For \code{vglm} models, only the cumulative-logit family with \code{reverse = TRUE} is
+supported. For \code{orm} models, only the logistic family is supported. This is
+because the package's Markov simulation logic expects
 higher-numbered states to represent worse outcomes, and uses reverse cumulative
 probabilities to model the probability of being in state k or worse.
 

@@ -124,7 +124,7 @@ apply_sop_simulation_draws <- function(
     draw_ids,
     analysis_fn,
     .options = furrr::furrr_options(
-      seed = TRUE,
+      seed = FALSE,
       globals = globals,
       packages = packages
     ),
