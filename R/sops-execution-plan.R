@@ -1,4 +1,99 @@
-# Internal serializable execution plans for frequentist first-order SOPs.
+# Internal serializable execution plans for frequentist SOPs.
+
+validate_sop_threshold_count <- function(Gamma, y_levels) {
+  expected <- length(y_levels) - 1L
+  actual <- nrow(Gamma)
+  if (!identical(actual, expected)) {
+    stop(
+      "`y_levels` defines ",
+      length(y_levels),
+      " states, but the fitted model defines ",
+      actual + 1L,
+      " states through ",
+      actual,
+      " threshold coefficients.",
+      call. = FALSE
+    )
+  }
+  invisible(NULL)
+}
+
+execution_plan_max_bytes <- function() {
+  value <- getOption("markov.misc.execution_plan_max_bytes", 256 * 1024^2)
+  if (
+    length(value) != 1L ||
+      !is.numeric(value) ||
+      is.na(value) ||
+      value <= 0
+  ) {
+    stop(
+      "Option `markov.misc.execution_plan_max_bytes` must be a positive number.",
+      call. = FALSE
+    )
+  }
+  as.double(value)
+}
+
+stop_execution_plan_too_large <- function(required_bytes, max_bytes) {
+  message <- paste0(
+    "Compiled SOP designs require ",
+    format(required_bytes, scientific = FALSE),
+    " bytes, above the execution-plan limit of ",
+    format(max_bytes, scientific = FALSE),
+    " bytes."
+  )
+  stop(structure(
+    list(
+      message = message,
+      call = NULL,
+      required_bytes = required_bytes,
+      max_bytes = max_bytes
+    ),
+    class = c(
+      "markov_misc_execution_plan_too_large",
+      "error",
+      "condition"
+    )
+  ))
+}
+
+preflight_execution_plan_designs <- function(
+  n_pat,
+  n_times,
+  rows_per_transition,
+  n_cols
+) {
+  initial_cells <- as.double(n_pat) * as.double(n_cols)
+  transition_cells <-
+    as.double(max(n_times - 1L, 0L)) *
+    as.double(rows_per_transition) *
+    as.double(n_cols)
+  design_bytes <- (initial_cells + transition_cells) * 8
+  workspace_bytes <- execution_plan_max_bytes()
+  if (!is.finite(design_bytes) || design_bytes > workspace_bytes) {
+    stop_execution_plan_too_large(design_bytes, workspace_bytes)
+  }
+  list(
+    design_bytes = design_bytes,
+    workspace_bytes = workspace_bytes
+  )
+}
+
+measure_execution_plan_designs <- function(X_init, X_transition) {
+  matrices <- c(list(X_init), Filter(Negate(is.null), X_transition))
+  sum(vapply(
+    matrices,
+    function(x) as.double(length(x)) * 8,
+    numeric(1)
+  ))
+}
+
+validate_execution_plan_designs <- function(design_bytes, workspace_bytes) {
+  if (!is.finite(design_bytes) || design_bytes > workspace_bytes) {
+    stop_execution_plan_too_large(design_bytes, workspace_bytes)
+  }
+  invisible(NULL)
+}
 
 compile_sop_execution_plan <- function(
   model,
@@ -16,6 +111,8 @@ compile_sop_execution_plan <- function(
 ) {
   builder <- match.arg(builder)
   validate_markov_model(model)
+  Gamma_template <- get_effective_coefs(model)
+  validate_sop_threshold_count(Gamma_template, y_levels)
   if (!is.null(p2_var)) {
     return(compile_second_order_execution_plan(
       model = model,
@@ -28,7 +125,8 @@ compile_sop_execution_plan <- function(
       p2_var = p2_var,
       gap_var = gap_var,
       time_covariates = time_covariates,
-      output = output
+      output = output,
+      Gamma = Gamma_template
     ))
   }
   resolved_times <- resolve_sop_times(
@@ -69,7 +167,8 @@ compile_sop_execution_plan <- function(
       p2_var = NULL,
       gap_var = gap_var,
       output = output,
-      workspace_bytes = 256 * 1024^2,
+      workspace_bytes = components$workspace_bytes,
+      design_bytes = components$design_bytes,
       basis_terms = attr(model, "markov_basis_terms", exact = TRUE),
       components = components
     ),
@@ -81,6 +180,7 @@ run_sop_execution_plan <- function(plan, Gamma) {
   if (!inherits(plan, "markov_sop_exec_plan") || plan$version != 1L) {
     stop("Invalid or unsupported SOP execution plan.")
   }
+  validate_sop_threshold_count(Gamma, plan$y_levels)
   if (identical(plan$recursion_order, 2L)) {
     return(run_second_order_execution_plan(plan, Gamma))
   }
@@ -103,7 +203,8 @@ compile_second_order_execution_plan <- function(
   p2_var,
   gap_var,
   time_covariates,
-  output
+  output,
+  Gamma
 ) {
   if (!inherits(model, c("orm", "vglm")) || inherits(model, "blrm")) {
     stop("Compiled second-order plans require a frequentist orm or vglm model.")
@@ -130,7 +231,13 @@ compile_second_order_execution_plan <- function(
     current = non_absorb_idx,
     KEEP.OUT.ATTRS = FALSE
   )
-  Gamma <- get_effective_coefs(model)
+  validate_sop_threshold_count(Gamma, y_levels)
+  budget <- preflight_execution_plan_designs(
+    n_pat = nrow(newdata),
+    n_times = length(times),
+    rows_per_transition = nrow(newdata) * nrow(pair_grid),
+    n_cols = ncol(Gamma)
+  )
   terms <- if (inherits(model, "vglm")) {
     stats::delete.response(stats::terms(model))
   } else {
@@ -180,7 +287,6 @@ compile_second_order_execution_plan <- function(
   )
   X_init <- get_X(initial_data)
   designs <- vector("list", length(times))
-  design_bytes <- as.double(length(X_init)) * 8
   if (length(times) >= 2L) {
     for (visit in 2:length(times)) {
       data_visit <- set_visit(newdata, visit)
@@ -202,14 +308,10 @@ compile_second_order_execution_plan <- function(
         p_var
       )
       designs[[visit]] <- get_X(expanded)
-      design_bytes <- design_bytes + as.double(length(designs[[visit]])) * 8
-      if (design_bytes > 256 * 1024^2) {
-        stop(
-          "Compiled second-order designs exceed the 256 MiB workspace ceiling."
-        )
-      }
     }
   }
+  design_bytes <- measure_execution_plan_designs(X_init, designs)
+  validate_execution_plan_designs(design_bytes, budget$workspace_bytes)
   structure(
     list(
       version = 1L,
@@ -224,7 +326,7 @@ compile_second_order_execution_plan <- function(
       p2_var = p2_var,
       gap_var = gap_var,
       output = output,
-      workspace_bytes = 256 * 1024^2,
+      workspace_bytes = budget$workspace_bytes,
       design_bytes = design_bytes,
       components = list(
         X_init = X_init,
@@ -257,6 +359,7 @@ run_second_order_execution_plan <- function(plan, Gamma) {
     )
   }
   initial <- probabilities(components$X_init)
+  check_transition_probabilities(initial, "the first SOP time point")
   output <- array(
     0,
     dim = c(components$n_pat, length(plan$times), components$n_states)

@@ -167,7 +167,7 @@ Core columns are:
 
 | Object | Core columns |
 | --- | --- |
-| `markov_sops` | Baseline covariates, optional `rowid`, `time`, `state`, `estimate`. If `by` is supplied, rows are averaged over `time`, `state`, and `by`. |
+| `markov_sops` | Baseline covariates, optional `rowid`, `time`, `state`, `estimate`. If `by` is supplied, complete grouping rows are averaged over `time`, `state`, and `by`. |
 | `markov_avg_sops` | `time`, `state`, `estimate`, counterfactual variables such as `tx`, and optional `by` variables. |
 | `markov_avg_comparisons` | `metric`, `variable`, `reference_level`, `comparison_level`, `contrast`, `comparison`, `estimate`, optional `time`, `state_set`, `time_unit`, and optional `by` variables. |
 | Objects after `inferences()` | Original columns plus `conf.low`, `conf.high`, `std.error`, and inference metadata attributes. |
@@ -193,6 +193,12 @@ Important attributes are set in `set_sops_attrs()`:
 These attributes are part of the architecture. Downstream functions such as
 `inferences()`, `get_draws()`, `interpolate_sops()`, `time_in_state()`,
 `avg_comparisons()`, and `plot_sops()` rely on them.
+
+Grouped `sops()` and `avg_sops()` omit prediction rows that are incomplete in
+any effective grouping column. The original prediction data remain stored for
+replay, while posterior recursion and native reduction operate only on the
+complete rows. An entirely incomplete grouping population is an input error;
+missing values are not treated as an additional stratum.
 
 The public SOP endpoints keep their argument order grouped by use: core
 estimand inputs first (`times`, `y_levels`, `absorb`, `by`, and comparison
@@ -366,9 +372,10 @@ while SOPs are replayed on the fixed `newdata_pred` profiles from the original
 SOP object. When no `newdata` was supplied, marginal bootstrap inference derives
 the prediction profiles from each bootstrap refit sample.
 
-For first-order frequentist `orm` and `vglm` models, simulation inference can use
-the optimized fast path. Second-order Markov models fall back to replaying the
-full engine with `set_coef()`.
+For frequentist `orm` and `vglm` models, simulation inference can reuse compiled
+first- or second-order execution plans. Unsupported configurations and plans
+whose retained designs exceed the configured ceiling fall back to coefficient
+replay through the reference engine.
 
 For `markov_avg_comparisons`, linear metrics replay through `avg_sops()` and then
 reduce draw-level SOPs. The nonlinear `time_benefit` metric replays paired
@@ -381,9 +388,10 @@ computed.
 
 ### First-Order Recursion
 
-`soprob_markov()` is the central computational function in `R/sops-engine.R`.
-It predicts the marginal distribution over future states using the fitted
-transition model and the law of total probability.
+`soprob_markov()` in `R/sops-dispatch.R` selects the compiled or reference
+engine. `soprob_markov_reference()` in `R/sops-engine.R` predicts the marginal
+distribution over future states using the fitted transition model and the law
+of total probability.
 
 ```mermaid
 flowchart TD
@@ -402,10 +410,12 @@ flowchart TD
 Frequentist `vglm` and `orm` prediction is represented by a serializable
 `markov_sop_exec_plan` from `R/sops-execution-plan.R`. The plan fixes visits,
 states, absorbing indices, model columns, fitted basis metadata, output mode,
-recursion order, and visit-streamed design blocks. It never builds the unused
-visit-1 transition design. Full proportional-odds models project one scalar
-predictor per patient/origin; other constraints project one visit's bounded
-logit block.
+recursion order, and retained per-visit design blocks. It never builds the
+unused visit-1 transition design. Every plan enforces that the coefficient
+matrix has exactly `length(y_levels) - 1` threshold rows, and its initial
+distribution receives the same missing-probability validation as later
+transitions. Full proportional-odds models project one scalar predictor per
+patient/origin; other constraints project one visit's bounded logit block.
 `src/sops.cpp` converts and normalizes each origin distribution while it is
 propagated, so no patient-by-origin-by-target transition tensor is retained.
 
@@ -418,12 +428,14 @@ Backend-specific prediction functions live in `R/sops-backends.R`:
 - `predict_blrm_response_markov()` evaluates posterior draws, optional
   proportional-odds deviations, and optional random effects.
 
-`blrm` calls retain posterior draws as numeric arrays. Design matrices are
-cached across draw chunks, cumulative-logit conversion, probability
-normalization, and Markov draw updates run in compiled code, and grouped or
-counterfactual averages are reduced before any tidy data frame is created. This
-keeps the unavoidable public draw table at the API boundary rather than inside
-the recursion.
+`blrm` calls retain posterior draws as numeric arrays. First-order design
+matrices have a fixed call sequence and are cached across draw chunks.
+Second-order active-pair blocks and their chunk sizes depend on the current draw
+chunk, so those dynamic designs are rebuilt rather than cursor-cached.
+Cumulative-logit conversion, probability normalization, Markov draw updates,
+and grouped reductions run in compiled code before any tidy data frame is
+created. This keeps the unavoidable public draw table at the API boundary
+rather than inside the recursion.
 
 `lp_to_probs()` in `R/sops-fast-path.R` remains the R oracle for conversion from
 cumulative logits to state probabilities. Native PO and general-logit updates
@@ -444,18 +456,24 @@ recursion tracks joint history over `(S(t-2), S(t-1))`. Point prediction uses
 visit/pair designs once into a recursion-order-two execution plan and replays
 coefficient draws without rebuilding model frames or fitted transformations.
 
-The second-order implementation retains only the rolling patient-by-state-pair
-joint distribution. At each visit it identifies exact nonzero predictable
-pairs, groups them into a byte-budgeted chunk, predicts that chunk, and updates
-the joint state immediately. It therefore avoids patient-by-origin-pair-by-
-target transition storage while keeping the recursion explicit and independently
-testable.
+The reference second-order implementation retains only the rolling
+patient-by-state-pair joint distribution. At each visit it identifies exact
+nonzero predictable pairs, groups them into a byte-budgeted chunk, predicts that
+chunk, and updates the joint state immediately. Compiled frequentist inference
+instead retains reusable visit/pair design matrices while still avoiding dense
+patient-by-origin-pair-by-target transition tensors.
 
 For compiled proportional-odds plans, `src/sops.cpp` fuses stable cumulative-
 logit conversion with the joint-state update. Neither the pair transition
 tensor nor an origin-by-target probability matrix is materialized. Compiled
-design storage is measured while the plan is built and plans above the 256 MiB
-ceiling fall back to the bounded reference recursion.
+first- and second-order design storage is preflighted and measured as the
+initial matrix plus every retained visit matrix. The internal
+`markov.misc.execution_plan_max_bytes` option defaults to 256 MiB. Oversized
+plans raise `markov_misc_execution_plan_too_large`: point prediction uses the
+bounded reference recursion after reporting the fallback. A shared
+notification scope deduplicates reference-engine messages so `inferences()`
+reports at most one fallback for the entire draw or bootstrap replay. Other
+plan-construction errors remain errors.
 
 ### Time and Gap Handling
 
@@ -588,7 +606,7 @@ prediction:
 1. `compile_sop_execution_plan()` resolves model, link, design, state, time,
    basis, workspace, and output metadata.
 2. `markov_msm_build()` or `markov_msm_build_batched()` creates reusable,
-   visit-streamed numeric design blocks.
+   retained per-visit numeric design blocks within the plan byte ceiling.
 3. `compute_Gamma()` turns a coefficient vector into threshold-specific
    effective coefficients.
 4. `markov_msm_run()` runs the Markov recursion for a coefficient vector without
@@ -733,7 +751,9 @@ maps visit labels to real time, optionally adds an empirical baseline anchor
 from `newdata_orig`, interpolates draw-level outputs when available, and
 recomputes intervals from interpolated draws. Canonical shared grids compile
 left/right indices and weights once and apply them to all series as matrices;
-irregular, duplicate, or missing-value grids retain the generic path.
+irregular, duplicate, or missing-value grids retain the generic path. Both
+paths follow `stats::approx(rule = 1)` semantics: each series is interpolated
+only within its own finite source-time support and remains `NA` outside it.
 `time_in_state()` then integrates
 probabilities by summing visit-scale probabilities or using trapezoidal AUC on
 real-time grids.
@@ -1029,7 +1049,7 @@ patchwork object when `combine = TRUE` and a named ggplot list otherwise.
 | `R/robcov_vglm.R` | `robcov_vglm()`, `compute_scores_vglm()`, `compare_se_orm_vglm()` | Robust covariance and VGAM score support. |
 | `R/mvn_helpers.R` | `set_coef()`, `get_vcov_robust()`, `validate_coef_vcov()`, `get_coef()` | Coefficient mutation and covariance extraction for inference. |
 | `R/sops-api.R` | `sops()`, `sops_blrm()`, `avg_sops()`, `avg_sops_blrm()` | Main public SOP API. |
-| `R/sops-engine.R` | `soprob_markov()`, `soprob_markov_second_order_run()` | Core first- and second-order recursive SOP engine for SOP arrays. |
+| `R/sops-engine.R` | `soprob_markov_reference()`, `soprob_markov_second_order_run()` | Core first- and second-order reference recursion for SOP arrays. |
 | `R/diagnostic-trace.R` | `markov_transition_trace()` and trace helpers | Opt-in transition traces and kernels for diagnostic summaries, kept separate from the SOP hot path. |
 | `R/diagnostic-data.R`, `R/diagnostic-transitions.R`, `R/diagnostic-correlation.R` | diagnostic setup, BLRM trace chunking, transition summaries, correlation summaries | Internal diagnostic-data layer used by transition, correlation, and variogram plots. |
 | `R/sops-backends.R` | `validate_markov_model()`, `predict_*_response_markov()`, BLRM helpers, ORM matrix helpers, time/gap helpers | Model adapters and dynamic prediction-data construction. |

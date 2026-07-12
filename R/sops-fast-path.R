@@ -69,9 +69,23 @@ markov_msm_build <- function(
   time_info <- time_res$time_info
   validate_factor_gap(gap_var, time_covariates, time_info)
 
+  is_vglm <- inherits(model, "vglm")
+  is_orm <- inherits(model, "orm")
+  if (!is_vglm && !is_orm) {
+    stop("markov_msm_build() supports only vglm and orm models.")
+  }
+
   # Need Gamma structure to know which columns to keep
   Gamma_template <- get_effective_coefs(model)
+  validate_sop_threshold_count(Gamma_template, y_levels)
   common_cols <- colnames(Gamma_template)
+  non_absorb_idx <- setdiff(seq_len(n_states), absorb_idx)
+  budget <- preflight_execution_plan_designs(
+    n_pat = n_pat,
+    n_times = length(times),
+    rows_per_transition = n_pat * length(non_absorb_idx),
+    n_cols = ncol(Gamma_template)
+  )
 
   # Prepare data
   if (!p_var %in% names(data)) {
@@ -80,9 +94,6 @@ markov_msm_build <- function(
   if (!time_var %in% names(data)) {
     data <- assign_sop_time(data, time_var, times[1], time_info)
   }
-
-  is_vglm <- inherits(model, "vglm")
-  is_orm <- inherits(model, "orm")
 
   # Terms object
   if (is_vglm) {
@@ -98,8 +109,6 @@ markov_msm_build <- function(
     tt <- NULL
     contrasts_arg <- NULL
     xlev_arg <- NULL
-  } else {
-    stop("markov_msm_build() supports only vglm and orm models.")
   }
 
   # Helper to get design matrix columns used by the effective coefficient
@@ -159,9 +168,8 @@ markov_msm_build <- function(
     X[, col_names, drop = FALSE]
   }
 
-  # B. Visit-streamed transition designs. Each visit stores one stacked matrix
+  # B. Retained transition designs. Each visit stores one stacked matrix
   # with patient rows nested inside non-absorbing origin-state blocks.
-  non_absorb_idx <- setdiff(seq_len(n_states), absorb_idx)
   X_transition <- vector("list", length(times))
   if (length(times) >= 2L) {
     for (time_idx in 2:length(times)) {
@@ -183,6 +191,9 @@ markov_msm_build <- function(
     }
   }
 
+  design_bytes <- measure_execution_plan_designs(X_init, X_transition)
+  validate_execution_plan_designs(design_bytes, budget$workspace_bytes)
+
   list(
     X_init = align_X(X_init),
     X_transition = X_transition,
@@ -192,7 +203,9 @@ markov_msm_build <- function(
     y_levels = ylevel_names,
     col_names = col_names,
     transition_layout = "stacked",
-    transition_origins = non_absorb_idx
+    transition_origins = non_absorb_idx,
+    workspace_bytes = budget$workspace_bytes,
+    design_bytes = design_bytes
   )
 }
 
@@ -222,6 +235,15 @@ markov_msm_build_batched <- function(
   times <- time_res$times
   time_info <- time_res$time_info
   validate_factor_gap(gap_var, time_covariates, time_info)
+
+  Gamma <- get_effective_coefs(model)
+  validate_sop_threshold_count(Gamma, y_levels)
+  budget <- preflight_execution_plan_designs(
+    n_pat = n_pat,
+    n_times = length(times),
+    rows_per_transition = n_pat * length(non_absorb_idx),
+    n_cols = ncol(Gamma)
+  )
 
   if (!p_var %in% names(newdata)) {
     stop("Previous-state variable `", p_var, "` not found in `newdata`.")
@@ -261,7 +283,6 @@ markov_msm_build_batched <- function(
     p_var
   )
 
-  Gamma <- get_effective_coefs(model)
   tt <- if (inherits(model, "vglm")) {
     stats::delete.response(stats::terms(model))
   } else {
@@ -308,6 +329,9 @@ markov_msm_build_batched <- function(
     }
   }
 
+  design_bytes <- measure_execution_plan_designs(X_init, X_transition)
+  validate_execution_plan_designs(design_bytes, budget$workspace_bytes)
+
   list(
     X_init = X_init,
     X_transition = X_transition,
@@ -317,7 +341,9 @@ markov_msm_build_batched <- function(
     y_levels = ylevel_names,
     col_names = colnames(X_init),
     transition_layout = "stacked",
-    transition_origins = non_absorb_idx
+    transition_origins = non_absorb_idx,
+    workspace_bytes = budget$workspace_bytes,
+    design_bytes = design_bytes
   )
 }
 
@@ -345,6 +371,7 @@ markov_msm_run <- function(components, Gamma, times, absorb = NULL) {
   y_levels <- components$y_levels
   col_names <- components$col_names
   n_times <- length(times)
+  validate_sop_threshold_count(Gamma, y_levels)
 
   # Align Gamma to components
   Gamma <- Gamma[, col_names, drop = FALSE]
@@ -369,6 +396,7 @@ markov_msm_run <- function(components, Gamma, times, absorb = NULL) {
     scalar <- drop(X_init %*% po$beta)
     lp_to_probs(outer(scalar, po$cutpoints, "+"), M)
   }
+  check_transition_probabilities(initial, "the first SOP time point")
   P_out <- array(0, dim = c(n_pat, n_times, n_states))
   P_out[, 1L, ] <- initial
   previous <- initial

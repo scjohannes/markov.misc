@@ -52,6 +52,7 @@ jobs:
       OMP_NUM_THREADS: 1
       OPENBLAS_NUM_THREADS: 1
       MKL_NUM_THREADS: 1
+      SANITIZER: ${{ matrix.sanitizer }}
       ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
       UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
     steps:
@@ -68,12 +69,21 @@ jobs:
         run: |
           mkdir -p ~/.R
           cat > ~/.R/Makevars <<EOF
-          CXX17FLAGS=-O1 -g -Wall -Wextra -Werror -fno-omit-frame-pointer -fsanitize=${{ matrix.sanitizer }}
-          SHLIB_CXX17LD=g++ -shared -fsanitize=${{ matrix.sanitizer }}
+          CXXFLAGS=-O1 -g -Wall -Wextra -Werror -fno-omit-frame-pointer -fsanitize=${SANITIZER}
+          SHLIB_CXXLD=g++ -fsanitize=${SANITIZER}
           EOF
+      - name: Preload AddressSanitizer runtime
+        if: matrix.sanitizer == 'address'
+        run: echo "LD_PRELOAD=$(g++ -print-file-name=libasan.so)" >> "$GITHUB_ENV"
+      - name: Install instrumented package
+        run: |
+          log="$RUNNER_TEMP/install-${SANITIZER}.log"
+          R CMD INSTALL --preclean . 2>&1 | tee "$log"
+          grep -E -- "-fsanitize=${SANITIZER}.* -c .*\\.cpp" "$log"
+          grep -E -- "g\\+\\+.*-fsanitize=${SANITIZER}.* -shared .*markov\\.misc\\.so" "$log"
       - name: Run native and recursion tests
         run: |
-          Rscript -e 'devtools::test(filter = "sops-native|fast_vs_slow_equivalence|orm-fast-path|sops-rmsb-second-order", stop_on_failure = TRUE)'
+          Rscript -e 'testthat::test_local(".", filter = "sops-native|fast_vs_slow_equivalence|orm-fast-path|sops-rmsb-second-order", load_package = "installed", stop_on_failure = TRUE)'
 
   valgrind:
     runs-on: ubuntu-latest

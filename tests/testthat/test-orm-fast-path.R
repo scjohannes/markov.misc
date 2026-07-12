@@ -61,6 +61,96 @@ test_that("orm fast path supports categorical previous state", {
   expect_equal(unname(fast), unname(slow), tolerance = 1e-12)
 })
 
+test_that("orm fast path validates state support and initial probabilities", {
+  skip_if_not_installed("rms")
+
+  data <- make_test_data(n_patients = 45, follow_up_time = 6, seed = 6111)
+  data <- add_test_age(data)
+  local_orm_datadist(data)
+  fit <- rms::orm(
+    y ~ time + tx + yprev + age,
+    data = data,
+    x = TRUE,
+    y = TRUE
+  )
+  baseline <- data[!duplicated(data$id), ][1:3, , drop = FALSE]
+
+  expect_snapshot(
+    markov.misc::soprob_markov(
+      fit,
+      baseline,
+      times = 1,
+      y_levels = fit$yunique[-length(fit$yunique)]
+    ),
+    error = TRUE
+  )
+
+  baseline$age[1L] <- NA_real_
+  expect_snapshot(
+    markov.misc::soprob_markov(
+      fit,
+      baseline[1L, , drop = FALSE],
+      times = 1,
+      y_levels = fit$yunique
+    ),
+    error = TRUE
+  )
+})
+
+test_that("execution-plan budgets bound all retained first-order designs", {
+  skip_if_not_installed("rms")
+
+  data <- make_test_data(n_patients = 40, follow_up_time = 6, seed = 6112)
+  data <- add_test_age(data)
+  local_orm_datadist(data)
+  fit <- rms::orm(
+    y ~ time + tx + yprev + age,
+    data = data,
+    x = TRUE,
+    y = TRUE
+  )
+  baseline <- data[!duplicated(data$id), ][1:4, , drop = FALSE]
+  args <- list(
+    model = fit,
+    newdata = baseline,
+    times = 1:5,
+    y_levels = fit$yunique,
+    absorb = "6"
+  )
+  expected <- do.call(markov.misc:::soprob_markov_reference, args)
+
+  withr::local_options(markov.misc.execution_plan_max_bytes = 1)
+  for (builder in c("batched", "streamed")) {
+    condition <- tryCatch(
+      do.call(
+        markov.misc:::compile_sop_execution_plan,
+        c(args, list(builder = builder))
+      ),
+      error = function(e) e
+    )
+    expect_s3_class(condition, "markov_misc_execution_plan_too_large")
+    expect_gt(condition$required_bytes, condition$max_bytes)
+  }
+  expect_message(
+    actual <- do.call(markov.misc::soprob_markov, args),
+    "Compiled C\\+\\+ SOP calculations were not used"
+  )
+  expect_equal(actual, expected, tolerance = 1e-12)
+})
+
+test_that("fallback notifications are emitted once per inference call", {
+  messages <- testthat::capture_messages({
+    markov.misc:::with_sop_fallback_notification_scope({
+      markov.misc:::notify_sop_reference_fallback("first draw failed.")
+      markov.misc:::with_sop_fallback_notification_scope({
+        markov.misc:::notify_sop_reference_fallback("second draw failed.")
+      })
+    })
+  })
+  expect_length(messages, 1L)
+  expect_match(messages, "Compiled C\\+\\+ SOP calculations were not used")
+})
+
 test_that("orm fast path agrees with predict.orm for numeric previous state", {
   skip_if_not_installed("rms")
 

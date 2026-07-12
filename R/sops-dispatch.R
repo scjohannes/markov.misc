@@ -9,7 +9,8 @@
 #' @param newdata A data frame containing one baseline prediction row per
 #'   patient or profile.
 #' @param times Required visit-scale time points.
-#' @param y_levels Ordered outcome-state levels.
+#' @param y_levels Ordered outcome-state levels. The number of levels must equal
+#'   the fitted threshold count plus one.
 #' @param absorb Optional absorbing state levels.
 #' @param time_var Name of the model time variable.
 #' @param p_var Name of the previous-state variable.
@@ -46,21 +47,8 @@ soprob_markov <- function(
   ...
 ) {
   dots <- list(...)
-  model_fast <- if (inherits(model, "robcov_vglm")) model$vglm_fit else model
-  vglm_fast <- inherits(model_fast, "vglm") &&
-    methods::is(model_fast, "vglm") &&
-    isTRUE(tryCatch(
-      !is.null(methods::slot(model_fast, "constraints")),
-      error = function(e) FALSE
-    ))
-  orm_fast <- inherits(model_fast, "orm") && !inherits(model_fast, "blrm")
-  use_fast <- (vglm_fast || orm_fast) &&
-    !inherits(model_fast, "blrm") &&
-    is.null(p2_var) &&
-    length(dots) == 0L
-
-  if (!use_fast) {
-    return(soprob_markov_reference(
+  run_reference <- function() {
+    soprob_markov_reference(
       model = model,
       newdata = newdata,
       times = times,
@@ -76,7 +64,30 @@ soprob_markov <- function(
       n_draws = n_draws,
       seed = seed,
       ...
+    )
+  }
+  model_fast <- if (inherits(model, "robcov_vglm")) model$vglm_fit else model
+  vglm_fast <- inherits(model_fast, "vglm") &&
+    methods::is(model_fast, "vglm") &&
+    isTRUE(tryCatch(
+      !is.null(methods::slot(model_fast, "constraints")),
+      error = function(e) FALSE
     ))
+  orm_fast <- inherits(model_fast, "orm") && !inherits(model_fast, "blrm")
+  use_fast <- (vglm_fast || orm_fast) &&
+    !inherits(model_fast, "blrm") &&
+    length(dots) == 0L
+
+  if (!use_fast) {
+    if (!inherits(model_fast, "blrm")) {
+      reason <- if (length(dots) > 0L) {
+        "additional backend arguments require reference evaluation."
+      } else {
+        "the fitted model or configuration has no compiled execution plan."
+      }
+      notify_sop_reference_fallback(reason)
+    }
+    return(run_reference())
   }
 
   validate_markov_model(model_fast)
@@ -86,20 +97,31 @@ soprob_markov <- function(
     y_levels = y_levels,
     absorb = absorb
   )
-  plan <- compile_sop_execution_plan(
-    model = model_fast,
-    newdata = newdata,
-    time_covariates = time_covariates,
-    times = times,
-    y_levels = y_levels,
-    absorb = absorb,
-    time_var = time_var,
-    p_var = p_var,
-    p2_var = p2_var,
-    gap_var = gap_var,
-    builder = "batched",
-    output = "array"
+  fallback_condition <- NULL
+  plan <- tryCatch(
+    compile_sop_execution_plan(
+      model = model_fast,
+      newdata = newdata,
+      time_covariates = time_covariates,
+      times = times,
+      y_levels = y_levels,
+      absorb = absorb,
+      time_var = time_var,
+      p_var = p_var,
+      p2_var = p2_var,
+      gap_var = gap_var,
+      builder = "batched",
+      output = "array"
+    ),
+    markov_misc_execution_plan_too_large = function(e) {
+      fallback_condition <<- e
+      NULL
+    }
   )
+  if (is.null(plan)) {
+    notify_sop_reference_fallback(conditionMessage(fallback_condition))
+    return(run_reference())
+  }
   resolved_times <- plan$times
   out <- run_sop_execution_plan(plan, get_effective_coefs(model_fast))
   dimnames(out) <- list(

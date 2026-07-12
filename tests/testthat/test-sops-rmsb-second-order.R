@@ -246,6 +246,23 @@ test_that("compiled second-order ORM plans match the reference recursion", {
     y = TRUE
   )
   baseline <- data[data$time == 1L, ]
+  withr::local_options(markov.misc.execution_plan_max_bytes = 1)
+  condition <- tryCatch(
+    markov.misc:::compile_sop_execution_plan(
+      model,
+      baseline,
+      times = 1:6,
+      y_levels = 1:3,
+      p2_var = "ypprev"
+    ),
+    error = function(e) e
+  )
+  expect_s3_class(condition, "markov_misc_execution_plan_too_large")
+  expect_gt(condition$required_bytes, condition$max_bytes)
+
+  withr::local_options(
+    markov.misc.execution_plan_max_bytes = 256 * 1024^2
+  )
   plan <- markov.misc:::compile_sop_execution_plan(
     model,
     baseline,
@@ -485,4 +502,143 @@ test_that("avg_sops() streams and summarizes blrm posterior draws", {
   )
   expect_equal(draw_sums$estimate, rep(1, nrow(draw_sums)), tolerance = 1e-12)
   expect_s3_class(plot_sops(result, geom = "line", facet_var = "tx"), "ggplot")
+})
+
+test_that("second-order blrm posterior results are invariant to outer draw chunks", {
+  model <- make_fake_blrm()
+  newdata <- data.frame(
+    id = "a",
+    tx = 1,
+    yprev = factor(1, levels = 1:3),
+    ypprev = factor(1, levels = 1:3),
+    time = 1
+  )
+
+  run_chunked <- function(chunk_size) {
+    withr::with_options(
+      list(
+        markov.misc.blrm_chunk_size = chunk_size,
+        markov.misc.second_order_working_bytes = 144
+      ),
+      sops(
+        model,
+        newdata = newdata,
+        times = 1:3,
+        p2_var = "ypprev",
+        n_draws = 3,
+        return_draws = TRUE
+      )
+    )
+  }
+
+  with_mocked_bindings(
+    blrm_design_matrix = fake_blrm_design,
+    {
+      one <- run_chunked(1L)
+      two <- run_chunked(2L)
+      all <- run_chunked(10L)
+    }
+  )
+
+  expect_equal(one, two)
+  expect_equal(one, all)
+  expect_equal(attr(one, "draws"), attr(two, "draws"))
+  expect_equal(attr(one, "draws"), attr(all, "draws"))
+})
+
+test_that("grouped blrm summaries omit incomplete grouping rows", {
+  model <- make_fake_blrm()
+  newdata <- data.frame(
+    id = c("a", "b", "c"),
+    tx = c(0, 1, 0),
+    grp = c("a", NA, "b"),
+    yprev = factor(c(1, 2, 1), levels = 1:3),
+    time = 1
+  )
+  complete <- newdata[!is.na(newdata$grp), , drop = FALSE]
+
+  with_mocked_bindings(
+    blrm_design_matrix = fake_blrm_design,
+    {
+      grouped <- sops(
+        model,
+        newdata = newdata,
+        times = 1:2,
+        by = "grp",
+        n_draws = 3,
+        return_draws = TRUE
+      )
+      expected <- sops(
+        model,
+        newdata = complete,
+        times = 1:2,
+        by = "grp",
+        n_draws = 3,
+        return_draws = TRUE
+      )
+      avg_grouped <- avg_sops(
+        model,
+        newdata = newdata,
+        variables = list(tx = c(0, 1)),
+        times = 1:2,
+        by = "grp",
+        n_draws = 3,
+        return_draws = TRUE
+      )
+      avg_expected <- avg_sops(
+        model,
+        newdata = complete,
+        variables = list(tx = c(0, 1)),
+        times = 1:2,
+        by = "grp",
+        n_draws = 3,
+        return_draws = TRUE
+      )
+    }
+  )
+
+  expect_equal(grouped, expected, ignore_attr = TRUE)
+  expect_equal(attr(grouped, "draws"), attr(expected, "draws"))
+  expect_equal(avg_grouped, avg_expected, ignore_attr = TRUE)
+  expect_equal(attr(avg_grouped, "draws"), attr(avg_expected, "draws"))
+  expect_identical(anyNA(grouped$grp), FALSE)
+  expect_identical(anyNA(avg_grouped$grp), FALSE)
+})
+
+test_that("grouped blrm summaries reject entirely incomplete grouping rows", {
+  model <- make_fake_blrm()
+  newdata <- data.frame(
+    id = c("a", "b"),
+    tx = c(0, 1),
+    grp = c(NA_character_, NA_character_),
+    yprev = factor(c(1, 2), levels = 1:3),
+    time = 1
+  )
+
+  with_mocked_bindings(
+    blrm_design_matrix = fake_blrm_design,
+    {
+      expect_snapshot(
+        sops(
+          model,
+          newdata = newdata,
+          times = 1:2,
+          by = "grp",
+          n_draws = 2
+        ),
+        error = TRUE
+      )
+      expect_snapshot(
+        avg_sops(
+          model,
+          newdata = newdata,
+          variables = list(tx = c(0, 1)),
+          times = 1:2,
+          by = "grp",
+          n_draws = 2
+        ),
+        error = TRUE
+      )
+    }
+  )
 })

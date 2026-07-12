@@ -141,6 +141,28 @@ test_that("inferences() rejects obsolete and misspelled arguments", {
   )
 })
 
+test_that("inferences() reports repeated R fallbacks only once", {
+  object <- structure(
+    data.frame(estimate = 0.5),
+    class = c("markov_sops", "data.frame")
+  )
+
+  with_mocked_bindings(
+    inferences_impl = function(...) {
+      for (i in seq_len(1000L)) {
+        notify_sop_reference_fallback(paste("draw", i))
+      }
+      object
+    },
+    {
+      messages <- testthat::capture_messages(inferences(object))
+    }
+  )
+
+  expect_length(messages, 1L)
+  expect_match(messages, "Compiled C\\+\\+ SOP calculations were not used")
+})
+
 test_that("inferences_simulation() falls back when fast-path setup fails", {
   model <- structure(list(coefficients = c(a = 0, b = 0)), class = "vglm")
   newdata <- data.frame(id = 1:2, tx = c(0, 1), yprev = c(1, 2), time = 1)
@@ -177,7 +199,7 @@ test_that("inferences_simulation() falls back when fast-path setup fails", {
     },
     {
       withr::local_seed(1)
-      expect_warning(
+      expect_message(
         out <- markov.misc:::inferences_simulation(
           object,
           engine = "mvn",
@@ -190,7 +212,7 @@ test_that("inferences_simulation() falls back when fast-path setup fails", {
           workers = NULL,
           return_draws = TRUE
         ),
-        "Fast path build failed"
+        "Compiled C\\+\\+ SOP calculations were not used"
       )
     }
   )

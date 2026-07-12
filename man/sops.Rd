@@ -42,7 +42,9 @@ prediction row per \code{id_var}.}
 variables this is usually a numeric vector. For factor-valued visit
 indices, values are matched to fitted visit levels.}
 
-\item{y_levels}{A vector of state levels. If NULL, attempts to infer from model.}
+\item{y_levels}{A vector of state levels in fitted outcome order. Its length
+must agree with the fitted model's threshold count. If \code{NULL}, attempts to
+infer the levels from \code{model}.}
 
 \item{absorb}{The absorbing state.}
 
@@ -50,8 +52,10 @@ indices, values are matched to fitted visit levels.}
 provided, the function aggregates (averages) SOPs within each stratum
 defined by combinations of these variables. E.g., \code{by = "ecog"} aggregates
 within ECOG levels; \code{by = c("ecog", "age_group")} aggregates within each
-combination of ECOG and age group. NOTE: This is simple aggregation within
-observed strata, NOT G-computation standardization (use \code{avg_sops()} for that).}
+combination of ECOG and age group. Rows missing any grouping value are
+omitted; an error is raised if none remain. This is simple aggregation
+within observed strata, not G-computation standardization (use
+\code{avg_sops()} for that).}
 
 \item{refit_data}{Optional full longitudinal data used only by refit-bootstrap
 inference. It is not used for point estimates. Defaults to data stored on

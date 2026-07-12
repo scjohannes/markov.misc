@@ -172,7 +172,7 @@ sop_many <- avg_sops(
   y_levels = fit_many$yunique,
   p_var = "yprev"
 ) |> 
-  inferences(n_draws = 10)
+  inferences(n_draws = 20)
 ```
 
 With many states, a stacked distribution is usually easier to read than one
@@ -219,7 +219,7 @@ tb <- avg_comparisons(
   estimand = "time_benefit"
 ) |> 
   inferences(
-    n_draws = 10
+    n_draws = 50
   )
 
 plot_comparisons(tb)

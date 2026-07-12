@@ -236,21 +236,23 @@ inferences <- function(
   update_datadist = TRUE,
   use_coefstart = FALSE
 ) {
-  with_local_seed(seed, {
-    inferences_impl(
-      x = x,
-      method = method,
-      n_draws = n_draws,
-      vcov = vcov,
-      cluster = cluster,
-      workers = workers,
-      conf_level = conf_level,
-      conf_type = conf_type,
-      null = null,
-      return_draws = return_draws,
-      update_datadist = update_datadist,
-      use_coefstart = use_coefstart
-    )
+  with_sop_fallback_notification_scope({
+    with_local_seed(seed, {
+      inferences_impl(
+        x = x,
+        method = method,
+        n_draws = n_draws,
+        vcov = vcov,
+        cluster = cluster,
+        workers = workers,
+        conf_level = conf_level,
+        conf_type = conf_type,
+        null = null,
+        return_draws = return_draws,
+        update_datadist = update_datadist,
+        use_coefstart = use_coefstart
+      )
+    })
   })
 }
 
@@ -569,10 +571,7 @@ inferences_simulation <- function(
         output = if (is_avg) "average" else "individual"
       ),
       error = function(e) {
-        warning(
-          "Fast path build failed, falling back to slow path: ",
-          e$message
-        )
+        notify_sop_reference_fallback(conditionMessage(e))
         NULL
       }
     )

@@ -43,14 +43,16 @@ prediction row per \code{id_var}.}
 E.g., \code{list(tx = c(0, 1))} creates counterfactual datasets for treatment
 and control.}
 
-\item{by}{Optional character vector of additional variables to group by,
-after standardization.}
+\item{by}{Optional character vector of additional variables to group by
+after standardization. Rows missing any grouping value are omitted; an
+error is raised if none remain.}
 
 \item{times}{Required visit-scale time points. Numeric time variables use
 numeric values; factor-valued visit indices use fitted visit levels.}
 
-\item{y_levels}{A vector of state levels. If \code{NULL}, attempts to infer from
-model.}
+\item{y_levels}{A vector of state levels in fitted outcome order. Its length
+must agree with the fitted model's threshold count. If \code{NULL}, attempts to
+infer the levels from \code{model}.}
 
 \item{absorb}{The absorbing state.}
 

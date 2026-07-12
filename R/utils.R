@@ -236,3 +236,37 @@ stop_unsupported_offset <- function() {
     call. = FALSE
   )
 }
+
+with_sop_fallback_notification_scope <- function(code) {
+  old <- getOption("markov.misc.sop_fallback_notification")
+  if (is.environment(old)) {
+    return(force(code))
+  }
+  state <- new.env(parent = emptyenv())
+  state$shown <- FALSE
+  options(markov.misc.sop_fallback_notification = state)
+  on.exit(options(markov.misc.sop_fallback_notification = old), add = TRUE)
+  force(code)
+}
+
+notify_sop_reference_fallback <- function(reason = NULL) {
+  state <- getOption("markov.misc.sop_fallback_notification")
+  if (is.environment(state) && isTRUE(state$shown)) {
+    return(invisible(FALSE))
+  }
+  if (is.environment(state)) {
+    state$shown <- TRUE
+  }
+
+  detail <- if (is.null(reason) || !nzchar(reason)) {
+    ""
+  } else {
+    paste0(" Reason: ", reason)
+  }
+  message(
+    "Compiled C++ SOP calculations were not used; ",
+    "falling back to the R implementation.",
+    detail
+  )
+  invisible(TRUE)
+}

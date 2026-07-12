@@ -152,7 +152,7 @@ soprob_markov_reference <- function(
   }
   draw_indices_arg <- dots$.draw_indices
   gamma_draws_arg <- dots$.gamma_draws
-  prediction_cache_arg <- dots$.prediction_cache
+  prediction_cache_arg <- if (is.null(p2_var)) dots$.prediction_cache else NULL
 
   cl <- if (inherits(object, "blrm")) {
     "blrm"

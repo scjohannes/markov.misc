@@ -59,6 +59,10 @@ are interpolated too. Interval columns are then recomputed from the
 interpolated draws, with the empirical origin anchor treated as fixed.
 If interval columns are present but stored draws are unavailable,
 \code{interpolate_sops()} warns and falls back to interpolating interval endpoints.
+Each numeric series is interpolated only within its own finite source-time
+support. Targets before its first or after its last available value return
+\code{NA}; the function never extrapolates a series from another group's wider
+support.
 }
 \examples{
 \dontrun{

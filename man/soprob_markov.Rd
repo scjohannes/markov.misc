@@ -31,7 +31,8 @@ patient or profile.}
 
 \item{times}{Required visit-scale time points.}
 
-\item{y_levels}{Ordered outcome-state levels.}
+\item{y_levels}{Ordered outcome-state levels. The number of levels must equal
+the fitted threshold count plus one.}
 
 \item{absorb}{Optional absorbing state levels.}
 

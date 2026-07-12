@@ -360,6 +360,9 @@ compile_linear_interpolation_plan <- function(source_times, target_times) {
   ) {
     return(NULL)
   }
+  in_support <-
+    target_times >= source_times[1L] &
+    target_times <= source_times[length(source_times)]
   left <- findInterval(target_times, source_times, all.inside = TRUE)
   right <- pmin.int(left + 1L, length(source_times))
   exact_last <- target_times == source_times[length(source_times)]
@@ -371,14 +374,21 @@ compile_linear_interpolation_plan <- function(source_times, target_times) {
   weight[interpolate] <-
     (target_times[interpolate] - source_times[left[interpolate]]) /
     denominator[interpolate]
-  list(left = left, right = right, weight = weight)
+  list(
+    left = left,
+    right = right,
+    weight = weight,
+    in_support = in_support
+  )
 }
 
 apply_linear_interpolation_plan <- function(values, plan) {
   left <- values[, plan$left, drop = FALSE]
   right <- values[, plan$right, drop = FALSE]
-  sweep(left, 2L, 1 - plan$weight, "*") +
+  out <- sweep(left, 2L, 1 - plan$weight, "*") +
     sweep(right, 2L, plan$weight, "*")
+  out[, !plan$in_support] <- NA_real_
+  out
 }
 
 interpolate_sop_table_matrix <- function(
@@ -662,6 +672,10 @@ interpolated_ci_from_draws <- function(draws, result, conf_level, conf_type) {
 #' interpolated draws, with the empirical origin anchor treated as fixed.
 #' If interval columns are present but stored draws are unavailable,
 #' `interpolate_sops()` warns and falls back to interpolating interval endpoints.
+#' Each numeric series is interpolated only within its own finite source-time
+#' support. Targets before its first or after its last available value return
+#' `NA`; the function never extrapolates a series from another group's wider
+#' support.
 #'
 #' @examples
 #' \dontrun{

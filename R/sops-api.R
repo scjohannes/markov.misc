@@ -17,14 +17,18 @@
 #' @param times Required visit-scale time points to estimate. For numeric time
 #'   variables this is usually a numeric vector. For factor-valued visit
 #'   indices, values are matched to fitted visit levels.
-#' @param y_levels A vector of state levels. If NULL, attempts to infer from model.
+#' @param y_levels A vector of state levels in fitted outcome order. Its length
+#'   must agree with the fitted model's threshold count. If `NULL`, attempts to
+#'   infer the levels from `model`.
 #' @param absorb The absorbing state.
 #' @param by Optional character vector of variable names to stratify by. When
 #'   provided, the function aggregates (averages) SOPs within each stratum
 #'   defined by combinations of these variables. E.g., `by = "ecog"` aggregates
 #'   within ECOG levels; `by = c("ecog", "age_group")` aggregates within each
-#'   combination of ECOG and age group. NOTE: This is simple aggregation within
-#'   observed strata, NOT G-computation standardization (use `avg_sops()` for that).
+#'   combination of ECOG and age group. Rows missing any grouping value are
+#'   omitted; an error is raised if none remain. This is simple aggregation
+#'   within observed strata, not G-computation standardization (use
+#'   `avg_sops()` for that).
 #' @param refit_data Optional full longitudinal data used only by refit-bootstrap
 #'   inference. It is not used for point estimates. Defaults to data stored on
 #'   wrapper-fitted models.
@@ -337,13 +341,18 @@ sops_blrm <- function(
 ) {
   validate_sops_by(by, newdata)
 
+  group_setup <- if (is.null(by)) NULL else posterior_group_setup(newdata, by)
+  prediction_data <- if (is.null(group_setup)) {
+    newdata
+  } else {
+    newdata[group_setup$rows, , drop = FALSE]
+  }
   draw_indices <- select_posterior_draws(model, n_draws, seed)
-  n_pat <- nrow(newdata)
+  n_pat <- nrow(prediction_data)
   n_times <- length(times)
   n_states <- length(y_levels)
   n_cells <- n_pat * n_times * n_states
   n_requested <- length(draw_indices)
-  group_setup <- if (is.null(by)) NULL else posterior_group_setup(newdata, by)
   n_output_cells <- if (is.null(group_setup)) {
     n_cells
   } else {
@@ -374,16 +383,23 @@ sops_blrm <- function(
       posterior_chunk_size(n_cells, n_requested)
   )
   gamma_draws <- cache_blrm_gamma_draws(model, draw_indices, include_re)
-  prediction_cache <- new.env(parent = emptyenv())
-  prediction_cache$cursor <- 0L
-  prediction_cache$X <- list()
-  prediction_cache$Z <- list()
+  prediction_cache <- if (is.null(p2_var)) {
+    cache <- new.env(parent = emptyenv())
+    cache$cursor <- 0L
+    cache$X <- list()
+    cache$Z <- list()
+    cache
+  } else {
+    NULL
+  }
   row_cursor <- 1L
   for (chunk in chunks) {
-    prediction_cache$cursor <- 0L
+    if (!is.null(prediction_cache)) {
+      prediction_cache$cursor <- 0L
+    }
     arr <- soprob_markov(
       model = model,
-      newdata = newdata,
+      newdata = prediction_data,
       times = times,
       y_levels = y_levels,
       absorb = absorb,
@@ -511,8 +527,16 @@ sops_blrm <- function(
 }
 
 posterior_group_setup <- function(data, group_cols) {
+  rows <- which(stats::complete.cases(data[, group_cols, drop = FALSE]))
+  if (!length(rows)) {
+    stop(
+      "No complete prediction rows remain after omitting missing grouping values.",
+      call. = FALSE
+    )
+  }
+  complete_data <- data[rows, , drop = FALSE]
   keys <- interaction(
-    data[, group_cols, drop = FALSE],
+    complete_data[, group_cols, drop = FALSE],
     drop = TRUE,
     lex.order = TRUE
   )
@@ -523,9 +547,14 @@ posterior_group_setup <- function(data, group_cols) {
     function(i) which(groups == i)[1L],
     integer(1)
   )
-  metadata <- data[first, group_cols, drop = FALSE]
+  metadata <- complete_data[first, group_cols, drop = FALSE]
   rownames(metadata) <- NULL
-  list(groups = groups, n_groups = n_groups, metadata = metadata)
+  list(
+    rows = rows,
+    groups = groups,
+    n_groups = n_groups,
+    metadata = metadata
+  )
 }
 
 posterior_group_cells <- function(metadata, times, y_levels) {
@@ -670,12 +699,14 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #' @param variables A named list specifying the variable(s) to standardize over.
 #'   E.g., `list(tx = c(0, 1))` creates counterfactual datasets for treatment
 #'   and control.
-#' @param by Optional character vector of additional variables to group by,
-#' after standardization.
+#' @param by Optional character vector of additional variables to group by
+#'   after standardization. Rows missing any grouping value are omitted; an
+#'   error is raised if none remain.
 #' @param times Required visit-scale time points. Numeric time variables use
 #'   numeric values; factor-valued visit indices use fitted visit levels.
-#' @param y_levels A vector of state levels. If `NULL`, attempts to infer from
-#'   model.
+#' @param y_levels A vector of state levels in fitted outcome order. Its length
+#'   must agree with the fitted model's threshold count. If `NULL`, attempts to
+#'   infer the levels from `model`.
 #' @param absorb The absorbing state.
 #' @param refit_data Optional full longitudinal data used only by refit-bootstrap
 #'   inference. It is not used for point estimates. Defaults to data stored on
@@ -1078,21 +1109,12 @@ avg_sops_blrm <- function(
 
   validate_sops_by(by, newdata_expanded, data_arg = "expanded prediction data")
 
-  draw_indices <- select_posterior_draws(model, n_draws, seed)
-  chunks <- split_draw_indices(
-    draw_indices,
-    chunk_size = getOption("markov.misc.blrm_avg_chunk_size") %||%
-      posterior_chunk_size(
-        nrow(newdata_expanded) * length(times) * length(y_levels),
-        length(draw_indices)
-      )
-  )
-  gamma_draws <- cache_blrm_gamma_draws(model, draw_indices, include_re)
   n_cf <- nrow(grid)
   n_each <- nrow(newdata_expanded) / n_cf
   group_cols <- unique(c(names(variables), by))
   group_setup <- if (is.null(by)) {
     list(
+      rows = seq_len(nrow(newdata_expanded)),
       groups = rep(seq_len(n_cf), each = n_each),
       n_groups = n_cf,
       metadata = grid[, names(variables), drop = FALSE]
@@ -1100,6 +1122,17 @@ avg_sops_blrm <- function(
   } else {
     posterior_group_setup(newdata_expanded, group_cols)
   }
+  prediction_data <- newdata_expanded[group_setup$rows, , drop = FALSE]
+  draw_indices <- select_posterior_draws(model, n_draws, seed)
+  chunks <- split_draw_indices(
+    draw_indices,
+    chunk_size = getOption("markov.misc.blrm_avg_chunk_size") %||%
+      posterior_chunk_size(
+        nrow(prediction_data) * length(times) * length(y_levels),
+        length(draw_indices)
+      )
+  )
+  gamma_draws <- cache_blrm_gamma_draws(model, draw_indices, include_re)
   n_cells <- group_setup$n_groups * length(times) * length(y_levels)
   draw_values <- matrix(
     NA_real_,
@@ -1107,17 +1140,24 @@ avg_sops_blrm <- function(
     ncol = n_cells,
     dimnames = list(draw_indices, NULL)
   )
-  prediction_cache <- new.env(parent = emptyenv())
-  prediction_cache$cursor <- 0L
-  prediction_cache$X <- list()
-  prediction_cache$Z <- list()
+  prediction_cache <- if (is.null(p2_var)) {
+    cache <- new.env(parent = emptyenv())
+    cache$cursor <- 0L
+    cache$X <- list()
+    cache$Z <- list()
+    cache
+  } else {
+    NULL
+  }
   row_cursor <- 1L
 
   for (chunk in chunks) {
-    prediction_cache$cursor <- 0L
+    if (!is.null(prediction_cache)) {
+      prediction_cache$cursor <- 0L
+    }
     arr <- soprob_markov(
       model = model,
-      newdata = newdata_expanded,
+      newdata = prediction_data,
       times = times,
       y_levels = y_levels,
       absorb = absorb,

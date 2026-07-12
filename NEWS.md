@@ -11,13 +11,23 @@
 - `interpolate_sops()` now applies one compiled interpolation plan across
   canonical point and stored-draw grids, with the existing generic fallback for
   irregular or duplicate grids.
+- `interpolate_sops()` now preserves `NA` outside each estimate or draw series'
+  own observed time support instead of extrapolating from endpoint values.
 - `sim_trajectories_brownian()` and the default `sim_trajectories_markov()` path
   now use fused serial categorical sampling and direct long-output construction.
 - `soprob_markov()` now streams visit designs into fused PO or general-logit
   propagation kernels and chunks active second-order state pairs, avoiding dense
   first- and second-order transition tensors.
+- `soprob_markov()` now validates fitted threshold/state agreement and initial
+  transition probabilities, and falls back to the reference engine when a
+  retained execution plan would exceed its configured memory budget.
 - `sops()` and `avg_sops()` now fuse BLRM posterior cumulative-logit conversion,
   category differencing, clipping, and normalization in one serial native pass.
+- `sops()` and `avg_sops()` now omit incomplete grouping rows consistently and
+  avoid reusing dynamic second-order BLRM designs across posterior draw chunks.
+- `sops()`, `avg_sops()`, `avg_comparisons()`, and `inferences()` now report
+  when compiled C++ SOP calculations are unavailable and the R implementation
+  is used; inference reports the fallback only once per call.
 - `states_to_tte_v2()` now collapses trajectories with a linear indexed run
   scan, and bootstrap samples are materialized from reusable row-index plans.
 - `vglm_markov()` now uses an extensible RMS basis registry and ships first-class
