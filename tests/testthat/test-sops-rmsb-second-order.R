@@ -83,7 +83,19 @@ test_that("soprob_markov handles second-order recursion and absorbing states", {
         yprev = factor(1, levels = 1:3)
       )
 
+      withr::local_options(markov.misc.second_order_working_bytes = 1)
       out <- soprob_markov(
+        model = model,
+        newdata = data,
+        times = 1:2,
+        y_levels = 1:3,
+        absorb = 3,
+        p2_var = "ypprev"
+      )
+      withr::local_options(
+        markov.misc.second_order_working_bytes = 256 * 1024^2
+      )
+      out_large_chunk <- soprob_markov(
         model = model,
         newdata = data,
         times = 1:2,
@@ -122,6 +134,7 @@ test_that("soprob_markov handles second-order recursion and absorbing states", {
     c("1" = 0, "2" = 0, "3" = 1),
     tolerance = 1e-12
   )
+  expect_identical(out, out_large_chunk)
 })
 
 test_that("soprob_markov handles single first-order time points", {
@@ -206,6 +219,72 @@ test_that("soprob_markov carries absorbing labels that are not column positions"
     c("0" = 0.1, "1" = 0.2, "2" = 0.7),
     tolerance = 1e-12
   )
+})
+
+test_that("compiled second-order ORM plans match the reference recursion", {
+  set.seed(119)
+  data <- expand.grid(
+    id = seq_len(20L),
+    time = seq_len(6L),
+    KEEP.OUT.ATTRS = FALSE
+  )
+  data <- data[order(data$id, data$time), , drop = FALSE]
+  data$tx <- rep(rep(0:1, each = 10L), each = 6L)
+  data$y <- factor(sample(1:3, nrow(data), replace = TRUE), levels = 1:3)
+  data$yprev <- ave(as.integer(data$y), data$id, FUN = function(value) {
+    c(value[1L], value[-length(value)])
+  })
+  data$ypprev <- ave(data$yprev, data$id, FUN = function(value) {
+    c(value[1L], value[-length(value)])
+  })
+  data$yprev <- factor(data$yprev, levels = 1:3)
+  data$ypprev <- factor(data$ypprev, levels = 1:3)
+  model <- rms::orm(
+    y ~ tx + time + yprev + ypprev,
+    data = data[data$time > 2L, ],
+    x = TRUE,
+    y = TRUE
+  )
+  baseline <- data[data$time == 1L, ]
+  withr::local_options(markov.misc.execution_plan_max_bytes = 1)
+  condition <- tryCatch(
+    markov.misc:::compile_sop_execution_plan(
+      model,
+      baseline,
+      times = 1:6,
+      y_levels = 1:3,
+      p2_var = "ypprev"
+    ),
+    error = function(e) e
+  )
+  expect_s3_class(condition, "markov_misc_execution_plan_too_large")
+  expect_gt(condition$required_bytes, condition$max_bytes)
+
+  withr::local_options(
+    markov.misc.execution_plan_max_bytes = 256 * 1024^2
+  )
+  plan <- markov.misc:::compile_sop_execution_plan(
+    model,
+    baseline,
+    times = 1:6,
+    y_levels = 1:3,
+    p2_var = "ypprev"
+  )
+  actual <- markov.misc:::run_sop_execution_plan(
+    plan,
+    markov.misc:::get_effective_coefs(model)
+  )
+  expected <- markov.misc:::soprob_markov_reference(
+    model,
+    baseline,
+    times = 1:6,
+    y_levels = 1:3,
+    p2_var = "ypprev"
+  )
+
+  expect_equal(plan$recursion_order, 2L)
+  expect_lte(plan$design_bytes, plan$workspace_bytes)
+  expect_equal(actual, expected, tolerance = 1e-11, ignore_attr = TRUE)
 })
 
 test_that("blrm posterior draw sampling is random, capped, and reproducible", {
@@ -423,4 +502,143 @@ test_that("avg_sops() streams and summarizes blrm posterior draws", {
   )
   expect_equal(draw_sums$estimate, rep(1, nrow(draw_sums)), tolerance = 1e-12)
   expect_s3_class(plot_sops(result, geom = "line", facet_var = "tx"), "ggplot")
+})
+
+test_that("second-order blrm posterior results are invariant to outer draw chunks", {
+  model <- make_fake_blrm()
+  newdata <- data.frame(
+    id = "a",
+    tx = 1,
+    yprev = factor(1, levels = 1:3),
+    ypprev = factor(1, levels = 1:3),
+    time = 1
+  )
+
+  run_chunked <- function(chunk_size) {
+    withr::with_options(
+      list(
+        markov.misc.blrm_chunk_size = chunk_size,
+        markov.misc.second_order_working_bytes = 144
+      ),
+      sops(
+        model,
+        newdata = newdata,
+        times = 1:3,
+        p2_var = "ypprev",
+        n_draws = 3,
+        return_draws = TRUE
+      )
+    )
+  }
+
+  with_mocked_bindings(
+    blrm_design_matrix = fake_blrm_design,
+    {
+      one <- run_chunked(1L)
+      two <- run_chunked(2L)
+      all <- run_chunked(10L)
+    }
+  )
+
+  expect_equal(one, two)
+  expect_equal(one, all)
+  expect_equal(attr(one, "draws"), attr(two, "draws"))
+  expect_equal(attr(one, "draws"), attr(all, "draws"))
+})
+
+test_that("grouped blrm summaries omit incomplete grouping rows", {
+  model <- make_fake_blrm()
+  newdata <- data.frame(
+    id = c("a", "b", "c"),
+    tx = c(0, 1, 0),
+    grp = c("a", NA, "b"),
+    yprev = factor(c(1, 2, 1), levels = 1:3),
+    time = 1
+  )
+  complete <- newdata[!is.na(newdata$grp), , drop = FALSE]
+
+  with_mocked_bindings(
+    blrm_design_matrix = fake_blrm_design,
+    {
+      grouped <- sops(
+        model,
+        newdata = newdata,
+        times = 1:2,
+        by = "grp",
+        n_draws = 3,
+        return_draws = TRUE
+      )
+      expected <- sops(
+        model,
+        newdata = complete,
+        times = 1:2,
+        by = "grp",
+        n_draws = 3,
+        return_draws = TRUE
+      )
+      avg_grouped <- avg_sops(
+        model,
+        newdata = newdata,
+        variables = list(tx = c(0, 1)),
+        times = 1:2,
+        by = "grp",
+        n_draws = 3,
+        return_draws = TRUE
+      )
+      avg_expected <- avg_sops(
+        model,
+        newdata = complete,
+        variables = list(tx = c(0, 1)),
+        times = 1:2,
+        by = "grp",
+        n_draws = 3,
+        return_draws = TRUE
+      )
+    }
+  )
+
+  expect_equal(grouped, expected, ignore_attr = TRUE)
+  expect_equal(attr(grouped, "draws"), attr(expected, "draws"))
+  expect_equal(avg_grouped, avg_expected, ignore_attr = TRUE)
+  expect_equal(attr(avg_grouped, "draws"), attr(avg_expected, "draws"))
+  expect_identical(anyNA(grouped$grp), FALSE)
+  expect_identical(anyNA(avg_grouped$grp), FALSE)
+})
+
+test_that("grouped blrm summaries reject entirely incomplete grouping rows", {
+  model <- make_fake_blrm()
+  newdata <- data.frame(
+    id = c("a", "b"),
+    tx = c(0, 1),
+    grp = c(NA_character_, NA_character_),
+    yprev = factor(c(1, 2), levels = 1:3),
+    time = 1
+  )
+
+  with_mocked_bindings(
+    blrm_design_matrix = fake_blrm_design,
+    {
+      expect_snapshot(
+        sops(
+          model,
+          newdata = newdata,
+          times = 1:2,
+          by = "grp",
+          n_draws = 2
+        ),
+        error = TRUE
+      )
+      expect_snapshot(
+        avg_sops(
+          model,
+          newdata = newdata,
+          variables = list(tx = c(0, 1)),
+          times = 1:2,
+          by = "grp",
+          n_draws = 2
+        ),
+        error = TRUE
+      )
+    }
+  )
 })

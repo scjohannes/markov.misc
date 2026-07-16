@@ -256,6 +256,26 @@ test_that("time-benefit array reducer preserves scenario blocks", {
   expect_equal(out$estimate, 0.5)
 })
 
+test_that("linear ordinal-benefit reducer matches the dense score definition", {
+  reference <- rbind(
+    c(0.2, 0.3, 0.5),
+    c(0.7, 0.2, 0.1)
+  )
+  comparison <- rbind(
+    c(0.4, 0.4, 0.2),
+    c(0.1, 0.3, 0.6)
+  )
+  states <- seq_len(ncol(reference))
+  score <- outer(states, states, function(ref, cmp) sign(ref - cmp))
+  expected <- rowSums((reference %*% score) * comparison)
+
+  expect_equal(
+    markov.misc:::ordinal_pairwise_benefit(reference, comparison),
+    expected,
+    tolerance = 1e-15
+  )
+})
+
 test_that("time-benefit array reducer uses real-time AUC when mapped", {
   baseline <- data.frame(id = 1, tx = 0, yprev = 2, rowid = 1)
   grid <- data.frame(tx = c(0, 1))

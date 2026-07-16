@@ -33,6 +33,10 @@ jackknife_mcse <- function(estimates, statistic = mean) {
   # Number of simulation repetitions
   nsim <- length(estimates)
 
+  if (nsim >= 2L && identical(statistic, mean)) {
+    return(stats::sd(estimates) / sqrt(nsim))
+  }
+
   # Vector to store the "leave-one-out" estimates
   leave_one_out_estimates <- numeric(nsim)
 

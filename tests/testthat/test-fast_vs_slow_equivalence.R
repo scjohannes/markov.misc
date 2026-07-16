@@ -12,7 +12,6 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
     dplyr::group_by(id) |>
     dplyr::mutate(age = stats::rnorm(1, 50, 10)) |>
     dplyr::ungroup()
-
   time_covariates <- data |>
     dplyr::select(time_lin, time_nlin_1) |>
     dplyr::distinct() |>
@@ -223,7 +222,7 @@ test_that("Fast path yields same results as slow path for constrained PPO", {
   follow_up <- 30
 
   data <- make_test_data(
-    n_patients = 25,
+    n_patients = 100,
     follow_up_time = follow_up,
     seed = 12345
   ) |>

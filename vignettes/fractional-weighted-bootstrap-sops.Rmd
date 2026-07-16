@@ -103,6 +103,7 @@ patient-level FWB weights internally.
 
 ```{r run-bootstrap}
 set.seed(SEED)
+t1 <- Sys.time()
 sop_fwb <- inferences(
   s,
   method = "fwb",
@@ -110,6 +111,8 @@ sop_fwb <- inferences(
   workers = 1,
   return_draws = TRUE
 )
+t2 <- Sys.time()
+t2 - t1
 ```
 
 ## Plot
@@ -129,7 +132,7 @@ c <- avg_comparisons(
   fit, 
   times = seq_len(FOLLOW_UP),
   variables = list(tx = c(0, 1)),
-  estimand = "time_in_state",
+  estimand = "time_benefit",
   absorb = ABSORB,
   by = "initial_y"
 ) |> 

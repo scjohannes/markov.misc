@@ -278,5 +278,6 @@ test_that("add_rms_formula_helpers() returns non-formulas unchanged", {
   out <- markov.misc:::add_rms_formula_helpers(form)
 
   expect_s3_class(out, "formula")
-  expect_true(exists("rcs", envir = environment(out), inherits = TRUE))
+  expect_equal(exists("rcs", envir = environment(out), inherits = TRUE), TRUE)
+  expect_equal(exists("lsp", envir = environment(out), inherits = TRUE), TRUE)
 })

@@ -319,6 +319,22 @@ interpolate_numeric_column <- function(time, value, target_times) {
     return(rep(NA_real_, length(target_times)))
   }
 
+  if (!anyDuplicated(time)) {
+    order <- order(time)
+    time <- time[order]
+    value <- value[order]
+    if (length(time) == 1L) {
+      out <- rep(NA_real_, length(target_times))
+      out[target_times == time] <- value
+      return(out)
+    }
+    plan <- compile_linear_interpolation_plan(time, target_times)
+    return(drop(apply_linear_interpolation_plan(
+      matrix(value, nrow = 1L),
+      plan
+    )))
+  }
+
   agg <- stats::aggregate(value ~ time, FUN = mean)
   agg <- agg[order(agg$time), , drop = FALSE]
   if (nrow(agg) == 1L) {
@@ -334,6 +350,116 @@ interpolate_numeric_column <- function(time, value, target_times) {
     rule = 1,
     ties = "ordered"
   )$y
+}
+
+compile_linear_interpolation_plan <- function(source_times, target_times) {
+  if (
+    length(source_times) < 2L ||
+      is.unsorted(source_times, strictly = TRUE) ||
+      anyNA(source_times)
+  ) {
+    return(NULL)
+  }
+  in_support <-
+    target_times >= source_times[1L] &
+    target_times <= source_times[length(source_times)]
+  left <- findInterval(target_times, source_times, all.inside = TRUE)
+  right <- pmin.int(left + 1L, length(source_times))
+  exact_last <- target_times == source_times[length(source_times)]
+  left[exact_last] <- length(source_times)
+  right[exact_last] <- length(source_times)
+  denominator <- source_times[right] - source_times[left]
+  weight <- numeric(length(target_times))
+  interpolate <- right != left
+  weight[interpolate] <-
+    (target_times[interpolate] - source_times[left[interpolate]]) /
+    denominator[interpolate]
+  list(
+    left = left,
+    right = right,
+    weight = weight,
+    in_support = in_support
+  )
+}
+
+apply_linear_interpolation_plan <- function(values, plan) {
+  left <- values[, plan$left, drop = FALSE]
+  right <- values[, plan$right, drop = FALSE]
+  out <- sweep(left, 2L, 1 - plan$weight, "*") +
+    sweep(right, 2L, plan$weight, "*")
+  out[, !plan$in_support] <- NA_real_
+  out
+}
+
+interpolate_sop_table_matrix <- function(
+  work,
+  group_cols,
+  value_cols,
+  target_times
+) {
+  if (
+    nrow(work) == 0L ||
+      anyNA(work$.sop_real_time) ||
+      any(!is.finite(work$.sop_real_time)) ||
+      anyNA(work[, value_cols, drop = FALSE])
+  ) {
+    return(NULL)
+  }
+
+  key <- split_key(work, group_cols)
+  if (anyNA(key)) {
+    return(NULL)
+  }
+  key <- droplevels(as.factor(key))
+  group <- as.integer(key)
+  n_groups <- nlevels(key)
+  counts <- tabulate(group, nbins = n_groups)
+  if (!length(counts) || any(counts != counts[1L])) {
+    return(NULL)
+  }
+
+  rows <- order(group, work$.sop_real_time, method = "radix")
+  n_source <- counts[1L]
+  row_matrix <- matrix(rows, nrow = n_groups, ncol = n_source, byrow = TRUE)
+  time_matrix <- matrix(
+    work$.sop_real_time[row_matrix],
+    nrow = n_groups,
+    ncol = n_source
+  )
+  source_times <- time_matrix[1L, ]
+  expected_times <- matrix(
+    source_times,
+    nrow = n_groups,
+    ncol = n_source,
+    byrow = TRUE
+  )
+  if (!all(time_matrix == expected_times) || anyDuplicated(source_times)) {
+    return(NULL)
+  }
+  plan <- compile_linear_interpolation_plan(source_times, target_times)
+  if (is.null(plan)) {
+    return(NULL)
+  }
+
+  first_rows <- row_matrix[, 1L]
+  metadata <- work[first_rows, group_cols, drop = FALSE]
+  out <- metadata[
+    rep(seq_len(n_groups), each = length(target_times)),
+    ,
+    drop = FALSE
+  ]
+  out$time <- rep(target_times, times = n_groups)
+  for (column in value_cols) {
+    values <- matrix(
+      work[[column]][row_matrix],
+      nrow = n_groups,
+      ncol = n_source
+    )
+    interpolated <- apply_linear_interpolation_plan(values, plan)
+    out[[column]] <- as.vector(t(interpolated))
+  }
+  rownames(out) <- NULL
+  out
 }
 
 normalize_interpolated_sops <- function(x) {
@@ -442,21 +568,32 @@ interpolate_sop_draws <- function(
   work <- bind_rows_fill(list(draw_anchor, work))
 
   group_cols <- setdiff(names(work), c("time", value_col, ".sop_real_time"))
-  groups <- split(seq_len(nrow(work)), split_key(work, group_cols), drop = TRUE)
-  pieces <- lapply(groups, function(idx) {
-    group <- work[idx, , drop = FALSE]
-    meta <- group[1, group_cols, drop = FALSE]
-    out <- meta[rep(1L, length(target_times)), , drop = FALSE]
-    out$time <- target_times
-    out[[value_col]] <- interpolate_numeric_column(
-      time = group$.sop_real_time,
-      value = group[[value_col]],
-      target_times = target_times
+  result <- interpolate_sop_table_matrix(
+    work,
+    group_cols,
+    value_col,
+    target_times
+  )
+  if (is.null(result)) {
+    groups <- split(
+      seq_len(nrow(work)),
+      split_key(work, group_cols),
+      drop = TRUE
     )
-    out
-  })
-
-  result <- bind_rows_fill(pieces)
+    pieces <- lapply(groups, function(idx) {
+      group <- work[idx, , drop = FALSE]
+      meta <- group[1, group_cols, drop = FALSE]
+      out <- meta[rep(1L, length(target_times)), , drop = FALSE]
+      out$time <- target_times
+      out[[value_col]] <- interpolate_numeric_column(
+        time = group$.sop_real_time,
+        value = group[[value_col]],
+        target_times = target_times
+      )
+      out
+    })
+    result <- bind_rows_fill(pieces)
+  }
   result <- result[, intersect(names(draws), names(result)), drop = FALSE]
   if (isTRUE(normalize)) {
     result <- normalize_interpolated_sops(result)
@@ -535,6 +672,10 @@ interpolated_ci_from_draws <- function(draws, result, conf_level, conf_type) {
 #' interpolated draws, with the empirical origin anchor treated as fixed.
 #' If interval columns are present but stored draws are unavailable,
 #' `interpolate_sops()` warns and falls back to interpolating interval endpoints.
+#' Each numeric series is interpolated only within its own finite source-time
+#' support. Targets before its first or after its last available value return
+#' `NA`; the function never extrapolates a series from another group's wider
+#' support.
 #'
 #' @examples
 #' \dontrun{
@@ -615,24 +756,34 @@ interpolate_sops <- function(
     stop("`x` must contain an `estimate` or `draw` column to interpolate.")
   }
   group_cols <- setdiff(names(work), c("time", value_cols, ".sop_real_time"))
-  groups <- split(seq_len(nrow(work)), split_key(work, group_cols), drop = TRUE)
-
-  pieces <- lapply(groups, function(idx) {
-    group <- work[idx, , drop = FALSE]
-    meta <- group[1, group_cols, drop = FALSE]
-    out <- meta[rep(1L, length(target_times)), , drop = FALSE]
-    out$time <- target_times
-    for (nm in value_cols) {
-      out[[nm]] <- interpolate_numeric_column(
-        time = group$.sop_real_time,
-        value = group[[nm]],
-        target_times = target_times
-      )
-    }
-    out
-  })
-
-  result <- bind_rows_fill(pieces)
+  result <- interpolate_sop_table_matrix(
+    work,
+    group_cols,
+    value_cols,
+    target_times
+  )
+  if (is.null(result)) {
+    groups <- split(
+      seq_len(nrow(work)),
+      split_key(work, group_cols),
+      drop = TRUE
+    )
+    pieces <- lapply(groups, function(idx) {
+      group <- work[idx, , drop = FALSE]
+      meta <- group[1, group_cols, drop = FALSE]
+      out <- meta[rep(1L, length(target_times)), , drop = FALSE]
+      out$time <- target_times
+      for (nm in value_cols) {
+        out[[nm]] <- interpolate_numeric_column(
+          time = group$.sop_real_time,
+          value = group[[nm]],
+          target_times = target_times
+        )
+      }
+      out
+    })
+    result <- bind_rows_fill(pieces)
+  }
   result <- result[, intersect(names(x), names(result)), drop = FALSE]
   if (isTRUE(normalize)) {
     result <- normalize_interpolated_sops(result)

@@ -126,57 +126,32 @@ generate_score_bootstrap_draws <- function(
     NULL
   }
 
-  for (i in seq_len(n_draws)) {
-    # Exponential multipliers are centered at 1; centered form drives score perturbation.
-    w_cluster <- stats::rexp(n_clusters, rate = 1)
-    u_cluster <- w_cluster - 1
+  bytes_per_draw <- 8 * (n_clusters + 3L * p + n_pat)
+  budget <- getOption(
+    "markov.misc.score_bootstrap_working_bytes",
+    256 * 1024^2
+  )
+  chunk_size <- max(1L, min(n_draws, floor(budget / max(1, bytes_per_draw))))
+  chunks <- split(seq_len(n_draws), ceiling(seq_len(n_draws) / chunk_size))
 
-    # multiple each centered patient weight by the patient-level score
-    # contribution, then sum across patients to get the overall score
-    # perturbation for the draw.
-
-    # Before applying the weights, colSums of the scores would be (by
-    # definition) zero (because we're looking at the first derivative at the MLE
-    #).
-
-    # U_star is the perturbed total score vector for this draw. It
-    # represents the total score perturbation under resampled patient weights.
-    U_star <- as.vector(crossprod(u_cluster, scores_clustered))
-
-    # One-Step Newton-Raphson Update:
-    # If we ignore covariance: if var(beta_x) very low, then even if U_star is
-    # large, then the update will be small.
-    #
-    # Reminder to self bread %*% U_star is equivalent to sum(bread[i, ] *
-    # U_star) for each row of bread.
-
-    # We can use Newton-Raphson to find root of the score equation, which gives
-    # us the new MLE estimates for this draw.
-    # We want to find where $f(x) = 0$ (our score)
-    # $x_{new} = x_{old} - \frac{f(x_{old})}{f'(x_{old})}$
-    # $x$ is is beta
-    # $f(x)$ is the score equation, which is zero at the MLE
-    # $f'(x)$ is the Hessian
-    # $$\beta_{new} = \beta_{old} - \frac{U(\beta_{old})}{H(\beta_{old})}$$
-
-    # Dividing by a matrix is the same as multiplying by the inverse, so we can
-    # write:
-    # $\beta_{new} = \beta_{old} - H^{-1} \times U(\beta_{old})$
-    # vcov (V) is defined as the inverse of the negative Hessian ($V = (-H)^{-1}$), so we can rewrite:
-    # $\beta_{new} = \beta_{old} + V \times U(\beta_{old})$
-    # The new beta (x1) is where the tangent line at the old beta (x0) intersects the x-axis (where score = 0).
-
-    # The bread component is vcov(fit), so this directly applies the
-    # one-step update from the total score perturbation.
-    beta_draws[i, ] <- beta_hat + as.vector(bread %*% U_star)
+  for (rows in chunks) {
+    multipliers <- matrix(
+      stats::rexp(length(rows) * n_clusters, rate = 1),
+      nrow = length(rows),
+      ncol = n_clusters,
+      byrow = TRUE
+    )
+    perturbed_scores <- (multipliers - 1) %*% scores_clustered
+    updates <- perturbed_scores %*% t(bread)
+    beta_draws[rows, ] <- sweep(updates, 2L, beta_hat, "+")
 
     if (isTRUE(return_baseline_weights)) {
-      w_patient <- w_cluster[cluster_idx]
-      w_sum <- sum(w_patient)
-      if (!is.finite(w_sum) || w_sum <= 0) {
+      patient_weights <- multipliers[, cluster_idx, drop = FALSE]
+      totals <- rowSums(patient_weights)
+      if (any(!is.finite(totals)) || any(totals <= 0)) {
         stop("Invalid baseline weights generated for score bootstrap.")
       }
-      baseline_weights[i, ] <- w_patient / w_sum
+      baseline_weights[rows, ] <- patient_weights / totals
     }
   }
 

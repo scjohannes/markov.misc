@@ -229,6 +229,36 @@ test_that("generate_score_bootstrap_draws is reproducible with a fixed seed", {
   expect_equal(draws_a$baseline_weights, draws_b$baseline_weights)
 })
 
+test_that("score bootstrap draws are invariant to working-memory chunks", {
+  skip_if_not_installed("VGAM")
+  skip_if_not_installed("rms")
+
+  data <- make_test_data(n_patients = 30, seed = 2017, follow_up_time = 8)
+  model <- make_test_model(data, robust = TRUE)
+  baseline_data <- data[data$time == 1, ]
+
+  withr::local_options(markov.misc.score_bootstrap_working_bytes = 1)
+  withr::local_seed(777)
+  small_chunks <- generate_score_bootstrap_draws(
+    model = model,
+    baseline_data = baseline_data,
+    id_var = "id",
+    n_draws = 17
+  )
+
+  withr::local_options(markov.misc.score_bootstrap_working_bytes = Inf)
+  withr::local_seed(777)
+  one_chunk <- generate_score_bootstrap_draws(
+    model = model,
+    baseline_data = baseline_data,
+    id_var = "id",
+    n_draws = 17
+  )
+
+  expect_equal(small_chunks$beta_draws, one_chunk$beta_draws, tolerance = 1e-13)
+  expect_identical(small_chunks$baseline_weights, one_chunk$baseline_weights)
+})
+
 test_that("generate_score_bootstrap_draws errors when baseline IDs do not match clusters", {
   skip_if_not_installed("VGAM")
   skip_if_not_installed("rms")

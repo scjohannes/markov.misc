@@ -20,7 +20,7 @@ plot_lp_difference(
 )
 }
 \arguments{
-\item{x}{A fitted \code{orm}, \code{blrm}, \code{vglm}, \code{vgam}, or \code{robcov_vglm} Markov
+\item{x}{A fitted \code{orm}, \code{blrm}, \code{vglm}, or \code{robcov_vglm} Markov
 model.}
 
 \item{profile}{One-row data frame containing the covariate profile.}

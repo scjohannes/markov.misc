@@ -21,20 +21,29 @@ validate_markov_model <- function(object) {
     stop_unsupported_offset()
   }
 
-  # Check if it's a vglm/vgam model
-  if (inherits(model_chk, c("vglm", "vgam"))) {
+  if (inherits(model_chk, "blrm")) {
+    return(invisible(NULL))
+  }
+
+  # Check if it's a vglm model
+  if (inherits(model_chk, "vglm")) {
     # Extract family object
     fam <- model_chk@family
 
     # Check if it's cumulative family
     if (!grepl("cumulative", fam@vfamily[1], ignore.case = TRUE)) {
       stop(
-        "For vglm/vgam models, only the cumulative family is supported.\n",
+        "For vglm models, only the cumulative family is supported.\n",
         "Current family: ",
         fam@vfamily[1],
         "\n",
         "Please refit your model with: family = cumulative(reverse = TRUE, ...)"
       )
+    }
+
+    link <- unique(as.character(model_chk@misc$link))
+    if (length(link) != 1L || !identical(tolower(link), "logitlink")) {
+      stop_unsupported_markov_link(link)
     }
 
     # Check reverse coding
@@ -65,7 +74,7 @@ validate_markov_model <- function(object) {
     # Check that reverse = TRUE
     if (!isTRUE(reverse_param)) {
       stop(
-        "For vglm/vgam models, the cumulative family must use reverse = TRUE.\n",
+        "For vglm models, the cumulative family must use reverse = TRUE.\n",
         "Current setting: reverse = ",
         reverse_param,
         "\n",
@@ -74,11 +83,36 @@ validate_markov_model <- function(object) {
     }
   }
 
-  # orm models are always compatible (they use reverse coding by default)
-  # blrm models inherit from orm, so also OK
+  if (inherits(model_chk, "orm")) {
+    family <- model_chk$family
+    if (
+      is.null(family) ||
+        length(family) != 1L ||
+        !identical(tolower(as.character(family)), "logistic")
+    ) {
+      stop_unsupported_markov_link(family)
+    }
+  }
+
   # Other model types will be caught by the existing class check in soprob_markov
 
   invisible(NULL)
+}
+
+stop_unsupported_markov_link <- function(link = NULL) {
+  message <- paste0(
+    "Only cumulative-logit models are supported; ",
+    "refit the model with a logit link."
+  )
+  condition <- structure(
+    list(
+      message = message,
+      call = NULL,
+      link = if (length(link)) as.character(link) else NA_character_
+    ),
+    class = c("markov_misc_unsupported_link", "error", "condition")
+  )
+  stop(condition)
 }
 
 predict_vglm_response_markov <- function(object, newdata) {
@@ -375,7 +409,8 @@ predict_blrm_response_markov <- function(
   include_re = FALSE,
   id_var = NULL,
   draw_indices = NULL,
-  gamma_draws = NULL
+  gamma_draws = NULL,
+  prediction_cache = NULL
 ) {
   if (is.null(draw_indices)) {
     draw_indices <- seq_len(nrow(object$draws))
@@ -384,14 +419,28 @@ predict_blrm_response_markov <- function(
 
   manual <- tryCatch(
     {
-      X <- blrm_design_matrix(object, newdata = newdata, second = FALSE)
+      cache_index <- NULL
+      if (!is.null(prediction_cache)) {
+        prediction_cache$cursor <- prediction_cache$cursor + 1L
+        cache_index <- prediction_cache$cursor
+      }
+      X <- if (
+        !is.null(cache_index) && length(prediction_cache$X) >= cache_index
+      ) {
+        prediction_cache$X[[cache_index]]
+      } else {
+        value <- blrm_design_matrix(object, newdata = newdata, second = FALSE)
+        if (!is.null(cache_index)) {
+          prediction_cache$X[[cache_index]] <- value
+        }
+        value
+      }
       draws <- object$draws[draw_indices, , drop = FALSE]
       ndraws <- nrow(draws)
       ns <- object$non.slopes
-      K <- ns + 1L
       cn <- colnames(draws)
       tauinfo <- object$tauInfo
-      tau_names <- if (!is.null(tauinfo) && length(tauinfo$name)) {
+      tau_names <- if (!is.null(tauinfo) && length(tauinfo$name) > 0L) {
         tauinfo$name
       } else {
         character()
@@ -421,7 +470,17 @@ predict_blrm_response_markov <- function(
       has_npo <- pppo > 0
       if (has_npo) {
         cppo <- resolve_blrm_cppo(object$cppo, envir = parent.frame())
-        Z <- blrm_design_matrix(object, newdata = newdata, second = TRUE)
+        Z <- if (
+          !is.null(cache_index) && length(prediction_cache$Z) >= cache_index
+        ) {
+          prediction_cache$Z[[cache_index]]
+        } else {
+          value <- blrm_design_matrix(object, newdata = newdata, second = TRUE)
+          if (!is.null(cache_index)) {
+            prediction_cache$Z[[cache_index]] <- value
+          }
+          value
+        }
         tau_draws <- draws[, tau_names, drop = FALSE]
         zt <- tau_draws %*% t(Z)
         cppos <- vapply(object$ylevels[-1], cppo, numeric(1))
@@ -444,34 +503,15 @@ predict_blrm_response_markov <- function(
       } else {
         as_state_labels(object$ylevels)
       }
-      out <- array(
-        NA_real_,
-        dim = c(ndraws, nrow(newdata), K),
-        dimnames = list(draw_indices, rownames(newdata), ynam)
-      )
-
       base_eta <- xb + u_draws
-      cum_probs <- array(
-        NA_real_,
-        dim = c(ndraws, nrow(newdata), ns)
+      out <- blrm_probabilities_native(
+        base_eta,
+        intercept_draws,
+        threshold_eta = if (has_npo) zt else numeric(),
+        threshold_scale = if (has_npo) cppos else numeric()
       )
-      for (k in seq_len(ns)) {
-        ep <- sweep(base_eta, 1L, intercept_draws[, k], "+")
-        if (has_npo) {
-          ep <- ep + cppos[k] * zt
-        }
-        cum_probs[,, k] <- stats::plogis(ep)
-      }
-
-      out[,, 1] <- 1 - cum_probs[,, 1]
-      if (K > 2) {
-        out[,, 2:(K - 1)] <- cum_probs[,, 1:(K - 2), drop = FALSE] -
-          cum_probs[,, 2:(K - 1), drop = FALSE]
-      }
-      out[,, K] <- cum_probs[,, K - 1]
-      out[out < 0] <- 0
-
-      normalize_probability_array(out)
+      dimnames(out) <- list(draw_indices, rownames(newdata), ynam)
+      out
     },
     error = function(e) {
       manual_error <<- e
@@ -646,7 +686,7 @@ get_model_factor_levels <- function(model, varname) {
     model
   }
 
-  if (inherits(model_chk, c("vglm", "vgam"))) {
+  if (inherits(model_chk, "vglm")) {
     xlevels <- tryCatch(
       model_chk@xlevels,
       error = function(e) NULL

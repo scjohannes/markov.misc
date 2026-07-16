@@ -10,7 +10,7 @@
 #' @param object A fitted model object. Supported classes include:
 #'   \code{"lrm"}, \code{"orm"} (from package `rms`),
 #'   \code{"blrm"} (from package `rmsb`), and
-#'   \code{"vglm"}, \code{"vgam"} (from package `VGAM`).
+#'   \code{"vglm"} (from package `VGAM`).
 #' @param data A data frame containing the baseline covariates for the prediction.
 #'   Rows represent unique patients. Columns must contain baseline covariates and
 #'   initial values for time-varying variables.
@@ -38,7 +38,8 @@
 #'     \item **Columns:** Column names must match the specific basis variables used in the model formula (e.g., \code{t1}, \code{t2}).
 #'     \item **Usage:** At step \code{i}, the values from the \code{i}-th row of \code{time_covariates} are injected into the prediction data.
 #'   }
-#'   Inline model terms such as \code{rms::rcs(time, 4)} do not require
+#'   Registered inline terms such as \code{rms::rcs(time, 4)} and
+#'   \code{rms::lsp(time, c(3, 7))} do not require
 #'   \code{time_covariates}; prediction reuses the fitted model's stored transform
 #'   metadata.
 #' @param include_re Logical. For `rmsb::blrm()` fits with `cluster()`, include
@@ -120,8 +121,8 @@
 #' )
 #' dim(probabilities)
 #'
-#' @export
-soprob_markov <- function(
+#' @noRd
+soprob_markov_reference <- function(
   model,
   newdata,
   times = NULL,
@@ -142,12 +143,16 @@ soprob_markov <- function(
   data <- newdata
   # --- 1. Initial Checks & Setup ---
   dots <- list(...)
-  unknown_dots <- setdiff(names(dots), c(".draw_indices", ".gamma_draws"))
+  unknown_dots <- setdiff(
+    names(dots),
+    c(".draw_indices", ".gamma_draws", ".prediction_cache")
+  )
   if (length(unknown_dots) > 0) {
     stop("Unused arguments: ", paste(unknown_dots, collapse = ", "))
   }
   draw_indices_arg <- dots$.draw_indices
   gamma_draws_arg <- dots$.gamma_draws
+  prediction_cache_arg <- if (is.null(p2_var)) dots$.prediction_cache else NULL
 
   cl <- if (inherits(object, "blrm")) {
     "blrm"
@@ -157,16 +162,13 @@ soprob_markov <- function(
     "orm"
   } else if (inherits(object, "vglm")) {
     "vglm"
-  } else if (inherits(object, "vgam")) {
-    "vgam"
   } else {
     class(object)[1]
   }
   ftypes <- c(
     orm = "rms",
     blrm = "rmsb",
-    vglm = "vgam",
-    vgam = "vgam",
+    vglm = "vglm",
     robcov_vglm = "robcov"
   )
   ftype <- ftypes[cl]
@@ -210,7 +212,7 @@ soprob_markov <- function(
   prd <- switch(
     ftype,
     rms = function(obj, d) predict_orm_response_markov(obj, d),
-    vgam = function(obj, d) predict_vglm_response_markov(obj, d),
+    vglm = function(obj, d) predict_vglm_response_markov(obj, d),
     rmsb = function(obj, d) {
       predict_blrm_response_markov(
         obj,
@@ -218,7 +220,8 @@ soprob_markov <- function(
         include_re = include_re,
         id_var = id_var,
         draw_indices = draw_indices,
-        gamma_draws = gamma_draws_arg
+        gamma_draws = gamma_draws_arg,
+        prediction_cache = prediction_cache_arg
       )
     },
     robcov = function(obj, d) {
@@ -379,32 +382,14 @@ soprob_markov <- function(
       P[, it, ] <- p_current
     } else {
       # trans_probs is [draw x (patient * previous state) x state].
-      p_current <- array(0, dim = c(nd, n_pat, n_states))
-      dimnames(p_current) <- list(
-        dimnames(P)[[1]],
-        rownames(data),
-        ylevel_names
+      previous <- P[,, it - 1, , drop = FALSE]
+      previous <- array(previous, dim = c(nd, n_pat, n_states))
+      p_current <- markov_update_draws_native(
+        previous,
+        trans_probs,
+        non_absorb_idx,
+        absorb_idx
       )
-
-      for (i in seq_along(yna)) {
-        prev_state_name <- yna[i]
-        prob_prev <- P[,, it - 1, prev_state_name]
-        row_indices <- ((i - 1) * n_pat + 1):(i * n_pat)
-        probs_transition <- trans_probs[, row_indices, , drop = FALSE]
-
-        for (k in seq_len(n_states)) {
-          p_current[,, k] <- p_current[,, k] +
-            probs_transition[,, k] * prob_prev
-        }
-      }
-
-      if (length(absorb_idx) > 0) {
-        for (a_state in absorb_idx) {
-          # total dead at t = new deaths + already dead
-          p_current[,, a_state] <- p_current[,, a_state] +
-            P[,, it - 1, a_state]
-        }
-      }
       P[,, it, ] <- p_current
     }
   }
@@ -516,27 +501,14 @@ soprob_markov_second_order_run <- function(
   predictable_pair <- pair_grid$h %in%
     non_absorb_idx &
     pair_grid$j %in% non_absorb_idx
-  block_rows <- lapply(seq_len(n_pairs), function(i) {
-    ((i - 1) * n_pat + 1):(i * n_pat)
-  })
-
-  edata_base <- data[rep(seq_len(n_pat), times = n_pairs), , drop = FALSE]
-  edata_base[[p2_var]] <- make_previous_state_column(
-    states = ylevel_names[pair_grid$h],
-    prototype = data[[p2_var]],
-    n = n_pat,
-    p_var = p2_var
-  )
-  edata_base[[p_var]] <- make_previous_state_column(
-    states = ylevel_names[pair_grid$j],
-    prototype = data[[p_var]],
-    n = n_pat,
-    p_var = p_var
-  )
+  budget <- getOption("markov.misc.second_order_working_bytes", 256 * 1024^2)
+  draw_factor <- max(1L, nd)
+  bytes_per_pair <- max(1, draw_factor * n_pat * n_states * 8 * 3)
+  pair_chunk_size <- max(1L, min(n_pairs, floor(budget / bytes_per_pair)))
 
   for (it in 2:n_times) {
-    edata_base <- assign_sop_visit(
-      edata_base,
+    data_time <- assign_sop_visit(
+      data,
       time_var = time_var,
       times = times,
       index = it,
@@ -545,59 +517,118 @@ soprob_markov_second_order_run <- function(
       time_info = time_info
     )
 
-    predict_rows <- unlist(block_rows[predictable_pair], use.names = FALSE)
-    trans_probs <- prd(object, edata_base[predict_rows, , drop = FALSE])
-    check_transition_probabilities(
-      trans_probs,
-      paste0("second-order SOP time point ", it)
-    )
-    cursor <- 1L
-
     if (nd == 0) {
+      active <- which(
+        predictable_pair &
+          vapply(
+            seq_len(n_pairs),
+            function(pair_i) {
+              any(joint_prev[, pair_grid$h[pair_i], pair_grid$j[pair_i]] != 0)
+            },
+            logical(1)
+          )
+      )
+      chunks <- split(active, ceiling(seq_along(active) / pair_chunk_size))
       joint_current <- array(0, dim = c(n_pat, n_states, n_states))
-      for (pair_i in seq_len(n_pairs)) {
-        h <- pair_grid$h[pair_i]
-        j <- pair_grid$j[pair_i]
-        prob_prev <- joint_prev[, h, j]
-        if (!any(prob_prev > 0)) {
-          if (predictable_pair[pair_i]) {
-            cursor <- cursor + n_pat
-          }
-          next
-        }
-        if (j %in% absorb_idx) {
-          joint_current[, j, j] <- joint_current[, j, j] + prob_prev
-        } else if (predictable_pair[pair_i]) {
-          rows <- cursor:(cursor + n_pat - 1L)
-          transition <- trans_probs[rows, , drop = FALSE]
-          for (l in seq_len(n_states)) {
-            joint_current[, j, l] <- joint_current[, j, l] +
-              transition[, l] * prob_prev
-          }
-          cursor <- cursor + n_pat
-        }
+      for (chunk in chunks) {
+        edata <- data_time[
+          rep(seq_len(n_pat), times = length(chunk)),
+          ,
+          drop = FALSE
+        ]
+        edata[[p2_var]] <- make_previous_state_column(
+          states = ylevel_names[pair_grid$h[chunk]],
+          prototype = data[[p2_var]],
+          n = n_pat,
+          p_var = p2_var
+        )
+        edata[[p_var]] <- make_previous_state_column(
+          states = ylevel_names[pair_grid$j[chunk]],
+          prototype = data[[p_var]],
+          n = n_pat,
+          p_var = p_var
+        )
+        trans_probs <- prd(object, edata)
+        check_transition_probabilities(
+          trans_probs,
+          paste0("second-order SOP time point ", it)
+        )
+        contribution <- markov_update_second_order_native(
+          joint_prev,
+          trans_probs,
+          pair_grid$h[chunk],
+          pair_grid$j[chunk],
+          integer()
+        )
+        joint_current <- joint_current + contribution
+      }
+      if (length(absorb_idx) > 0L) {
+        joint_current <- joint_current +
+          markov_update_second_order_native(
+            joint_prev,
+            matrix(numeric(), nrow = 0L, ncol = n_states),
+            integer(),
+            integer(),
+            absorb_idx
+          )
       }
       P[, it, ] <- apply(joint_current, c(1, 3), sum)
       joint_prev <- joint_current
     } else {
       joint_current <- array(0, dim = c(nd, n_pat, n_states, n_states))
-      for (pair_i in seq_len(n_pairs)) {
+      for (pair_i in which(pair_grid$j %in% absorb_idx)) {
         h <- pair_grid$h[pair_i]
         j <- pair_grid$j[pair_i]
-        if (j %in% absorb_idx) {
+        if (any(joint_prev[,, h, j] != 0)) {
           joint_current[,, j, j] <- joint_current[,, j, j] +
             joint_prev[,, h, j]
-        } else if (predictable_pair[pair_i]) {
-          rows <- cursor:(cursor + n_pat - 1L)
+        }
+      }
+      active <- which(
+        predictable_pair &
+          vapply(
+            seq_len(n_pairs),
+            function(pair_i) {
+              any(joint_prev[,, pair_grid$h[pair_i], pair_grid$j[pair_i]] != 0)
+            },
+            logical(1)
+          )
+      )
+      chunks <- split(active, ceiling(seq_along(active) / pair_chunk_size))
+      for (chunk in chunks) {
+        edata <- data_time[
+          rep(seq_len(n_pat), times = length(chunk)),
+          ,
+          drop = FALSE
+        ]
+        edata[[p2_var]] <- make_previous_state_column(
+          states = ylevel_names[pair_grid$h[chunk]],
+          prototype = data[[p2_var]],
+          n = n_pat,
+          p_var = p2_var
+        )
+        edata[[p_var]] <- make_previous_state_column(
+          states = ylevel_names[pair_grid$j[chunk]],
+          prototype = data[[p_var]],
+          n = n_pat,
+          p_var = p_var
+        )
+        trans_probs <- prd(object, edata)
+        check_transition_probabilities(
+          trans_probs,
+          paste0("second-order SOP time point ", it)
+        )
+        for (chunk_pos in seq_along(chunk)) {
+          pair_i <- chunk[chunk_pos]
+          h <- pair_grid$h[pair_i]
+          j <- pair_grid$j[pair_i]
+          rows <- (chunk_pos - 1L) * n_pat + seq_len(n_pat)
           prob_prev <- joint_prev[,, h, j]
-          if (any(prob_prev > 0)) {
-            transition <- trans_probs[, rows, , drop = FALSE]
-            for (l in seq_len(n_states)) {
-              joint_current[,, j, l] <- joint_current[,, j, l] +
-                transition[,, l] * prob_prev
-            }
+          transition <- trans_probs[, rows, , drop = FALSE]
+          for (l in seq_len(n_states)) {
+            joint_current[,, j, l] <- joint_current[,, j, l] +
+              transition[,, l] * prob_prev
           }
-          cursor <- cursor + n_pat
         }
       }
       P[,, it, ] <- apply(joint_current, c(1, 2, 4), sum)

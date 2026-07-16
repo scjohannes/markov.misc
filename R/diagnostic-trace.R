@@ -34,16 +34,13 @@ markov_transition_trace <- function(
     "orm"
   } else if (inherits(object, "vglm")) {
     "vglm"
-  } else if (inherits(object, "vgam")) {
-    "vgam"
   } else {
     class(object)[1]
   }
   ftypes <- c(
     orm = "rms",
     blrm = "rmsb",
-    vglm = "vgam",
-    vgam = "vgam",
+    vglm = "vglm",
     robcov_vglm = "robcov"
   )
   ftype <- ftypes[cl]
@@ -86,7 +83,7 @@ markov_transition_trace <- function(
   prd <- switch(
     ftype,
     rms = function(obj, d) predict_orm_response_markov(obj, d),
-    vgam = function(obj, d) predict_vglm_response_markov(obj, d),
+    vglm = function(obj, d) predict_vglm_response_markov(obj, d),
     rmsb = function(obj, d) {
       predict_blrm_response_markov(
         obj,

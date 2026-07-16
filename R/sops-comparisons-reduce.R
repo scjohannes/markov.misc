@@ -553,8 +553,6 @@ time_benefit_from_counterfactual_array <- function(
   varname <- names(setup$variables)[1]
   ref_idx <- 1L
   comp_idx <- seq.int(2L, length(values))
-  state_seq <- seq_along(as_state_labels(setup$y_levels))
-  score <- outer(state_seq, state_seq, function(ref, hi) sign(ref - hi))
   times <- setup$times %||% seq_len(dim(sops_array)[3])
   by <- setup$by
   baseline <- setup$baseline_data
@@ -573,11 +571,16 @@ time_benefit_from_counterfactual_array <- function(
       hi_t <- hi[, time_i, , drop = FALSE]
       ref_t <- matrix(ref_t, nrow = dim(ref)[1])
       hi_t <- matrix(hi_t, nrow = dim(hi)[1])
-      benefit[, time_i] <- rowSums((ref_t %*% score) * hi_t)
+      benefit[, time_i] <- ordinal_pairwise_benefit(ref_t, hi_t)
     }
 
     profile_value <- if (isTRUE(real_time)) {
-      apply(benefit, 1, function(x) trapezoid_auc(as.numeric(times), x))
+      widths <- diff(as.numeric(times))
+      rowSums(
+        (benefit[, -ncol(benefit), drop = FALSE] +
+          benefit[, -1L, drop = FALSE]) *
+          rep(widths / 2, each = nrow(benefit))
+      )
     } else {
       rowSums(benefit, na.rm = TRUE)
     }
@@ -615,6 +618,27 @@ time_benefit_from_counterfactual_array <- function(
       "estimate"
     )
   )
+}
+
+ordinal_pairwise_benefit <- function(reference, comparison) {
+  if (
+    !is.matrix(reference) ||
+      !is.matrix(comparison) ||
+      !identical(dim(reference), dim(comparison))
+  ) {
+    stop("Paired ordinal probability matrices must have identical dimensions.")
+  }
+  n <- nrow(reference)
+  states <- ncol(reference)
+  lower <- numeric(n)
+  total <- rowSums(comparison)
+  benefit <- numeric(n)
+  for (state in seq_len(states)) {
+    upper <- total - lower - comparison[, state]
+    benefit <- benefit + reference[, state] * (lower - upper)
+    lower <- lower + comparison[, state]
+  }
+  benefit
 }
 
 average_profile_values <- function(

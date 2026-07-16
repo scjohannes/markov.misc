@@ -207,13 +207,6 @@ sim_trajectories_brownian <- function(
     (mu_base + tx * mu_treatment_effect) * calc_piecewise_factor(day)
   }
 
-  threshold_matrix <- matrix(
-    thresholds,
-    nrow = follow_up_time + 1,
-    ncol = n_states - 1,
-    byrow = TRUE
-  )
-
   # Randomly assign treatment
   treatment <- sample(
     c(0, 1),
@@ -227,67 +220,47 @@ sim_trajectories_brownian <- function(
   X <- matrix(NA_real_, n_patients, follow_up_time + 1)
   Y <- matrix(NA_integer_, n_patients, follow_up_time + 1)
 
-  # Simulate trajectories for each patient
-  for (i in 1:n_patients) {
-    # Initialize latent severity at day 0 (baseline)
-    X[i, 1] <- rnorm(1, 0, x0_sd)
+  X[, 1L] <- stats::rnorm(n_patients, 0, x0_sd)
+  cumulative <- cdf_fun(outer(-X[, 1L], thresholds, "+"))
+  probabilities <- cbind(cumulative, 1) - cbind(0, cumulative)
+  if (!is.null(allowed_start_state)) {
+    probabilities[, -allowed_start_state] <- 0
+  }
+  Y[, 1L] <- sample_categorical_rows(probabilities)
 
-    # Generate observation at day 0 using selected CDF
-    pcat <- diff(c(0, cdf_fun(threshold_matrix[1, ] - X[i, 1]), 1))
-    if (!is.null(allowed_start_state)) {
-      pcat[-allowed_start_state] <- 0 # states nobody should start in
+  for (column in 2:(follow_up_time + 1L)) {
+    day <- column - 1L
+    active <- if (is.null(absorbing_state)) {
+      rep(TRUE, n_patients)
+    } else {
+      Y[, column - 1L] != absorbing_state
     }
-    Y[i, 1] <- sample.int(n_states, 1, prob = pcat)
-
-    # Simulate remaining days (1 to follow_up_time)
-    for (t in 2:(follow_up_time + 1)) {
-      # Check if patient is in absorbing state
-      if (!is.null(absorbing_state) && Y[i, t - 1] == absorbing_state) {
-        Y[i, t] <- absorbing_state
-        X[i, t] <- NA_real_ # Latent variable no longer evolves
-      } else {
-        # Note: t here is 1-indexed (t = 2 means day 1), so use (t - 1).
-        day <- t - 1
-        mu_t <- calc_shared_drift(day, treatment[i])
-
-        # Update latent severity (random walk with drift)
-        X[i, t] <- rnorm(1, mean = X[i, t - 1] + mu_t, sd = sigma_rw)
-
-        # Generate observation using selected CDF
-        pcat <- diff(c(0, cdf_fun(threshold_matrix[t, ] - X[i, t]), 1))
-        Y[i, t] <- sample.int(n_states, 1, prob = pcat)
-      }
+    Y[, column] <- Y[, column - 1L]
+    X[, column] <- NA_real_
+    if (!any(active)) {
+      next
     }
+    drift <- calc_shared_drift(day, treatment[active])
+    X[active, column] <- stats::rnorm(
+      sum(active),
+      mean = X[active, column - 1L] + drift,
+      sd = sigma_rw
+    )
+    cumulative <- cdf_fun(outer(-X[active, column], thresholds, "+"))
+    probabilities <- cbind(cumulative, 1) - cbind(0, cumulative)
+    Y[active, column] <- sample_categorical_rows(probabilities)
   }
 
-  colnames(X) <- as.character(0:follow_up_time)
-  colnames(Y) <- as.character(0:follow_up_time)
-
-  dat_latent <- matrix_to_long(X, value_name = "x")
-  dat_latent$id <- as.integer(dat_latent$id)
-  dat_latent$time <- as.integer(dat_latent$time)
-
-  dat_observed <- matrix_to_long(Y, value_name = "y")
-  dat_observed$id <- as.integer(dat_observed$id)
-  dat_observed$time <- as.integer(dat_observed$time)
-  dat_observed$tx <- treatment[dat_observed$id]
-  dat_observed <- dat_observed[
-    order(dat_observed$id, dat_observed$time),
-    ,
-    drop = FALSE
-  ]
-  dat_observed$yprev <- ave(dat_observed$y, dat_observed$id, FUN = function(x) {
-    c(NA, utils::head(x, -1))
-  })
-  dat_observed <- dat_observed[dat_observed$time > 0, , drop = FALSE]
-
-  result <- left_join_preserve_order(
-    dat_observed,
-    dat_latent,
-    by = c("id", "time")
+  result <- data.frame(
+    id = rep(seq_len(n_patients), each = follow_up_time),
+    tx = rep(treatment, each = follow_up_time),
+    time = rep(seq_len(follow_up_time), times = n_patients),
+    # Keep the historical public type produced by the former data-frame path.
+    y = as.numeric(as.vector(t(Y[, -1L, drop = FALSE]))),
+    yprev = as.numeric(as.vector(t(Y[, -(follow_up_time + 1L), drop = FALSE]))),
+    x = as.vector(t(X[, -1L, drop = FALSE])),
+    check.names = FALSE
   )
-  result <- result[order(result$id, result$time), , drop = FALSE]
-  result <- reorder_columns(result, c("id", "tx", "time", "y", "yprev", "x"))
   rownames(result) <- NULL
 
   return(result)

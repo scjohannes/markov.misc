@@ -8,7 +8,6 @@
 \alias{set_coef.rms}
 \alias{set_coef.robcov_vglm}
 \alias{set_coef.vglm}
-\alias{set_coef.vgam}
 \title{Set Coefficients for Model Objects}
 \usage{
 set_coef(model, new_coefs)
@@ -24,8 +23,6 @@ set_coef(model, new_coefs)
 \method{set_coef}{robcov_vglm}(model, new_coefs)
 
 \method{set_coef}{vglm}(model, new_coefs)
-
-\method{set_coef}{vgam}(model, new_coefs)
 }
 \arguments{
 \item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, \code{lrm}).}
@@ -50,7 +47,7 @@ coefficients. The modified model can then be passed to \code{predict()} or
 \strong{Supported model classes:}
 \itemize{
 \item \code{orm}, \code{lrm}, \code{rms} (S3): Modifies \verb{$coefficients}
-\item \code{vglm}, \code{vgam} (S4): Modifies \verb{@coefficients} slot
+\item \code{vglm} (S4): Modifies \verb{@coefficients} slot
 \item \code{robcov_vglm}: Modifies \verb{$coefficients}
 }
 

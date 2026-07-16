@@ -553,6 +553,73 @@ test_that("plot_sops bars work with derived facet labels on interpolated draws",
   )
 })
 
+test_that("compiled interpolation preserves local support", {
+  source_times <- c(2, 4, 7)
+  target_times <- c(1, 2, 3, 7, 8)
+  values <- c(0.2, 0.5, 0.9)
+  plan <- markov.misc:::compile_linear_interpolation_plan(
+    source_times,
+    target_times
+  )
+  actual <- drop(markov.misc:::apply_linear_interpolation_plan(
+    matrix(values, nrow = 1L),
+    plan
+  ))
+  expected <- stats::approx(
+    source_times,
+    values,
+    xout = target_times,
+    rule = 1
+  )$y
+
+  expect_equal(actual, expected)
+})
+
+test_that("interpolate_sops does not extrapolate estimates or draws", {
+  x <- data.frame(
+    time = c("v2", "v3", "v1", "v2", "v3"),
+    state = c("1", "1", "2", "2", "2"),
+    estimate = c(0.4, 0.8, 0.7, 0.6, 0.2)
+  )
+  class(x) <- c("markov_sops", "data.frame")
+  attr(x, "y_levels") <- c("1", "2")
+  attr(x, "conf_level") <- 0.8
+  attr(x, "draws") <- do.call(
+    rbind,
+    lapply(1:3, function(draw_id) {
+      out <- x
+      out$draw_id <- draw_id
+      out$estimate <- out$estimate + (draw_id - 2) * 0.01
+      out
+    })
+  )
+
+  out <- interpolate_sops(
+    x,
+    time_map = c(v1 = 1, v2 = 2, v3 = 3),
+    target_times = c(1, 1.5, 2, 2.5, 3),
+    origin = "none",
+    normalize = FALSE
+  )
+  draws <- attr(out, "draws")
+  early <- out[out$state == "1" & out$time < 2, , drop = FALSE]
+  middle <- out[out$state == "1" & out$time == 2.5, , drop = FALSE]
+  early_draws <- draws[
+    draws$state == "1" & draws$time < 2,
+    ,
+    drop = FALSE
+  ]
+
+  expect_equal(early$estimate, rep(NA_real_, nrow(early)))
+  expect_equal(early$conf.low, rep(NA_real_, nrow(early)))
+  expect_equal(early$conf.high, rep(NA_real_, nrow(early)))
+  expect_equal(
+    early_draws$estimate,
+    rep(NA_real_, nrow(early_draws))
+  )
+  expect_equal(middle$estimate, 0.6, tolerance = 1e-12)
+})
+
 test_that("interpolate_sops guardrails are clear", {
   x <- make_interpolation_case()
   expect_error(

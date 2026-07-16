@@ -29,7 +29,8 @@ sops(
 }
 \arguments{
 \item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, or \code{blrm}). For
-\code{vglm} models, the family must be \code{cumulative(reverse = TRUE, ...)}.}
+\code{vglm} models, the family must be cumulative-logit with \code{reverse = TRUE}.
+For \code{orm} models, the family must be logistic.}
 
 \item{newdata}{Optional. A data frame of prediction profiles. When supplied,
 every row is treated as a separate baseline profile and the internal
@@ -41,7 +42,9 @@ prediction row per \code{id_var}.}
 variables this is usually a numeric vector. For factor-valued visit
 indices, values are matched to fitted visit levels.}
 
-\item{y_levels}{A vector of state levels. If NULL, attempts to infer from model.}
+\item{y_levels}{A vector of state levels in fitted outcome order. Its length
+must agree with the fitted model's threshold count. If \code{NULL}, attempts to
+infer the levels from \code{model}.}
 
 \item{absorb}{The absorbing state.}
 
@@ -49,8 +52,10 @@ indices, values are matched to fitted visit levels.}
 provided, the function aggregates (averages) SOPs within each stratum
 defined by combinations of these variables. E.g., \code{by = "ecog"} aggregates
 within ECOG levels; \code{by = c("ecog", "age_group")} aggregates within each
-combination of ECOG and age group. NOTE: This is simple aggregation within
-observed strata, NOT G-computation standardization (use \code{avg_sops()} for that).}
+combination of ECOG and age group. Rows missing any grouping value are
+omitted; an error is raised if none remain. This is simple aggregation
+within observed strata, not G-computation standardization (use
+\code{avg_sops()} for that).}
 
 \item{refit_data}{Optional full longitudinal data used only by refit-bootstrap
 inference. It is not used for point estimates. Defaults to data stored on
@@ -72,8 +77,9 @@ recursion.}
 
 \item{gap_var}{Name of the time gap_var variable (if used).}
 
-\item{time_covariates}{Optional time-varying covariate lookup table for explicit
-basis columns. Inline terms such as \code{rms::rcs(time, 4)} can be used without
+\item{time_covariates}{Optional time-varying covariate lookup table for
+explicit basis columns. Registered inline terms such as
+\code{rms::rcs(time, 4)} and \code{rms::lsp(time, c(3, 7))} can be used without
 supplying \code{time_covariates}.}
 
 \item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
@@ -126,8 +132,9 @@ stored with \code{return_draws = TRUE} remain normalized within each draw.
 
 \strong{Model Requirements:}
 
-For \code{vglm}/\code{vgam} models, only the \code{cumulative} family with \code{reverse = TRUE} is
-supported. This is because the package's Markov simulation logic expects
+For \code{vglm} models, only the cumulative-logit family with \code{reverse = TRUE} is
+supported. For \code{orm} models, only the logistic family is supported. This is
+because the package's Markov simulation logic expects
 higher-numbered states to represent worse outcomes, and uses reverse cumulative
 probabilities to model the probability of being in state k or worse.
 

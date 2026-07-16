@@ -53,25 +53,17 @@ left_join_preserve_order <- function(x, y, by) {
   x_key <- key_frame(x)
   y_key <- key_frame(y)
   y_split <- split(seq_len(nrow(y)), y_key, drop = TRUE)
-
-  pieces <- vector("list", nrow(x))
-  for (i in seq_len(nrow(x))) {
-    key <- x_key[i]
-    y_rows <- y_split[[key]]
-
-    if (is.null(y_rows)) {
-      y_part <- y[NA_integer_, y_cols, drop = FALSE]
-    } else {
-      y_part <- y[y_rows, y_cols, drop = FALSE]
-    }
-
-    x_part <- x[rep(i, nrow(y_part)), , drop = FALSE]
-    rownames(x_part) <- NULL
-    rownames(y_part) <- NULL
-    pieces[[i]] <- cbind(x_part, y_part)
-  }
-
-  bind_rows_fill(pieces)
+  y_rows <- lapply(x_key, function(key) y_split[[key]] %||% NA_integer_)
+  counts <- lengths(y_rows)
+  left_rows <- rep.int(seq_len(nrow(x)), counts)
+  right_rows <- unlist(y_rows, use.names = FALSE)
+  left <- x[left_rows, , drop = FALSE]
+  right <- y[right_rows, y_cols, drop = FALSE]
+  rownames(left) <- NULL
+  rownames(right) <- NULL
+  out <- cbind(left, right)
+  rownames(out) <- NULL
+  out
 }
 
 matrix_to_long <- function(
@@ -195,7 +187,7 @@ model_uses_offset <- function(model) {
 
   offset_obj <- tryCatch(
     {
-      if (inherits(model_chk, c("vglm", "vgam"))) {
+      if (inherits(model_chk, "vglm")) {
         methods::slot(model_chk, "offset")
       } else {
         model_chk$offset
@@ -214,7 +206,7 @@ model_uses_offset <- function(model) {
 
   call_obj <- tryCatch(
     {
-      if (inherits(model_chk, c("vglm", "vgam"))) {
+      if (inherits(model_chk, "vglm")) {
         methods::slot(model_chk, "call")
       } else {
         model_chk$call
@@ -243,4 +235,38 @@ stop_unsupported_offset <- function() {
     "Please remove offset() terms or the offset argument before fitting the model.",
     call. = FALSE
   )
+}
+
+with_sop_fallback_notification_scope <- function(code) {
+  old <- getOption("markov.misc.sop_fallback_notification")
+  if (is.environment(old)) {
+    return(force(code))
+  }
+  state <- new.env(parent = emptyenv())
+  state$shown <- FALSE
+  options(markov.misc.sop_fallback_notification = state)
+  on.exit(options(markov.misc.sop_fallback_notification = old), add = TRUE)
+  force(code)
+}
+
+notify_sop_reference_fallback <- function(reason = NULL) {
+  state <- getOption("markov.misc.sop_fallback_notification")
+  if (is.environment(state) && isTRUE(state$shown)) {
+    return(invisible(FALSE))
+  }
+  if (is.environment(state)) {
+    state$shown <- TRUE
+  }
+
+  detail <- if (is.null(reason) || !nzchar(reason)) {
+    ""
+  } else {
+    paste0(" Reason: ", reason)
+  }
+  message(
+    "Compiled C++ SOP calculations were not used; ",
+    "falling back to the R implementation.",
+    detail
+  )
+  invisible(TRUE)
 }

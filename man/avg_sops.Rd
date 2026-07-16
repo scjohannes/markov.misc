@@ -30,7 +30,8 @@ avg_sops(
 }
 \arguments{
 \item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, or \code{blrm}). For
-\code{vglm} models, the family \strong{must} be \code{cumulative(reverse = TRUE, ...)}.}
+\code{vglm} models, the family must be cumulative-logit with \code{reverse = TRUE}.
+For \code{orm} models, the family must be logistic.}
 
 \item{newdata}{Optional data frame of standardization profiles. When
 supplied, every row is treated as a separate baseline profile and the
@@ -42,14 +43,16 @@ prediction row per \code{id_var}.}
 E.g., \code{list(tx = c(0, 1))} creates counterfactual datasets for treatment
 and control.}
 
-\item{by}{Optional character vector of additional variables to group by,
-after standardization.}
+\item{by}{Optional character vector of additional variables to group by
+after standardization. Rows missing any grouping value are omitted; an
+error is raised if none remain.}
 
 \item{times}{Required visit-scale time points. Numeric time variables use
 numeric values; factor-valued visit indices use fitted visit levels.}
 
-\item{y_levels}{A vector of state levels. If \code{NULL}, attempts to infer from
-model.}
+\item{y_levels}{A vector of state levels in fitted outcome order. Its length
+must agree with the fitted model's threshold count. If \code{NULL}, attempts to
+infer the levels from \code{model}.}
 
 \item{absorb}{The absorbing state.}
 
@@ -76,9 +79,9 @@ recursion.}
 
 \item{gap_var}{Name of the time gap_var variable, if used.}
 
-\item{time_covariates}{Optional time-varying covariate lookup table for explicit
-precomputed time-basis columns. Inline terms such as \code{rms::rcs(time, 4)}
-can be used without it.}
+\item{time_covariates}{Optional time-varying covariate lookup table for
+explicit precomputed time-basis columns. Registered inline terms such as
+\code{rms::rcs(time, 4)} and \code{rms::lsp(time, c(3, 7))} can be used without it.}
 
 \item{include_re}{Logical. For \code{rmsb::blrm()} fits with \code{cluster()}, include
 fitted random-effect draws in posterior predictions for known IDs.}

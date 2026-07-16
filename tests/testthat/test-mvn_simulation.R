@@ -673,3 +673,56 @@ describe("MVN Simulation-Based Inference for SOPs", {
     })
   })
 })
+
+test_that("seeded inference is invariant to outer worker count", {
+  skip_if_not_installed("VGAM")
+  skip_if_not_installed("rms")
+  skip_if_not_installed("mvtnorm")
+  skip_if_not_installed("future.callr")
+  if (
+    requireNamespace("pkgload", quietly = TRUE) &&
+      pkgload::is_dev_package("markov.misc")
+  ) {
+    skip("Callr worker invariance requires an installed package.")
+  }
+
+  data <- make_test_data(n_patients = 40, seed = 889, follow_up_time = 6)
+  model <- make_test_model(data, robust = TRUE)
+  baseline <- data[data$time == 1, , drop = FALSE]
+  point <- avg_sops(
+    model,
+    newdata = baseline,
+    variables = list(tx = 0:1),
+    times = 1:4,
+    y_levels = 1:6,
+    absorb = 6
+  )
+
+  sequential <- inferences(
+    point,
+    method = "mvn",
+    n_draws = 7,
+    workers = 1,
+    seed = 123,
+    return_draws = TRUE
+  )
+  parallel <- inferences(
+    point,
+    method = "mvn",
+    n_draws = 7,
+    workers = 2,
+    seed = 123,
+    return_draws = TRUE
+  )
+
+  expect_equal(
+    as.data.frame(sequential),
+    as.data.frame(parallel),
+    tolerance = 1e-11
+  )
+  expect_equal(
+    attr(sequential, "draws"),
+    attr(parallel, "draws"),
+    tolerance = 1e-11
+  )
+})

@@ -322,6 +322,11 @@ robcov_vglm <- function(fit, cluster = NULL, adjust = TRUE) {
     "markov_split_assign",
     exact = TRUE
   )
+  attr(result, "markov_basis_terms") <- attr(
+    fit,
+    "markov_basis_terms",
+    exact = TRUE
+  )
   return(result)
 }
 

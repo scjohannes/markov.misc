@@ -1,5 +1,45 @@
 # markov.misc 0.1.0
 
+- Markov/SOP workflows now reject non-logit `orm` and cumulative `vglm` links
+  before prediction instead of applying logistic algebra to incompatible fits.
+- `inferences()` now reuses serial execution plans, evaluates fixed-order draw
+  cells, and generates score-bootstrap perturbations in deterministic bounded
+  matrix blocks instead of binding one data frame per draw.
+- `inferences()` now compiles second-order ORM/VGLM visit-pair designs once and
+  replays coefficient draws through a fused proportional-odds joint-state
+  kernel, retaining bounded rolling state without transition tensors.
+- `interpolate_sops()` now applies one compiled interpolation plan across
+  canonical point and stored-draw grids, with the existing generic fallback for
+  irregular or duplicate grids.
+- `interpolate_sops()` now preserves `NA` outside each estimate or draw series'
+  own observed time support instead of extrapolating from endpoint values.
+- `sim_trajectories_brownian()` and the default `sim_trajectories_markov()` path
+  now use fused serial categorical sampling and direct long-output construction.
+- `soprob_markov()` now streams visit designs into fused PO or general-logit
+  propagation kernels and chunks active second-order state pairs, avoiding dense
+  first- and second-order transition tensors.
+- `soprob_markov()` now validates fitted threshold/state agreement and initial
+  transition probabilities, and falls back to the reference engine when a
+  retained execution plan would exceed its configured memory budget.
+- `sops()` and `avg_sops()` now fuse BLRM posterior cumulative-logit conversion,
+  category differencing, clipping, and normalization in one serial native pass.
+- `sops()` and `avg_sops()` now omit incomplete grouping rows consistently and
+  avoid reusing dynamic second-order BLRM designs across posterior draw chunks.
+- `sops()`, `avg_sops()`, `avg_comparisons()`, and `inferences()` now report
+  when compiled C++ SOP calculations are unavailable and the R implementation
+  is used; inference reports the fallback only once per call.
+- `states_to_tte_v2()` now collapses trajectories with a linear indexed run
+  scan, and bootstrap samples are materialized from reusable row-index plans.
+- `vglm_markov()` now uses an extensible RMS basis registry and ships first-class
+  assignment metadata for both `rcs()` and `lsp()` terms.
+- `avg_sops()` now marginalizes counterfactual SOP arrays directly instead of
+  materializing individual prediction data frames, and posterior `blrm`
+  workflows reduce draws natively before constructing public output.
+- `soprob_markov()` and `sops()` now use batched design matrices and compiled
+  first-order Markov propagation for `vglm` and `orm`, while `blrm` prediction
+  caches design matrices across posterior chunks and uses compiled draw updates.
+- Breaking change: legacy `vgam` model support has been removed; use `vglm`
+  cumulative ordinal models instead.
 - Standardized SOP outputs as base data frames with package-specific S3
   classes, canonical estimate/inference columns, and one internal `draws`
   attribute.
