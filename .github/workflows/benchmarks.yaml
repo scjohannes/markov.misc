@@ -24,7 +24,10 @@ jobs:
           use-public-rspm: true
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::devtools
+          extra-packages: |
+            any::devtools
+            any::rstantools
+          install-pandoc: false
           needs: check
       - name: Install release package
         run: R CMD INSTALL .

@@ -36,6 +36,7 @@ Suggests:
     knitr,
     Matrix,
     ordinal,
+    pkgload,
     posterior,
     rmsb,
     rmarkdown,
