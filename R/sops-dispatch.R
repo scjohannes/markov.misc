@@ -67,6 +67,10 @@ soprob_markov <- function(
     )
   }
   model_fast <- if (inherits(model, "robcov_vglm")) model$vglm_fit else model
+  reference_supported <- inherits(
+    model,
+    c("vglm", "orm", "blrm", "robcov_vglm")
+  )
   vglm_fast <- inherits(model_fast, "vglm") &&
     methods::is(model_fast, "vglm") &&
     isTRUE(tryCatch(
@@ -79,7 +83,7 @@ soprob_markov <- function(
     length(dots) == 0L
 
   if (!use_fast) {
-    if (!inherits(model_fast, "blrm")) {
+    if (reference_supported && !inherits(model_fast, "blrm")) {
       reason <- if (length(dots) > 0L) {
         "additional backend arguments require reference evaluation."
       } else {

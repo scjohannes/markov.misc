@@ -473,7 +473,9 @@ plans raise `markov_misc_execution_plan_too_large`: point prediction uses the
 bounded reference recursion after reporting the fallback. A shared
 notification scope deduplicates reference-engine messages so `inferences()`
 reports at most one fallback for the entire draw or bootstrap replay. Other
-plan-construction errors remain errors.
+plan-construction errors remain errors. Fallback notifications are emitted only
+for supported reference backends; unsupported model classes proceed directly to
+the reference engine's class error without advertising a fallback.
 
 ### Time and Gap Handling
 
