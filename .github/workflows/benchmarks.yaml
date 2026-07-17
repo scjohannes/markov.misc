@@ -22,6 +22,10 @@ jobs:
         with:
           r-version: release
           use-public-rspm: true
+      - name: Preinstall rmsb build helper
+        if: runner.os == 'Linux'
+        shell: Rscript {0}
+        run: install.packages("rstantools")
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           extra-packages: |
