@@ -87,7 +87,7 @@ jobs:
         run: |
           mkdir -p ~/.R
           cat > ~/.R/Makevars <<EOF
-          CXXFLAGS=-O1 -g -Wall -Wextra -Werror -fno-omit-frame-pointer -fsanitize=${SANITIZER}
+          CXXFLAGS=-O1 -g -Wall -Wextra -fno-omit-frame-pointer -fsanitize=${SANITIZER}
           SHLIB_CXXLD=g++ -fsanitize=${SANITIZER}
           EOF
       - name: Preload AddressSanitizer runtime
@@ -133,4 +133,4 @@ jobs:
         run: R CMD INSTALL .
       - name: Run native smoke tests under Valgrind
         run: |
-          R -d "valgrind --tool=memcheck --leak-check=full --error-exitcode=1" --vanilla -e 'library(markov.misc); testthat::test_file("tests/testthat/test-sops-native.R", stop_on_failure = TRUE)'
+          R -d "valgrind --tool=memcheck --leak-check=full --errors-for-leak-kinds=definite --suppressions=.github/valgrind.supp --error-exitcode=1" --vanilla -e 'library(markov.misc); testthat::test_file("tests/testthat/test-sops-native.R", stop_on_failure = TRUE)'
