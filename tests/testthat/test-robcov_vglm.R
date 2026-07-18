@@ -8,6 +8,75 @@
 # 5. Model information is preserved
 # 6. Z-statistics and p-values are computed correctly
 
+vglm_candidate_at <- function(fit, beta) {
+  X_vlm <- stats::model.matrix(fit, type = "vlm")
+  n <- stats::nobs(fit, type = "lm")
+  M <- VGAM::npred(fit)
+  fitted_eta <- matrix(
+    drop(X_vlm %*% stats::coef(fit)),
+    nrow = n,
+    ncol = M,
+    byrow = TRUE
+  )
+  eta <- matrix(
+    drop(X_vlm %*% beta),
+    nrow = n,
+    ncol = M,
+    byrow = TRUE
+  ) +
+    fit@predictors -
+    fitted_eta
+  candidate <- fit
+  candidate@coefficients <- beta
+  candidate@predictors <- eta
+  candidate@fitted.values <- candidate@family@linkinv(
+    eta = eta,
+    extra = candidate@extra
+  )
+  candidate
+}
+
+finite_difference_loglik_scores <- function(fit) {
+  beta <- stats::coef(fit)
+  steps <- 1e-5 * pmax(1, abs(beta))
+  vapply(
+    seq_along(beta),
+    function(j) {
+      beta_plus <- beta_minus <- beta
+      beta_plus[j] <- beta_plus[j] + steps[j]
+      beta_minus[j] <- beta_minus[j] - steps[j]
+      ll_plus <- as.numeric(stats::logLik(
+        vglm_candidate_at(fit, beta_plus),
+        summation = FALSE
+      ))
+      ll_minus <- as.numeric(stats::logLik(
+        vglm_candidate_at(fit, beta_minus),
+        summation = FALSE
+      ))
+      (ll_plus - ll_minus) / (2 * steps[j])
+    },
+    numeric(stats::nobs(fit, type = "lm"))
+  )
+}
+
+finite_difference_score_jacobian <- function(fit) {
+  evaluator <- markov.misc:::vglm_score_evaluator(fit)
+  beta <- stats::coef(fit)
+  steps <- 1e-5 * pmax(1, abs(beta))
+  vapply(
+    seq_along(beta),
+    function(j) {
+      beta_plus <- beta_minus <- beta
+      beta_plus[j] <- beta_plus[j] + steps[j]
+      beta_minus[j] <- beta_minus[j] - steps[j]
+      (evaluator$evaluate(beta_plus) -
+        evaluator$evaluate(beta_minus)) /
+        (2 * steps[j])
+    },
+    numeric(length(beta))
+  )
+}
+
 describe("robcov_vglm()", {
   it("produces valid covariance estimates", {
     skip_if_not_installed("VGAM")
@@ -43,7 +112,16 @@ describe("robcov_vglm()", {
     # Check variance and SE components
     expect_contains(
       names(result),
-      c("var", "se", "scores", "influence_beta_obs", "bread", "meat")
+      c(
+        "var",
+        "se",
+        "scores",
+        "influence_beta_obs",
+        "bread",
+        "bread_type",
+        "bread_diagnostics",
+        "meat"
+      )
     )
 
     # Check new components
@@ -69,9 +147,21 @@ describe("robcov_vglm()", {
     expect_equal(dim(result$influence_beta_obs), c(n, p))
     expect_equal(dim(result$bread), c(p, p))
     expect_equal(dim(result$meat), c(p, p))
-    expect_equal(result$bread, vcov(m))
+    expect_equal(result$bread_type, "observed")
+    expect_equal(result$type, "HC0")
+    expect_identical(result$cadjust, FALSE)
 
-    expected_var <- result$bread %*% result$meat %*% result$bread
+    result_vglm_bread <- robcov_vglm(m, bread = "vglm")
+    expect_equal(result_vglm_bread$bread, vcov(m))
+    expect_equal(result_vglm_bread$bread_type, "vglm")
+    expected_vglm_var <- crossprod(
+      result_vglm_bread$scores %*% vcov(m)
+    )
+    expected_vglm_var <- (expected_vglm_var + t(expected_vglm_var)) / 2
+    dimnames(expected_vglm_var) <- dimnames(vcov(m))
+    expect_equal(result_vglm_bread$var, expected_vglm_var)
+
+    expected_var <- crossprod(result$scores %*% result$bread)
     expected_var <- (expected_var + t(expected_var)) / 2
     dimnames(expected_var) <- dimnames(result$var)
     expect_equal(result$var, expected_var, tolerance = 1e-15)
@@ -93,7 +183,7 @@ describe("robcov_vglm()", {
     expect_equal(result_row_cluster$var, result$var, tolerance = 1e-15)
   })
 
-  it("stores VGAM influence contributions consistent with scores", {
+  it("stores influence contributions consistent with the selected bread", {
     skip_if_not_installed("VGAM")
 
     withr::local_seed(111)
@@ -110,7 +200,7 @@ describe("robcov_vglm()", {
     )
 
     result <- robcov_vglm(m)
-    expected_if <- result$scores %*% vcov(m)
+    expected_if <- result$scores %*% result$bread
 
     expect_equal(
       unname(result$influence_beta_obs),
@@ -238,7 +328,7 @@ describe("robcov_vglm()", {
     expect_equal(vglm_robust$n_clusters, n_clusters)
   })
 
-  it("gives similar results to rms::robcov for ordinal outcome", {
+  it("matches rms::robcov for an equivalent ordinal likelihood", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
 
@@ -283,11 +373,33 @@ describe("robcov_vglm()", {
     orm_robust <- rms::robcov(m_orm)
     vglm_robust <- robcov_vglm(m_vglm)
 
-    # Compare regression coefficient SEs
-    se_orm_reg <- sqrt(diag(orm_robust$var))
-    se_vglm_reg <- vglm_robust$se
+    expect_equal(
+      unname(vglm_robust$var),
+      unname(orm_robust$var),
+      tolerance = 1e-5
+    )
+    expect_equal(
+      unname(vglm_robust$se),
+      unname(sqrt(diag(orm_robust$var))),
+      tolerance = 1e-5
+    )
 
-    expect_equal(unname(se_orm_reg), unname(se_vglm_reg), tolerance = 1e-2)
+    cluster <- rep(seq_len(100), each = 5)
+    orm_clustered <- rms::robcov(m_orm, cluster = cluster)
+    vglm_clustered <- robcov_vglm(
+      m_vglm,
+      cluster = cluster,
+      cadjust = FALSE
+    )
+    expect_equal(
+      unname(vglm_clustered$var),
+      unname(orm_clustered$var),
+      tolerance = 1e-5
+    )
+    expect_lt(
+      max(abs(vglm_clustered$se / sqrt(diag(orm_clustered$var)) - 1)),
+      1e-5
+    )
   })
 
   it("validates inputs correctly", {
@@ -318,6 +430,44 @@ describe("robcov_vglm()", {
     )
 
     # expand
+  })
+
+  it("rejects non-converged fits and malformed covariance components", {
+    skip_if_not_installed("VGAM")
+
+    withr::local_seed(405)
+    n <- 120
+    data <- data.frame(
+      y = stats::rbinom(n, 1, 0.5),
+      x = stats::rnorm(n)
+    )
+    fit <- VGAM::vglm(
+      y ~ x,
+      family = VGAM::binomialff,
+      data = data
+    )
+
+    nonconverged <- fit
+    nonconverged@iter <- nonconverged@control$maxit
+    expect_snapshot(error = TRUE, {
+      robcov_vglm(nonconverged)
+    })
+
+    testthat::local_mocked_bindings(
+      compute_scores_vglm = function(fit) {
+        scores <- matrix(
+          0,
+          nrow = stats::nobs(fit, type = "lm"),
+          ncol = length(stats::coef(fit))
+        )
+        colnames(scores) <- rev(names(stats::coef(fit)))
+        scores
+      },
+      .package = "markov.misc"
+    )
+    expect_snapshot(error = TRUE, {
+      robcov_vglm(fit)
+    })
   })
 
   it("works with multiple predictors", {
@@ -557,7 +707,7 @@ test_that("compare_se_orm_vglm warns when model intercept structures differ", {
 })
 
 describe("Small-sample adjustment", {
-  it("works correctly", {
+  it("separates HC1 and cluster corrections", {
     skip_if_not_installed("VGAM")
 
     # Generate clustered data
@@ -577,11 +727,29 @@ describe("Small-sample adjustment", {
 
     # Compute with and without adjustment
     expect_warning(
-      result_noadj <- robcov_vglm(m, cluster = cluster, adjust = FALSE),
+      result_noadj <- robcov_vglm(m, cluster = cluster, cadjust = FALSE),
       "fewer than 30 clusters"
     )
     expect_warning(
-      result_adj <- robcov_vglm(m, cluster = cluster, adjust = TRUE),
+      result_adj <- robcov_vglm(m, cluster = cluster, cadjust = TRUE),
+      "fewer than 30 clusters"
+    )
+    expect_warning(
+      result_hc1 <- robcov_vglm(
+        m,
+        cluster = cluster,
+        type = "HC1",
+        cadjust = FALSE
+      ),
+      "fewer than 30 clusters"
+    )
+    expect_warning(
+      result_both <- robcov_vglm(
+        m,
+        cluster = cluster,
+        type = "HC1",
+        cadjust = TRUE
+      ),
       "fewer than 30 clusters"
     )
 
@@ -599,11 +767,224 @@ describe("Small-sample adjustment", {
       result_adj$var,
       suppressWarnings(robcov_vglm(m, cluster = cluster))$var
     )
+    hc1_factor <- (n - 1) / (n - length(coef(m)))
+    expect_equal(result_hc1$var, result_noadj$var * hc1_factor)
+    expect_equal(
+      result_both$var,
+      result_noadj$var * hc1_factor * n_clusters / (n_clusters - 1)
+    )
+    expect_equal(result_both$adjustment_factor, hc1_factor * 20 / 19)
+
+    expect_warning(
+      result_legacy <- robcov_vglm(m, cluster = cluster, adjust = TRUE),
+      "fewer than 30 clusters"
+    )
+    expect_equal(result_legacy$var, result_adj$var)
+
+    expect_snapshot(error = TRUE, {
+      robcov_vglm(
+        m,
+        cluster = cluster,
+        adjust = TRUE,
+        cadjust = TRUE
+      )
+    })
   })
 })
 
+test_that("analytic scores and observed bread match independent differences", {
+  skip_if_not_installed("VGAM")
+
+  withr::local_seed(204)
+  n <- 240
+  x <- stats::rnorm(n)
+  z <- stats::rnorm(n)
+  eta <- 0.4 * x - 0.2 * z
+  cuts <- c(-1, 0, 1)
+  cumulative <- vapply(
+    cuts,
+    function(cut) {
+      stats::plogis(cut - eta)
+    },
+    numeric(n)
+  )
+  probabilities <- cbind(
+    cumulative[, 1],
+    cumulative[, 2] - cumulative[, 1],
+    cumulative[, 3] - cumulative[, 2],
+    1 - cumulative[, 3]
+  )
+  y <- apply(probabilities, 1, function(probability) {
+    sample(seq_len(4), 1, prob = probability)
+  })
+  data <- data.frame(
+    y = ordered(y),
+    x = x,
+    z = z,
+    offset = 0.1 * z,
+    weight = sample(1:3, n, replace = TRUE)
+  )
+  fit <- VGAM::vglm(
+    y ~ x + offset(offset),
+    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+    data = data,
+    weights = weight,
+    x = TRUE,
+    y = TRUE
+  )
+
+  scores <- compute_scores_vglm(fit)
+  numerical_scores <- finite_difference_loglik_scores(fit)
+  expect_equal(scores, numerical_scores, tolerance = 1e-6, ignore_attr = TRUE)
+
+  numerical_jacobian <- finite_difference_score_jacobian(fit)
+  numerical_information <- -(numerical_jacobian + t(numerical_jacobian)) / 2
+  numerical_bread <- solve(numerical_information)
+  observed <- robcov_vglm(fit)
+  expect_equal(
+    unname(observed$bread),
+    unname(numerical_bread),
+    tolerance = 1e-6
+  )
+})
+
+test_that("observed bread supports vector-valued inverse links", {
+  skip_if_not_installed("VGAM")
+
+  withr::local_seed(206)
+  n <- 180
+  data <- data.frame(x = stats::rnorm(n))
+  data$y <- 0.2 + 0.4 * data$x + stats::rnorm(n)
+  fit <- VGAM::vglm(
+    y ~ x,
+    family = VGAM::uninormal,
+    data = data
+  )
+
+  inverse_link <- fit@family@linkinv(
+    eta = fit@predictors,
+    extra = fit@extra
+  )
+  expect_null(dim(inverse_link))
+
+  evaluator <- markov.misc:::vglm_score_evaluator(fit)
+  evaluated_scores <- evaluator$evaluate(stats::coef(fit))
+  expected_scores <- colSums(compute_scores_vglm(fit))
+  expect_equal(evaluated_scores, expected_scores, tolerance = 1e-12)
+
+  robust <- robcov_vglm(fit)
+  expect_s3_class(robust, "robcov_vglm")
+  expect_equal(robust$bread_type, "observed")
+  expect_equal(all(is.finite(robust$bread)), TRUE)
+  expect_equal(all(is.finite(robust$var)), TRUE)
+})
+
+test_that("observed bread supports proportional-odds deviation geometries", {
+  skip_if_not_installed("VGAM")
+
+  withr::local_seed(205)
+  n <- 500
+  x <- stats::runif(n, -1, 1)
+  z <- stats::rnorm(n)
+  group <- factor(sample(c("a", "b"), n, replace = TRUE))
+  eta <- 0.5 * x - 0.25 * z + 0.1 * (group == "b")
+  cuts <- c(-1.2, -0.3, 0.5, 1.3)
+  cumulative <- vapply(
+    cuts,
+    function(cut) {
+      stats::plogis(cut - eta)
+    },
+    numeric(n)
+  )
+  probabilities <- cbind(
+    cumulative[, 1],
+    cumulative[, 2] - cumulative[, 1],
+    cumulative[, 3] - cumulative[, 2],
+    cumulative[, 4] - cumulative[, 3],
+    1 - cumulative[, 4]
+  )
+  y <- apply(probabilities, 1, function(probability) {
+    sample(seq_len(5), 1, prob = probability)
+  })
+  data <- data.frame(y = ordered(y), x = x, z = z, group = group)
+
+  full_nonparallel <- VGAM::vglm(
+    y ~ x + z,
+    family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
+    data = data,
+    x = TRUE,
+    y = TRUE
+  )
+  custom_constraints <- VGAM::constraints(full_nonparallel)
+  n_thresholds <- VGAM::npred(full_nonparallel)
+  custom_constraints[["x"]] <- cbind(
+    PO = rep(1, n_thresholds),
+    linear = seq_len(n_thresholds) - mean(seq_len(n_thresholds)),
+    terminal = c(rep(0, n_thresholds - 1), 1)
+  )
+  custom_constraints[["z"]] <- cbind(PO = rep(1, n_thresholds))
+
+  fits <- list(
+    proportional = VGAM::vglm(
+      y ~ x + z + group,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      x = TRUE,
+      y = TRUE
+    ),
+    selected_nonparallel = VGAM::vglm(
+      y ~ x + z + group,
+      family = VGAM::cumulative(reverse = TRUE, parallel = FALSE ~ x),
+      data = data,
+      x = TRUE,
+      y = TRUE
+    ),
+    fully_nonparallel = full_nonparallel,
+    custom_deviations = VGAM::vglm(
+      y ~ x + z,
+      family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
+      data = data,
+      constraints = custom_constraints,
+      x = TRUE,
+      y = TRUE
+    ),
+    interactions = VGAM::vglm(
+      y ~ x * z + group,
+      family = VGAM::cumulative(
+        reverse = TRUE,
+        parallel = FALSE ~ x + x:z
+      ),
+      data = data,
+      x = TRUE,
+      y = TRUE
+    )
+  )
+
+  for (fit in fits) {
+    robust <- robcov_vglm(
+      fit,
+      cluster = seq_len(n),
+      cadjust = FALSE
+    )
+    expect_equal(robust$bread_type, "observed")
+    expect_equal(colnames(robust$scores), names(stats::coef(fit)))
+    expect_equal(robust$var, t(robust$var), tolerance = 1e-12)
+    expect_gt(min(eigen(robust$bread, symmetric = TRUE)$values), 0)
+    expect_gte(min(eigen(robust$var, symmetric = TRUE)$values), -1e-10)
+    expect_equal(all(is.finite(robust$se)), TRUE)
+
+    draws <- generate_score_bootstrap_draws(
+      robust,
+      baseline_data = data.frame(id = seq_len(n)),
+      id_var = "id",
+      n_draws = 1
+    )
+    expect_equal(dim(draws$beta_draws), c(1L, length(stats::coef(fit))))
+  }
+})
+
 describe("Score bootstrap compatibility", {
-  it("uses vcov bread directly for one-step score updates", {
+  it("uses the selected bread directly for one-step score updates", {
     skip_if_not_installed("VGAM")
 
     withr::local_seed(304)
@@ -923,6 +1304,38 @@ describe("robcov_vglm() stress tests", {
     # We expect it to be singular here because Rank(Meat) <= 3 < 4
     # But robcov_vglm shouldn't crash
     expect_equal(res$n_clusters, 3)
+  })
+
+  it("uses a stable PSD construction for ill-conditioned clustered fits", {
+    skip_if_not_installed("VGAM")
+    skip_if_not_installed("rms")
+
+    trial <- sim_actt2_brownian(
+      n_patients = 40,
+      follow_up_time = 6,
+      seed = 1
+    )
+    data <- prepare_markov_data(trial, absorbing_state = 8)
+    fit <- suppressWarnings(vglm_markov(
+      ordered(y) ~ time + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data
+    ))
+    robust <- robcov_vglm(fit, cluster = data$id)
+
+    cluster_scores <- rowsum(
+      robust$scores,
+      as.factor(robust$cluster),
+      reorder = FALSE
+    )
+    expected <- crossprod(cluster_scores %*% robust$bread) *
+      robust$adjustment_factor
+    dimnames(expected) <- dimnames(robust$var)
+    expect_equal(robust$var, expected, tolerance = 1e-12)
+    expect_gte(
+      min(eigen(robust$var, symmetric = TRUE, only.values = TRUE)$values),
+      -1e-10
+    )
   })
 
   it("handles clusters with empty factor levels", {

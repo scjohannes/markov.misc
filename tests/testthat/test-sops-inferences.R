@@ -1095,9 +1095,13 @@ describe("avg_sops() and inferences() pipeline", {
     )
     fit_ppo@call$constraints <- cons
 
+    robust_fit <- markov.misc::robcov_vglm(fit_ppo, cluster = data$id)
+    expect_equal(robust_fit$bread_type, "observed")
+    expect_equal(all(is.finite(robust_fit$se)), TRUE)
+
     withr::local_seed(42)
     out <- markov.misc::avg_sops(
-      markov.misc::robcov_vglm(fit_ppo, cluster = data$id),
+      robust_fit,
       newdata = baseline,
       variables = "tx",
       times = 1:4,

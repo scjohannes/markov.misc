@@ -1,3 +1,27 @@
+# robcov_vglm() / rejects non-converged fits and malformed covariance components
+
+    Code
+      robcov_vglm(nonconverged)
+    Condition
+      Error in `validate_vglm_convergence()`:
+      ! The vglm fit reached its IRLS iteration limit without convergence. Refit the model before computing a robust covariance.
+
+---
+
+    Code
+      robcov_vglm(fit)
+    Condition
+      Error in `robcov_vglm()`:
+      ! Score columns must exactly match vglm coefficient names and order.
+
+# Small-sample adjustment / separates HC1 and cluster corrections
+
+    Code
+      robcov_vglm(m, cluster = cluster, adjust = TRUE, cadjust = TRUE)
+    Condition
+      Error in `resolve_vglm_corrections()`:
+      ! Supply only one of legacy `adjust` and `cadjust`, not both.
+
 # Utility methods / print and summary methods work
 
     Code
@@ -10,6 +34,8 @@
       VGAM::vglm(formula = y ~ x, family = VGAM::binomialff, data = test_data)
       
       Number of observations: 100 
+      Bread: observed 
+      HC type: HC0 
       
       Coefficients:
                 (Intercept)       x
@@ -30,6 +56,8 @@
       VGAM::vglm(formula = y ~ x, family = VGAM::binomialff, data = test_data)
       
       Number of observations: 100 
+      Bread: observed 
+      HC type: HC0 
       
       Coefficients (Robust SE):
                   Estimate Std. Error z value Pr(>|z|)  
@@ -55,6 +83,8 @@
       VGAM::vglm(formula = y ~ x, family = VGAM::binomialff, data = test_data)
       
       Number of observations: 100 
+      Bread: observed 
+      HC type: HC0 
       Number of clusters: 10 
       
       Coefficients (Robust SE):
@@ -81,8 +111,11 @@
       VGAM::vglm(formula = y ~ x, family = VGAM::binomialff, data = test_data)
       
       Number of observations: 100 
+      Bread: observed 
+      HC type: HC0 
       Number of clusters: 10 
-      Small-sample adjustment: applied (G/(G-1))
+      Cluster adjustment: applied (G/(G-1))
+      Combined adjustment factor: 1.11111 
       
       Coefficients (Robust SE):
                   Estimate Std. Error z value Pr(>|z|)  

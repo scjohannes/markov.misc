@@ -168,8 +168,12 @@ set_coef.vglm <- function(model, new_coefs) {
 #'   variable cannot be found in the model's original data, it will be extracted
 #'   from this data frame. **Note:** For cluster-robust SEs, the cluster vector
 #'   must have the same length as the model's fitting data, not prediction data.
-#' @param adjust Logical. Apply small-sample correction for clustering?
-#'   Default is TRUE.
+#' @param adjust Deprecated compatibility alias for `cadjust` for `vglm`
+#'   models.
+#' @param bread Bread used for a raw `vglm` model: `"observed"` or `"vglm"`.
+#' @param type HC correction used for a raw `vglm` model: `"HC0"` or `"HC1"`.
+#' @param cadjust Optional logical cluster correction used for a raw `vglm`
+#'   model. By default it is applied when `cluster` is supplied.
 #'
 #' @return A variance-covariance matrix.
 #'
@@ -224,7 +228,10 @@ get_vcov_robust <- function(
   model,
   cluster = NULL,
   data = NULL,
-  adjust = TRUE
+  adjust = NULL,
+  bread = c("observed", "vglm"),
+  type = c("HC0", "HC1"),
+  cadjust = NULL
 ) {
   # --- Case 1: Already a robcov_vglm object ---
   if (inherits(model, "robcov_vglm")) {
@@ -240,7 +247,16 @@ get_vcov_robust <- function(
   # --- Case 3: No clustering requested ---
   if (is.null(cluster)) {
     if (inherits(model, "vglm")) {
-      return(robcov_vglm(model, cluster = NULL, adjust = adjust)$var)
+      return(
+        robcov_vglm(
+          model,
+          cluster = NULL,
+          adjust = adjust,
+          bread = bread,
+          type = type,
+          cadjust = cadjust
+        )$var
+      )
     } else if (inherits(model, c("orm", "lrm"))) {
       if (!requireNamespace("rms", quietly = TRUE)) {
         stop("Package 'rms' is required for robust vcov with orm/lrm models")
@@ -337,7 +353,14 @@ get_vcov_robust <- function(
   # --- Case 5: Compute robust vcov based on model class ---
   if (inherits(model, "vglm")) {
     # Use our robcov_vglm function
-    robcov_result <- robcov_vglm(model, cluster = cluster, adjust = adjust)
+    robcov_result <- robcov_vglm(
+      model,
+      cluster = cluster,
+      adjust = adjust,
+      bread = bread,
+      type = type,
+      cadjust = cadjust
+    )
     return(robcov_result$var)
   } else if (inherits(model, c("orm", "lrm"))) {
     # Use rms::robcov

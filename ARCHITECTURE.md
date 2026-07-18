@@ -572,11 +572,32 @@ in three places:
   longitudinal data.
 
 The score calculation uses VGAM's VLM model matrix and derivative information to
-obtain observation-level score contributions, then optionally aggregates them
-by cluster. Clustered covariance estimates apply the G/(G-1) small-sample
-correction by default; callers can set `adjust = FALSE` when they need the
-previous unadjusted estimator or direct comparison with unadjusted external
-sandwich estimators.
+obtain observation-level score contributions. The default bread is the inverse
+numerical Jacobian of the summed scores. Numerical perturbations operate on the
+effective VLM coefficient vector and preserve the fitted predictor offset, so
+the same path supports proportional odds, fully threshold-specific effects, and
+arbitrary valid partial-proportional-odds constraint bases. Adaptive central
+differences reject invalid candidate predictors and reduce their step before
+failing with a boundary diagnostic. After family validation, inverse-link output
+is restored to the fitted object's matrix shape before it is assigned to the S4
+slot; this preserves compatibility with families such as `VGAM::uninormal()`
+whose inverse link returns a bare vector. `bread = "vglm"` retains the
+covariance based on VGAM's final IRLS working information.
+
+Before constructing the sandwich, the wrapper checks the VGAM iteration and
+regularity state, the standardized norm of the summed scores, exact coefficient
+alignment, matrix finiteness, and numerical definiteness. Observation-level
+influence contributions are `scores %*% bread`, using the selected bread rather
+than a separate VGAM influence calculation.
+
+Scores are optionally aggregated by cluster. HC1 and cluster adjustments are
+orthogonal: `type = "HC1"` applies `(n - 1) / (n - p)`, while
+`cadjust = TRUE` applies `G / (G - 1)`. Clustered fits use the cluster
+adjustment by default. The legacy logical `adjust` argument remains an alias for
+existing callers, while new code uses `cadjust` explicitly. The final covariance
+is formed as the crossproduct of bread-transformed observation or cluster scores;
+this is algebraically the sandwich and preserves positive semidefiniteness for
+ill-conditioned fits more reliably than chained matrix multiplication.
 
 ### `blrm` and `blrm_markov`
 
@@ -708,8 +729,9 @@ draw the engine:
 1. Computes or extracts observation-level score contributions.
 2. Aggregates scores by cluster when a cluster variable is provided.
 3. Samples exponential multipliers.
-4. Applies a one-step update to the coefficient vector using the model
-   covariance/bread information.
+4. Applies a one-step update to the coefficient vector using the bread selected
+   by `robcov_vglm()` (observed-score by default or VGAM working information
+   when explicitly requested).
 5. Replays SOP prediction with the updated coefficients.
 6. Passes normalized baseline weights into marginal or grouped SOP averaging
    only when the prediction population is the empirical stored/refit cohort.

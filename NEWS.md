@@ -175,10 +175,12 @@
   now support numeric previous-state effects, including nonlinear terms such as
   `rms::rcs(yprev, 6)`, while preserving factor previous-state behavior by
   default.
-- `robcov_vglm()` now stores `bread = vcov(fit)` and unscaled score
-  crossproducts as `meat`, aligns pre-NA cluster vectors when possible, rejects
-  missing or single-valued clusters, and warns that clustered z-test p-values
-  may be anti-conservative with few clusters.
-- `robcov_vglm()` and `get_vcov_robust()` now apply the G/(G-1) small-sample
-  correction by default for clustered robust covariance estimates; set
-  `adjust = FALSE` to recover the previous unadjusted behavior.
+- `robcov_vglm()` now defaults to observed-score bread computed from an
+  adaptive numerical Jacobian of the summed analytic scores, including for
+  fully nonparallel and custom partial-proportional-odds constraints and VGAM
+  families whose inverse link returns vector-valued fitted values. Set
+  `bread = "vglm"` to retain VGAM working-information bread.
+- `robcov_vglm()` now separates HC0/HC1 and cluster adjustments through `type`
+  and `cadjust`, validates convergence and covariance components, and defines
+  observation influence contributions using the selected bread. The legacy
+  logical `adjust` argument remains available as a compatibility alias.
