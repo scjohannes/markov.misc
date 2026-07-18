@@ -27,6 +27,13 @@ extern "C" SEXP _markov_misc_cpp_markov_update_po(SEXP previous, SEXP scalar_pre
   END_CPP11
 }
 // sops.cpp
+list cpp_run_sop_delta(doubles_matrix<> initial_design, list transition_designs, doubles_matrix<> gamma, doubles_matrix<> coefficient_map, integers origin_positions, integers non_absorb, integers absorb, int intercept, int group_size, bool retain_individual_probabilities);
+extern "C" SEXP _markov_misc_cpp_run_sop_delta(SEXP initial_design, SEXP transition_designs, SEXP gamma, SEXP coefficient_map, SEXP origin_positions, SEXP non_absorb, SEXP absorb, SEXP intercept, SEXP group_size, SEXP retain_individual_probabilities) {
+  BEGIN_CPP11
+    return cpp11::as_sexp(cpp_run_sop_delta(cpp11::as_cpp<cpp11::decay_t<doubles_matrix<>>>(initial_design), cpp11::as_cpp<cpp11::decay_t<list>>(transition_designs), cpp11::as_cpp<cpp11::decay_t<doubles_matrix<>>>(gamma), cpp11::as_cpp<cpp11::decay_t<doubles_matrix<>>>(coefficient_map), cpp11::as_cpp<cpp11::decay_t<integers>>(origin_positions), cpp11::as_cpp<cpp11::decay_t<integers>>(non_absorb), cpp11::as_cpp<cpp11::decay_t<integers>>(absorb), cpp11::as_cpp<cpp11::decay_t<int>>(intercept), cpp11::as_cpp<cpp11::decay_t<int>>(group_size), cpp11::as_cpp<cpp11::decay_t<bool>>(retain_individual_probabilities)));
+  END_CPP11
+}
+// sops.cpp
 integers cpp_sample_categorical_rows(doubles_matrix<> probabilities);
 extern "C" SEXP _markov_misc_cpp_sample_categorical_rows(SEXP probabilities) {
   BEGIN_CPP11
@@ -78,16 +85,17 @@ extern "C" SEXP _markov_misc_cpp_markov_update_second_order_po(SEXP previous, SE
 
 extern "C" {
 static const R_CallMethodDef CallEntries[] = {
-    {"_markov_misc_cpp_blrm_probabilities",            (DL_FUNC) &_markov_misc_cpp_blrm_probabilities,            7},
-    {"_markov_misc_cpp_markov_propagate",              (DL_FUNC) &_markov_misc_cpp_markov_propagate,              4},
-    {"_markov_misc_cpp_markov_update_draws",           (DL_FUNC) &_markov_misc_cpp_markov_update_draws,           7},
-    {"_markov_misc_cpp_markov_update_logits",          (DL_FUNC) &_markov_misc_cpp_markov_update_logits,          4},
-    {"_markov_misc_cpp_markov_update_po",              (DL_FUNC) &_markov_misc_cpp_markov_update_po,              5},
-    {"_markov_misc_cpp_markov_update_second_order",    (DL_FUNC) &_markov_misc_cpp_markov_update_second_order,    7},
-    {"_markov_misc_cpp_markov_update_second_order_po", (DL_FUNC) &_markov_misc_cpp_markov_update_second_order_po, 8},
-    {"_markov_misc_cpp_normalize_probability_array",   (DL_FUNC) &_markov_misc_cpp_normalize_probability_array,   4},
-    {"_markov_misc_cpp_reduce_sops_draws",             (DL_FUNC) &_markov_misc_cpp_reduce_sops_draws,             7},
-    {"_markov_misc_cpp_sample_categorical_rows",       (DL_FUNC) &_markov_misc_cpp_sample_categorical_rows,       1},
+    {"_markov_misc_cpp_blrm_probabilities",            (DL_FUNC) &_markov_misc_cpp_blrm_probabilities,             7},
+    {"_markov_misc_cpp_markov_propagate",              (DL_FUNC) &_markov_misc_cpp_markov_propagate,               4},
+    {"_markov_misc_cpp_markov_update_draws",           (DL_FUNC) &_markov_misc_cpp_markov_update_draws,            7},
+    {"_markov_misc_cpp_markov_update_logits",          (DL_FUNC) &_markov_misc_cpp_markov_update_logits,           4},
+    {"_markov_misc_cpp_markov_update_po",              (DL_FUNC) &_markov_misc_cpp_markov_update_po,               5},
+    {"_markov_misc_cpp_markov_update_second_order",    (DL_FUNC) &_markov_misc_cpp_markov_update_second_order,     7},
+    {"_markov_misc_cpp_markov_update_second_order_po", (DL_FUNC) &_markov_misc_cpp_markov_update_second_order_po,  8},
+    {"_markov_misc_cpp_normalize_probability_array",   (DL_FUNC) &_markov_misc_cpp_normalize_probability_array,    4},
+    {"_markov_misc_cpp_reduce_sops_draws",             (DL_FUNC) &_markov_misc_cpp_reduce_sops_draws,              7},
+    {"_markov_misc_cpp_run_sop_delta",                 (DL_FUNC) &_markov_misc_cpp_run_sop_delta,                 10},
+    {"_markov_misc_cpp_sample_categorical_rows",       (DL_FUNC) &_markov_misc_cpp_sample_categorical_rows,        1},
     {NULL, NULL, 0}
 };
 }

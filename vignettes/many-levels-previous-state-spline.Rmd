@@ -172,8 +172,12 @@ sop_many <- avg_sops(
   y_levels = fit_many$yunique,
   p_var = "yprev"
 ) |> 
-  inferences(n_draws = 20)
+  inferences(method = "delta", target = "empirical")
 ```
+
+The analytical delta method propagates the complete fitted ORM covariance
+through the previous-state spline and Markov recursion. Here the empirical
+target treats the observed standardization profiles as fixed.
 
 With many states, a stacked distribution is usually easier to read than one
 line per state.
@@ -192,9 +196,9 @@ plot_sops(
   )
 ```
 
-## Constrasts
+## Contrasts
 
-We can calcualte contrasts for time in state or weeks benefit.
+We can calculate contrasts for time in state or weeks benefit.
 
 ```{r}
 c <- avg_comparisons(
@@ -202,14 +206,19 @@ c <- avg_comparisons(
   times = seq_len(FOLLOW_UP),
   variables = list(tx = c(0, 1)), 
   estimand = "time_in_state",
-  state_sets = list(good = 1:10, average = 11:20, bad = 21:30),
+  state_sets = list(good = 1:10, average = 11:20, bad = 21:30)
 ) |> 
   inferences(
-    n_draws = 10
+    method = "delta",
+    target = "empirical"
   )
 
 plot_comparisons(c)
 ```
+
+Analytical delta intervals do not yet support `time_benefit`, so this contrast
+continues to use coefficient draws. Delta support for this estimand is tracked
+as follow-up work.
 
 ```{r}
 tb <- avg_comparisons(
@@ -219,6 +228,7 @@ tb <- avg_comparisons(
   estimand = "time_benefit"
 ) |> 
   inferences(
+    method = "mvn",
     n_draws = 50
   )
 
@@ -233,7 +243,8 @@ sc <- avg_comparisons(
   estimand = "sop"
 ) |> 
   inferences(
-    n_draws = 10
+    method = "delta",
+    target = "empirical"
   )
 
 plot_comparisons(sc, facet_var = "state_set")

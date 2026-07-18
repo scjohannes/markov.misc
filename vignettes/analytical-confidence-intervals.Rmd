@@ -1,0 +1,263 @@
+---
+title: "Analytical Confidence Intervals for State Occupancy Probabilities"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Analytical Confidence Intervals for State Occupancy Probabilities}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 4.8,
+  out.width = "100%",
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+`inferences(method = "delta")` adds deterministic first-order confidence
+intervals to state occupancy probabilities (SOPs) from supported frequentist
+Markov models. Unlike multivariate-normal simulation or bootstrap inference,
+the delta method does not generate draws. It differentiates the first-order SOP
+recursion analytically, then propagates coefficient or patient-level influence
+uncertainty.
+
+The existing default remains `method = "mvn"`. Choose `method = "delta"`
+explicitly when the analytical target and supported model scope described below
+are appropriate.
+
+## A Small Full Proportional-Odds Example
+
+The package-aware fitting wrapper stores row-aligned fitting data and patient ID
+metadata. Those IDs define the independent clusters for analytical covariance
+and population influence calculations.
+
+```{r setup}
+library(markov.misc)
+library(rms)
+
+N_PATIENTS <- 80
+FOLLOW_UP <- 6
+SEED <- 20260718
+ABSORB <- "6"
+
+raw_data <- sim_trajectories_brownian(
+  n_patients = N_PATIENTS,
+  follow_up_time = FOLLOW_UP,
+  treatment_prob = 0.5,
+  absorbing_state = as.integer(ABSORB),
+  seed = SEED,
+  mu_treatment_effect = -0.03
+)
+
+model_data <- prepare_markov_data(
+  raw_data,
+  absorbing_state = as.integer(ABSORB)
+)
+
+dd <- rms::datadist(model_data)
+options(datadist = "dd")
+
+fit <- orm_markov(
+  y ~ tx + time + yprev,
+  data = model_data,
+  id_var = "id",
+  opt_method = "LM",
+  scale = TRUE,
+  penalty = 0.1,
+  maxit = 100
+)
+
+avg <- avg_sops(
+  fit,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  y_levels = fit$yunique,
+  absorb = ABSORB
+)
+```
+
+## Choose the Estimand
+
+For an empirical target, the observed standardization profiles are held fixed.
+If $h_i(\theta)$ is patient $i$'s vector of counterfactual SOP cells and
+$G_i(\theta)$ is its coefficient Jacobian, the average Jacobian is
+
+$$
+\bar G = n^{-1}\sum_i G_i.
+$$
+
+With coefficient covariance $V_\theta$, the empirical-target covariance is
+$\bar G V_\theta \bar G^{\mathsf T}$. By default, $V_\theta$ is the
+patient-cluster robust covariance associated with the fit.
+
+```{r empirical-target}
+avg_empirical <- inferences(
+  avg,
+  method = "delta",
+  target = "empirical",
+  conf_type = "auto"
+)
+
+head(avg_empirical)
+```
+
+For a population target, the same stored fitting cohort represents a sampled
+population. Its profile distribution therefore also contributes uncertainty.
+The implementation constructs one influence row per patient,
+
+$$
+\phi_i = h_i - \bar h + \bar G A^{-1}s_i,
+$$
+
+where $s_i$ is the patient-aggregated likelihood score and $A^{-1}$ is inverse
+per-patient sensitivity. It uses `stats::cov(phi) / n`, retaining the
+finite-sample cross-covariance between profile and model-score contributions.
+
+```{r population-target}
+avg_population <- inferences(
+  avg,
+  method = "delta",
+  target = "population",
+  conf_type = "auto"
+)
+
+head(avg_population)
+```
+
+The population route is a same-cohort calculation. It requires one stored
+baseline profile per patient and exact patient-ID alignment with the fitted
+likelihood scores. It is not an external-target or random-effects population
+analysis.
+
+Individual `sops()` results accept only an omitted target or
+`target = "fixed"`. Empirical and population targets apply only to averaged
+SOPs and average comparisons, which use `target = "empirical"` by default.
+Supplying the target explicitly is helpful whenever the distinction matters
+scientifically.
+
+## Why Patient Clustering Matters
+
+Transition models contain repeated rows per patient. Those rows are not
+independent clusters. Analytical inference therefore follows this invariant:
+
+1. An explicit row-aligned `cluster` vector takes precedence.
+2. Otherwise, the model must store both its fitting data and `id_var` metadata,
+   as `orm_markov(id_var = ...)` and `vglm_markov(id_var = ...)` do.
+3. Observation rows are never silently substituted as clusters.
+
+For an empirical target, a complete user-supplied coefficient covariance can
+replace the fitted covariance after strict dimension, name, finiteness,
+symmetry, and positive-semidefiniteness checks. A custom covariance is not
+accepted for `target = "population"`, because a covariance matrix alone does
+not contain the joint score/profile information needed by the stacked influence
+function.
+
+Patient-cluster robustness protects the variance calculation against arbitrary
+within-patient score correlation. It does not remove bias from a misspecified
+transition model, an invalid Markov assumption, informative observation, or an
+incorrect proportional-odds restriction.
+
+## Logit and Wald Intervals
+
+For SOP probabilities, `conf_type = "auto"` selects componentwise logit-delta
+intervals. They remain inside $[0, 1]$, but they are not a simultaneous region
+for the probability simplex. Exact structural boundary cells with zero
+standard error receive degenerate intervals; a nonstructural boundary where the
+logit derivative is undefined is reported as `NA` with a warning.
+
+`conf_type = "wald"` instead uses identity-scale normal intervals and may extend
+outside $[0, 1]$. Supported average comparisons always use Wald intervals;
+`conf_type = "auto"` selects them automatically.
+
+```{r comparison}
+sop_difference <- avg_comparisons(
+  fit,
+  variables = list(tx = c(0, 1)),
+  estimand = "sop",
+  state_sets = c("1", "2"),
+  comparison = "difference",
+  times = seq_len(FOLLOW_UP),
+  y_levels = fit$yunique,
+  absorb = ABSORB
+) |>
+  inferences(
+    method = "delta",
+    target = "empirical",
+    conf_type = "auto"
+  )
+
+head(sop_difference)
+```
+
+Analytical differences are linear transformations of average SOP cells.
+`estimand = "time_in_state"` is also supported, including factor-visit designs
+with real-time mapping, interpolation, an empirical baseline origin, and
+trapezoidal integration. See the factor-time vignette for that workflow.
+
+## Inspect the Analytical State
+
+Delta results do not store simulation draws or a dense covariance across every
+result cell. They retain a factorized analytical representation:
+
+- fixed individual and empirical averaged results store a result-cell Jacobian
+  and coefficient covariance;
+- population results store the average Jacobian and patient influence matrix.
+
+Use `rows` to materialize only the block needed downstream.
+
+```{r accessors}
+rows <- seq_len(min(6L, nrow(avg_empirical)))
+
+jacobian_block <- get_jacobian(avg_empirical, rows = rows)
+empirical_covariance <- stats::vcov(avg_empirical, rows = rows)
+population_covariance <- stats::vcov(avg_population, rows = rows)
+
+dim(jacobian_block)
+diag(empirical_covariance)
+diag(population_covariance)
+```
+
+Numeric, logical, and stored character row keys are accepted. Analytical
+workspace, retained state, and accessor materialization are guarded by the
+`markov.misc.delta_max_bytes` option, which defaults to 256 MiB.
+
+## Supported Scope and Explicit Errors
+
+The current analytical implementation supports:
+
+- first-order Markov recursion;
+- full proportional odds with a reverse cumulative-logit link;
+- frequentist `orm`, `vglm`, and `robcov_vglm` models;
+- individual SOPs, empirical average SOPs, and same-cohort population average
+  SOPs;
+- difference comparisons for `estimand = "sop"` and
+  `estimand = "time_in_state"`; and
+- numeric and factor visit designs that can be represented by the first-order
+  execution plan.
+
+The following requests fail explicitly rather than switching methods or
+estimands:
+
+| Request | Current status |
+| --- | --- |
+| Individual `sops()` with an empirical or population target | Unsupported; omit `target` or use `target = "fixed"`. |
+| Ratio comparison | Planned follow-up; analytical comparisons currently support differences only. |
+| `estimand = "time_benefit"` | Planned follow-up because it is nonlinear in paired state distributions. |
+| `by`-stratum analytical inference | Planned follow-up. |
+| Partial/nonproportional odds | Planned follow-up outside the current full-PO derivative scope. |
+| Second-order delta recursion | Planned follow-up; use an existing draw or refit method when applicable. |
+| `blrm` delta inference | Unsupported; use the model's posterior SOP intervals. |
+| Population target with user `newdata` | Unsupported; supplied profiles are fixed. |
+| Random or independent external population | Intentionally unsupported and out of scope. |
+| Simultaneous confidence bands or simplex regions | Out of scope; intervals are componentwise. |
+
+Analytical gradients are checked against central finite differences in the test
+suite. Production inference always uses the analytic recursion. MVN and
+bootstrap procedures remain useful alternatives, but numerical agreement with
+their nonlinear draw distributions is not a validation requirement for this
+first-order approximation.

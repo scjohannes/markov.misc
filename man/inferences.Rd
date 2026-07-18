@@ -13,11 +13,12 @@ inferences(
   workers = NULL,
   seed = NULL,
   conf_level = 0.95,
-  conf_type = "perc",
+  conf_type = "auto",
   null = NULL,
   return_draws = TRUE,
   update_datadist = TRUE,
-  use_coefstart = FALSE
+  use_coefstart = FALSE,
+  target = NULL
 )
 }
 \arguments{
@@ -28,6 +29,7 @@ from \code{\link[=avg_comparisons]{avg_comparisons()}}.}
 \item{method}{Character. Inference method:
 \itemize{
 \item \code{"mvn"}: Multivariate-normal coefficient draws.
+\item \code{"delta"}: Deterministic analytical delta-method inference.
 \item \code{"score_bootstrap"}: One-step score perturbation using fixed
 exponential cluster weights.
 \item \code{"bootstrap"}: Ordinary patient-level refit bootstrap.
@@ -40,12 +42,17 @@ iterations (for bootstrap). Default is 1000. For \code{blrm} SOP objects this
 argument is ignored; rerun \code{sops()}/\code{avg_sops()} with \code{n_draws} and \code{seed}
 to change posterior draws.}
 
-\item{vcov}{Optional custom variance-covariance matrix. If provided,
-overrides the vcov extracted from the model.}
+\item{vcov}{Optional complete, named coefficient covariance matrix. Where
+accepted, it overrides the covariance extracted from the model, including
+analytical fixed-profile and empirical-cohort inference. It cannot be
+supplied with \verb{method = "delta", target = "population"}.}
 
-\item{cluster}{Optional row-level cluster vector for score bootstrap with
-\code{orm} models. Values should match
-\code{id_var} in the baseline data used by \code{avg_sops()}.}
+\item{cluster}{Optional patient-cluster specification. For analytical
+fixed-profile, empirical-cohort, and population inference, supply a vector
+aligned with the fitting rows or a one-sided formula selecting a stored
+fitting-data column. Otherwise the model's stored \code{id_var} is used; fitting
+rows are never treated as implicit clusters. For score bootstrap with
+\code{orm}, this is the row-aligned cluster vector.}
 
 \item{workers}{Number of parallel workers. If NULL (default) or 1, uses
 sequential processing. If > 1, uses parallel processing with that many
@@ -58,47 +65,92 @@ restored on exit.}
 SOP objects this argument is ignored; rerun \code{sops()}/\code{avg_sops()} with
 \code{conf_level} to change posterior intervals.}
 
-\item{conf_type}{Type of frequentist confidence interval:
+\item{conf_type}{Type of frequentist confidence interval. \code{"auto"} uses
+percentile intervals for draw-based methods, componentwise logit-delta
+intervals for SOP probabilities, and identity-scale Wald intervals for
+analytical comparisons:
 \itemize{
-\item \code{"perc"} (default): Percentile-based intervals from the simulation
+\item \code{"auto"}: Method-appropriate default.
+\item \code{"perc"}: Percentile-based intervals from the simulation
 distribution.
 \item \code{"wald"}: Uses simulation standard errors with normal quantiles.
+\item \code{"logit"}: Componentwise logit-delta limits for probabilities;
+available only with \code{method = "delta"} on SOP objects.
 }}
 
 \item{null}{Optional single finite numeric null value. Supplying it adds
 Wald \code{statistic}, \code{p.value}, and \code{s.value} columns. A zero null is rejected
 for known ratio comparisons.}
 
-\item{return_draws}{Logical. If TRUE, stores all individual simulation/bootstrap
-draws as an attribute. Extract with \code{get_draws()}. Default is TRUE}
+\item{return_draws}{Logical. If \code{TRUE}, stores individual simulation or
+bootstrap draws as an attribute. Extract with \code{\link[=get_draws]{get_draws()}}. Delta
+inference never stores draws. Default is \code{TRUE}.}
 
 \item{update_datadist}{Logical. Whether to update datadist for rms models
 during bootstrap. Default is TRUE.}
 
 \item{use_coefstart}{Logical. Use original coefficients as starting values
 for bootstrap refitting. Default is FALSE.}
+
+\item{target}{Analytical inference target. \code{NULL} selects fixed-profile
+inference for \code{sops()} and empirical-cohort inference for \code{avg_sops()} and
+\code{avg_comparisons()}. See Details. Ignored by draw-based methods only when
+\code{NULL}.}
 }
 \value{
 The input object with added columns:
 \item{conf.low}{Lower confidence bound}
 \item{conf.high}{Upper confidence bound}
-\item{std.error}{Standard error from simulation/bootstrap}
+\item{std.error}{Standard error from analytical delta propagation,
+simulation, or bootstrap}
 
-If \code{return_draws = TRUE}, the object also has a \code{"draws"} attribute
-containing all individual draws. Extract
-with \code{get_draws()}. For ungrouped \code{sops()} objects evaluated on the stored
-empirical prediction cohort, score-bootstrap and FWB draws include the
-draw-specific \code{score_weight} or \code{fwb_weight} column.
+For simulation and bootstrap methods, \code{return_draws = TRUE} also stores a
+\code{"draws"} attribute containing all individual draws. Delta results instead
+store a low-rank \code{"analytical"} attribute and never store draws. For
+ungrouped \code{sops()} objects evaluated on the stored empirical prediction
+cohort, score-bootstrap and FWB draws include the draw-specific
+\code{score_weight} or \code{fwb_weight} column.
 }
 \description{
-Adds confidence intervals to SOP objects using simulation-based or bootstrap
-methods. The default method is multivariate-normal coefficient simulation.
-For objects produced from
-\code{rmsb::blrm()} models, posterior uncertainty is already computed by
-\code{sops()}/\code{avg_sops()}, so \code{inferences()} ignores \code{method} and returns the
-object unchanged.
+Adds confidence intervals to SOP objects using analytical delta,
+simulation-based, or bootstrap methods. The default method is
+multivariate-normal coefficient simulation. Objects produced from
+\code{rmsb::blrm()} models already contain posterior uncertainty, so non-delta
+calls return them unchanged. \code{method = "delta"} is frequentist-only and
+errors for \code{blrm} objects.
 }
 \details{
+\subsection{Analytical Delta Method}{
+
+\code{method = "delta"} differentiates the first-order full
+proportional-odds SOP recursion on the model's complete raw-coefficient
+scale. For fixed-profile \code{sops()} results and empirical-cohort \code{avg_sops()}
+or \code{avg_comparisons()} results, covariance is propagated as
+\eqn{J V J^\top}, where \eqn{J} is the estimand Jacobian and \eqn{V} is a
+complete named coefficient covariance. An explicit \code{vcov} overrides the
+model covariance for these two targets.
+
+\code{target = "fixed"} is the default for \code{sops()} and conditions on its supplied
+prediction profiles. \code{target = "empirical"} is the default for averaged
+results and conditions on the observed standardization profiles. The
+\code{"population"} target is available only for averaged results from the same
+stored fitting cohort. It adds profile-distribution uncertainty and its
+cross-term with coefficient estimation through the patient-level stacked
+influence \eqn{\phi_i = g_i - \bar g + J A^{-1}s_i}, with covariance
+estimated as \eqn{\mathrm{cov}(\phi_i) / n}. User-supplied prediction cohorts
+cannot be used for this target, and a custom \code{vcov} is invalid because the
+fitted-model scores and sensitivity are required.
+
+Analytical covariance is patient-cluster robust only when valid patient IDs
+are supplied explicitly or retained as the fitted model's \code{id_var}.
+Observation rows are not an automatic clustering fallback, and multiway or
+otherwise non-patient cluster structures are not currently supported.
+Patient-cluster robustness protects variance estimation against
+within-patient score correlation; it does not remove bias from a misspecified
+transition model or Markov assumption.
+\code{blrm} models are not supported by the analytical method.
+}
+
 \subsection{Simulation Method}{
 
 The simulation method works as follows:
@@ -256,8 +308,8 @@ quantile(treatment_effect$effect, c(0.025, 0.5, 0.975))
 
 }
 \seealso{
-\code{\link[=avg_sops]{avg_sops()}}, \code{\link[=sops]{sops()}}, \code{\link[=get_draws]{get_draws()}}, \code{\link[=robcov_vglm]{robcov_vglm()}},
-\code{\link[=set_coef]{set_coef()}}
+\code{\link[=avg_sops]{avg_sops()}}, \code{\link[=sops]{sops()}}, \code{\link[=get_draws]{get_draws()}}, \code{\link[=get_jacobian]{get_jacobian()}},
+\code{\link[=robcov_vglm]{robcov_vglm()}}, \code{\link[=set_coef]{set_coef()}}
 
 \code{\link[=get_draws]{get_draws()}} to extract individual draws from any inference method
 }

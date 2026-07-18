@@ -2,12 +2,12 @@
 
 #' Inference for State Occupation Probabilities
 #'
-#' Adds confidence intervals to SOP objects using simulation-based or bootstrap
-#' methods. The default method is multivariate-normal coefficient simulation.
-#' For objects produced from
-#' `rmsb::blrm()` models, posterior uncertainty is already computed by
-#' `sops()`/`avg_sops()`, so `inferences()` ignores `method` and returns the
-#' object unchanged.
+#' Adds confidence intervals to SOP objects using analytical delta,
+#' simulation-based, or bootstrap methods. The default method is
+#' multivariate-normal coefficient simulation. Objects produced from
+#' `rmsb::blrm()` models already contain posterior uncertainty, so non-delta
+#' calls return them unchanged. `method = "delta"` is frequentist-only and
+#' errors for `blrm` objects.
 #'
 #' @param x A `markov_avg_sops` object from `avg_sops()`, a
 #'   `markov_sops` object from `sops()`, or a `markov_avg_comparisons` object
@@ -15,6 +15,7 @@
 #' @param method Character. Inference method:
 #'   \itemize{
 #'     \item `"mvn"`: Multivariate-normal coefficient draws.
+#'     \item `"delta"`: Deterministic analytical delta-method inference.
 #'     \item `"score_bootstrap"`: One-step score perturbation using fixed
 #'       exponential cluster weights.
 #'     \item `"bootstrap"`: Ordinary patient-level refit bootstrap.
@@ -25,11 +26,16 @@
 #'   iterations (for bootstrap). Default is 1000. For `blrm` SOP objects this
 #'   argument is ignored; rerun `sops()`/`avg_sops()` with `n_draws` and `seed`
 #'   to change posterior draws.
-#' @param vcov Optional custom variance-covariance matrix. If provided,
-#'   overrides the vcov extracted from the model.
-#' @param cluster Optional row-level cluster vector for score bootstrap with
-#'   `orm` models. Values should match
-#'   `id_var` in the baseline data used by `avg_sops()`.
+#' @param vcov Optional complete, named coefficient covariance matrix. Where
+#'   accepted, it overrides the covariance extracted from the model, including
+#'   analytical fixed-profile and empirical-cohort inference. It cannot be
+#'   supplied with `method = "delta", target = "population"`.
+#' @param cluster Optional patient-cluster specification. For analytical
+#'   fixed-profile, empirical-cohort, and population inference, supply a vector
+#'   aligned with the fitting rows or a one-sided formula selecting a stored
+#'   fitting-data column. Otherwise the model's stored `id_var` is used; fitting
+#'   rows are never treated as implicit clusters. For score bootstrap with
+#'   `orm`, this is the row-aligned cluster vector.
 #' @param workers Number of parallel workers. If NULL (default) or 1, uses
 #'   sequential processing. If > 1, uses parallel processing with that many
 #'   workers.
@@ -38,17 +44,28 @@
 #'   `conf_level` to change posterior intervals.
 #' @param seed Optional integer seed. The caller's complete RNG state is
 #'   restored on exit.
-#' @param conf_type Type of frequentist confidence interval:
+#' @param conf_type Type of frequentist confidence interval. `"auto"` uses
+#'   percentile intervals for draw-based methods, componentwise logit-delta
+#'   intervals for SOP probabilities, and identity-scale Wald intervals for
+#'   analytical comparisons:
 #'   \itemize{
-#'     \item `"perc"` (default): Percentile-based intervals from the simulation
+#'     \item `"auto"`: Method-appropriate default.
+#'     \item `"perc"`: Percentile-based intervals from the simulation
 #'       distribution.
 #'     \item `"wald"`: Uses simulation standard errors with normal quantiles.
+#'     \item `"logit"`: Componentwise logit-delta limits for probabilities;
+#'       available only with `method = "delta"` on SOP objects.
 #'   }
+#' @param target Analytical inference target. `NULL` selects fixed-profile
+#'   inference for `sops()` and empirical-cohort inference for `avg_sops()` and
+#'   `avg_comparisons()`. See Details. Ignored by draw-based methods only when
+#'   `NULL`.
 #' @param null Optional single finite numeric null value. Supplying it adds
 #'   Wald `statistic`, `p.value`, and `s.value` columns. A zero null is rejected
 #'   for known ratio comparisons.
-#' @param return_draws Logical. If TRUE, stores all individual simulation/bootstrap
-#'   draws as an attribute. Extract with `get_draws()`. Default is TRUE
+#' @param return_draws Logical. If `TRUE`, stores individual simulation or
+#'   bootstrap draws as an attribute. Extract with [get_draws()]. Delta
+#'   inference never stores draws. Default is `TRUE`.
 #' @param update_datadist Logical. Whether to update datadist for rms models
 #'   during bootstrap. Default is TRUE.
 #' @param use_coefstart Logical. Use original coefficients as starting values
@@ -57,15 +74,47 @@
 #' @return The input object with added columns:
 #'   \item{conf.low}{Lower confidence bound}
 #'   \item{conf.high}{Upper confidence bound}
-#'   \item{std.error}{Standard error from simulation/bootstrap}
+#'   \item{std.error}{Standard error from analytical delta propagation,
+#'     simulation, or bootstrap}
 #'
-#'   If `return_draws = TRUE`, the object also has a `"draws"` attribute
-#'   containing all individual draws. Extract
-#'   with `get_draws()`. For ungrouped `sops()` objects evaluated on the stored
-#'   empirical prediction cohort, score-bootstrap and FWB draws include the
-#'   draw-specific `score_weight` or `fwb_weight` column.
+#'   For simulation and bootstrap methods, `return_draws = TRUE` also stores a
+#'   `"draws"` attribute containing all individual draws. Delta results instead
+#'   store a low-rank `"analytical"` attribute and never store draws. For
+#'   ungrouped `sops()` objects evaluated on the stored empirical prediction
+#'   cohort, score-bootstrap and FWB draws include the draw-specific
+#'   `score_weight` or `fwb_weight` column.
 #'
 #' @details
+#' ## Analytical Delta Method
+#'
+#' `method = "delta"` differentiates the first-order full
+#' proportional-odds SOP recursion on the model's complete raw-coefficient
+#' scale. For fixed-profile `sops()` results and empirical-cohort `avg_sops()`
+#' or `avg_comparisons()` results, covariance is propagated as
+#' \eqn{J V J^\top}, where \eqn{J} is the estimand Jacobian and \eqn{V} is a
+#' complete named coefficient covariance. An explicit `vcov` overrides the
+#' model covariance for these two targets.
+#'
+#' `target = "fixed"` is the default for `sops()` and conditions on its supplied
+#' prediction profiles. `target = "empirical"` is the default for averaged
+#' results and conditions on the observed standardization profiles. The
+#' `"population"` target is available only for averaged results from the same
+#' stored fitting cohort. It adds profile-distribution uncertainty and its
+#' cross-term with coefficient estimation through the patient-level stacked
+#' influence \eqn{\phi_i = g_i - \bar g + J A^{-1}s_i}, with covariance
+#' estimated as \eqn{\mathrm{cov}(\phi_i) / n}. User-supplied prediction cohorts
+#' cannot be used for this target, and a custom `vcov` is invalid because the
+#' fitted-model scores and sensitivity are required.
+#'
+#' Analytical covariance is patient-cluster robust only when valid patient IDs
+#' are supplied explicitly or retained as the fitted model's `id_var`.
+#' Observation rows are not an automatic clustering fallback, and multiway or
+#' otherwise non-patient cluster structures are not currently supported.
+#' Patient-cluster robustness protects variance estimation against
+#' within-patient score correlation; it does not remove bias from a misspecified
+#' transition model or Markov assumption.
+#' `blrm` models are not supported by the analytical method.
+#'
 #' ## Simulation Method
 #'
 #' The simulation method works as follows:
@@ -122,8 +171,8 @@
 #' This design ensures consistency: the same vcov is used for both point
 #' estimates and inference, regardless of how `inferences()` is called.
 #'
-#' @seealso [avg_sops()], [sops()], [get_draws()], [robcov_vglm()],
-#'   [set_coef()]
+#' @seealso [avg_sops()], [sops()], [get_draws()], [get_jacobian()],
+#'   [robcov_vglm()], [set_coef()]
 #'
 #' @examples
 #' \dontrun{
@@ -230,11 +279,12 @@ inferences <- function(
   workers = NULL,
   seed = NULL,
   conf_level = 0.95,
-  conf_type = "perc",
+  conf_type = "auto",
   null = NULL,
   return_draws = TRUE,
   update_datadist = TRUE,
-  use_coefstart = FALSE
+  use_coefstart = FALSE,
+  target = NULL
 ) {
   with_sop_fallback_notification_scope({
     with_local_seed(seed, {
@@ -247,6 +297,7 @@ inferences <- function(
         workers = workers,
         conf_level = conf_level,
         conf_type = conf_type,
+        target = target,
         null = null,
         return_draws = return_draws,
         update_datadist = update_datadist,
@@ -265,6 +316,7 @@ inferences_impl <- function(
   workers,
   conf_level,
   conf_type,
+  target,
   null,
   return_draws,
   update_datadist,
@@ -290,12 +342,62 @@ inferences_impl <- function(
   }
 
   conf_level <- validate_conf_level(conf_level)
-  conf_type <- match.arg(conf_type, choices = c("perc", "wald"))
-
   method <- match.arg(
     method,
-    choices = c("mvn", "score_bootstrap", "bootstrap", "fwb")
+    choices = c("mvn", "delta", "score_bootstrap", "bootstrap", "fwb")
   )
+
+  conf_type <- match.arg(
+    conf_type,
+    choices = c("auto", "perc", "wald", "logit")
+  )
+  if (identical(conf_type, "auto")) {
+    conf_type <- if (!identical(method, "delta")) {
+      "perc"
+    } else if (inherits(x, "markov_avg_comparisons")) {
+      "wald"
+    } else {
+      "logit"
+    }
+  }
+
+  if (!identical(method, "delta") && !is.null(target)) {
+    stop("`target` is only available with `method = \"delta\"`.")
+  }
+  if (!identical(method, "delta") && identical(conf_type, "logit")) {
+    stop("`conf_type = \"logit\"` is only available with `method = \"delta\"`.")
+  }
+
+  if (identical(method, "delta")) {
+    if (inherits(attr(x, "model"), "blrm")) {
+      stop(
+        "Analytical delta inference is not available for `blrm` models; ",
+        "use the posterior intervals returned by `sops()`, `avg_sops()`, or ",
+        "`avg_comparisons()`.",
+        call. = FALSE
+      )
+    }
+    result <- if (inherits(x, "markov_avg_comparisons")) {
+      inferences_delta_comparisons(
+        object = x,
+        target = target,
+        vcov = vcov,
+        cluster = cluster,
+        conf_level = conf_level,
+        conf_type = conf_type
+      )
+    } else {
+      inferences_delta_sops(
+        object = x,
+        target = target,
+        vcov = vcov,
+        cluster = cluster,
+        conf_level = conf_level,
+        conf_type = conf_type
+      )
+    }
+    return(add_null_test(result, null))
+  }
 
   if (inherits(attr(x, "model"), "blrm")) {
     if (!is.null(null)) {

@@ -145,7 +145,7 @@ plot_sops(
 ## Contrasts
 
 ```{r}
-cmp_days <- avg_comparisons(
+cmp_days_point <- avg_comparisons(
   fit_visit,
   variables = list(tx = c(0, 1)),
   estimand = "time_in_state",
@@ -157,10 +157,40 @@ cmp_days <- avg_comparisons(
   time_map = VISIT_DAYS,
   target_times = 0:max(VISIT_DAYS),
   origin_time = 0,
+  origin = "empirical_baseline",
   time_unit = "days"
-) |>
+)
+
+cmp_days <- cmp_days_point |>
   inferences(n_draws = 100)
 
 plot_comparisons(cmp_days) +
   labs(y = "Difference in time in state (days)")
 ```
+
+## Analytical Time-In-State Differences
+
+The same comparison can use deterministic delta-method inference. The
+analytical comparison operator applies the stored `time_map`, inserts the shared
+empirical-baseline origin, linearly interpolates to `target_times`, and uses
+trapezoidal weights before taking treatment minus reference. Because the factor
+visit levels and real-time grid are fixed, these steps are linear after the SOP
+recursion and its Jacobian have been computed.
+
+```{r delta-comparison}
+cmp_days_delta <- cmp_days_point |>
+  inferences(
+    method = "delta",
+    target = "empirical",
+    conf_type = "auto"
+  )
+
+head(cmp_days_delta)
+```
+
+For comparisons, `conf_type = "auto"` selects identity-scale Wald intervals.
+The empirical target conditions on the observed standardization profiles while
+using the patient-cluster robust ORM coefficient covariance. Use
+`target = "population"` only when the stored fitting cohort is the population
+sample of interest and its profile distribution should enter the patient-level
+stacked influence function.

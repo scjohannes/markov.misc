@@ -1,5 +1,17 @@
 # markov.misc 0.1.0
 
+- `get_jacobian()` now extracts selected raw-coefficient Jacobian rows from SOP
+  and supported average-comparison results returned by analytical inference.
+- `inferences()` now supports deterministic analytical delta-method intervals
+  for fixed individual first-order full proportional-odds ORM/VGLM SOPs,
+  empirical and same-cohort population averages, and supported SOP or
+  time-in-state differences. `conf_type = "auto"` uses componentwise logit
+  intervals for SOP probabilities and Wald intervals for comparisons. The
+  analytic recursion runs in native code, and averaged targets retain only the
+  target-specific scenario Jacobians plus any population profile terms.
+- `vcov()` methods for analytical SOP and average-comparison results now
+  materialize selected covariance blocks from retained coefficient or patient
+  influence representations instead of storing a dense all-cell covariance.
 - Markov/SOP workflows now reject non-logit `orm` and cumulative `vglm` links
   before prediction instead of applying logistic algebra to incompatible fits.
 - `inferences()` now reuses serial execution plans, evaluates fixed-order draw

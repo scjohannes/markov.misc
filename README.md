@@ -67,6 +67,44 @@ plot_sops(sop_ci, facet_var = "tx") +
   )
 ```
 
+## Analytical Confidence Intervals
+
+The default inference method remains `method = "mvn"`. For a deterministic
+first-order delta-method calculation, reuse the same averaged full
+proportional-odds SOP object (`sop`, created above by `avg_sops()`) and state the
+averaging target explicitly:
+
+```r
+sop_empirical <- inferences(
+  sop,
+  method = "delta",
+  target = "empirical"
+)
+
+sop_population <- inferences(
+  sop,
+  method = "delta",
+  target = "population"
+)
+
+# Materialize only the analytical rows needed downstream.
+J <- get_jacobian(sop_empirical, rows = 1:8)
+V <- stats::vcov(sop_population, rows = 1:8)
+```
+
+The empirical target conditions on the observed standardization profiles. The
+population target treats the same stored fitting cohort as sampled and combines
+profile variation with fitted-model score variation in a patient-level stacked
+influence function. `orm_markov(id_var = "id")` and
+`vglm_markov(id_var = "id")` store the row-aligned patient IDs needed for this
+calculation. Patient-cluster robustness protects the variance against arbitrary
+within-patient score correlation; it does not correct transition-model bias or
+Markov/proportional-odds misspecification.
+
+The empirical and population targets apply only to averaged SOP or comparison
+objects. For an individual `sops()` result, omit `target` or use
+`target = "fixed"`; no other analytical target is accepted.
+
 ## Learn More
 
 After installation, see:
@@ -77,6 +115,7 @@ vignette("partial-po-vglm-sops", package = "markov.misc")
 vignette("second-order-orm-sops", package = "markov.misc")
 vignette("many-levels-previous-state-spline", package = "markov.misc")
 vignette("factor-time-orm-sops", package = "markov.misc")
+vignette("analytical-confidence-intervals", package = "markov.misc")
 vignette("bayesian-rmsb-sops", package = "markov.misc")
 vignette("mvn-vs-bootstrap-orm-sops", package = "markov.misc")
 ```
