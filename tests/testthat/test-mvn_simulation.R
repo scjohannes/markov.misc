@@ -165,6 +165,22 @@ describe("MVN Simulation-Based Inference for SOPs", {
       # Should match robcov_vglm output
       V_rob <- robcov_vglm(m_vglm, cluster = NULL)$var
       expect_equal(V, V_rob)
+
+      V_working <- get_vcov_robust(
+        m_vglm,
+        cluster = NULL,
+        bread = "vglm",
+        type = "HC1",
+        cadjust = TRUE
+      )
+      expected_working <- robcov_vglm(
+        m_vglm,
+        cluster = NULL,
+        bread = "vglm",
+        type = "HC1",
+        cadjust = TRUE
+      )$var
+      expect_equal(V_working, expected_working)
     })
 
     it("returns robust (sandwich) vcov when cluster is NULL for orm models", {

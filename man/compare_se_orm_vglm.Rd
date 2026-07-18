@@ -46,8 +46,10 @@ The comparison focuses on:
 \item Robust (sandwich) standard errors
 }
 
-Ratios close to 1.0 indicate good agreement. Small differences (~1-2\%) are
-expected for ordinal outcomes due to different internal implementations.
+Ratios close to 1.0 indicate good agreement. For equivalent cumulative-logit
+likelihoods, the default observed-score robust standard errors should agree
+closely after parameter alignment. Native model-based standard errors can
+still differ because VGAM reports final IRLS working-information covariance.
 }
 \examples{
 \dontrun{

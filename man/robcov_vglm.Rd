@@ -4,7 +4,14 @@
 \alias{robcov_vglm}
 \title{Robust (Sandwich) Covariance Matrix Estimation for vglm Objects}
 \usage{
-robcov_vglm(fit, cluster = NULL, adjust = TRUE)
+robcov_vglm(
+  fit,
+  cluster = NULL,
+  adjust = NULL,
+  bread = c("observed", "vglm"),
+  type = c("HC0", "HC1"),
+  cadjust = NULL
+)
 }
 \arguments{
 \item{fit}{A fitted vglm object from the VGAM package.}
@@ -14,9 +21,23 @@ cluster-robust standard errors. Must have the same length as the fitted
 observations, or the same length as the original pre-NA data when the fitted
 model records omitted rows in \code{fit@na.action}.}
 
-\item{adjust}{Logical. If TRUE, applies small-sample correction factor
-G/(G-1) for clustered data, where G is the number of clusters. Default is
-TRUE.}
+\item{adjust}{Deprecated compatibility alias for \code{cadjust}. A non-missing
+logical value is accepted so existing calls continue to work. Do not
+supply both \code{adjust} and \code{cadjust}.}
+
+\item{bread}{Character string selecting the sandwich bread. \code{"observed"}
+(the default) numerically differentiates the summed analytic scores.
+\code{"vglm"} uses the inverse final VGAM IRLS working information returned by
+\code{stats::vcov(fit)}.}
+
+\item{type}{Character string selecting an HC correction. \code{"HC0"} applies no
+observation degrees-of-freedom correction. \code{"HC1"} multiplies the meat by
+\code{(n - 1) / (n - p)}.}
+
+\item{cadjust}{Logical. Apply the cluster correction \code{G / (G - 1)}? The
+default is \code{TRUE} when \code{cluster} is supplied and \code{FALSE} otherwise. When
+explicitly \code{TRUE} without \code{cluster}, each fitted row is treated as its own
+cluster for this scalar correction.}
 }
 \value{
 A list with class "robcov_vglm" containing all original model
@@ -57,10 +78,11 @@ information plus robust covariance estimates:
 
 \strong{Sandwich components:}
 \item{scores}{Matrix of observation-level score contributions (n x p)}
-\item{influence_beta_obs}{Optional matrix of observation-level influence
-contributions for \eqn{\beta} (n x p), computed via \code{VGAM::Influence()}
-when available}
-\item{bread}{The model-based covariance matrix, \code{vcov(fit)}}
+\item{influence_beta_obs}{Matrix of observation-level influence
+contributions for \eqn{\beta} (n x p), computed as the scores times the
+selected bread}
+\item{bread}{The selected covariance-scale bread}
+\item{bread_type}{The requested bread type}
 \item{meat}{The crossproduct of raw observation scores, or cluster-summed
 scores when \code{cluster} is supplied}
 
@@ -68,7 +90,10 @@ scores when \code{cluster} is supplied}
 \item{cluster}{The cluster variable (if provided)}
 \item{n}{Number of observations}
 \item{n_clusters}{Number of clusters (if clustered)}
-\item{adjust}{Whether small-sample adjustment was applied}
+\item{type}{The HC correction type}
+\item{cadjust}{Whether the cluster correction was applied}
+\item{adjustment_factor}{The combined HC and cluster scalar correction}
+\item{adjust}{Compatibility alias for \code{cadjust}}
 }
 \description{
 Computes the Huber-White sandwich covariance matrix estimator for vglm
@@ -78,18 +103,17 @@ functionality similar to \code{rms::robcov()} for vglm models.
 \details{
 The sandwich estimator has the form:
 \deqn{V = B \cdot M \cdot B}
-where B is the model-based covariance matrix returned by \code{vcov(fit)}, and M
-is the score crossproduct. The bread is not a separately computed observed
-Hessian; it is VGAM's covariance-scale matrix based on the final fitted
-working/Fisher information.
+where B is the selected covariance-scale bread and M is the score
+crossproduct. By default, B is the inverse observed information obtained from
+the numerical Jacobian of the summed analytic scores. This keeps the meat and
+bread tied to the same estimating equations and provides misspecification-
+robust inference. Set \code{bread = "vglm"} to use VGAM's final fitted
+working/Fisher information instead.
 
-For ordinary GLM-like models, this usually agrees closely with sandwich
-estimators built from \code{stats::glm()} fits. For \code{VGAM::cumulative()}
-proportional-odds models, VGAM's working-information bread is asymptotically
-equivalent to observed-Hessian bread, but can differ slightly in finite
-samples from \code{sandwich::vcovCL()} applied to equivalent \code{ordinal::clm()} or
-\code{MASS::polr()} fits. In those comparisons, differences can arise from the
-bread even when fitted coefficients and score meat agree.
+Numerical differentiation operates on VGAM's effective VLM coefficients, so
+proportional-odds, fully nonparallel, and custom partial-proportional-odds
+constraint matrices use the same implementation. Perturbation steps are
+reduced adaptively when a candidate produces invalid fitted values.
 
 For unclustered data, the meat matrix is:
 \deqn{M = \sum_{i=1}^{n} \psi_i \psi_i'}
@@ -100,10 +124,11 @@ meat matrix:
 \deqn{M = \sum_{g=1}^{G} \left(\sum_{i \in g} \psi_i\right)
       \left(\sum_{i \in g} \psi_i\right)'}
 
-When \code{adjust = TRUE}, the meat matrix is multiplied by G/(G-1) for clustered
-data, providing a small-sample bias correction. This is the default for
-clustered data. Set \code{adjust = FALSE} to omit this correction, for example when
-matching \code{rms::robcov()} behavior or \code{sandwich::vcovCL(..., cadjust = FALSE)}.
+The \code{type} and \code{cadjust} corrections are separate, matching the controls used
+by \code{sandwich::meatCL()}. For clustered data, \code{cadjust = TRUE} multiplies the
+meat by G/(G-1). \code{type = "HC1"} independently multiplies it by
+(n-1)/(n-p). Set \code{cadjust = FALSE} and \code{type = "HC0"} when matching
+unadjusted \code{rms::robcov()} results.
 
 \strong{Z-statistics and p-values}: The returned object includes z-statistics
 computed as coefficients divided by robust standard errors, and two-sided
@@ -142,7 +167,7 @@ robust_vcov_cl$se
 robust_vcov_noadj <- robcov_vglm(
   fit,
   cluster = mydata$cluster_id,
-  adjust = FALSE
+  cadjust = FALSE
 )
 }
 

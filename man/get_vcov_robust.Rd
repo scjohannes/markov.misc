@@ -4,7 +4,15 @@
 \alias{get_vcov_robust}
 \title{Get Robust Variance-Covariance Matrix}
 \usage{
-get_vcov_robust(model, cluster = NULL, data = NULL, adjust = TRUE)
+get_vcov_robust(
+  model,
+  cluster = NULL,
+  data = NULL,
+  adjust = NULL,
+  bread = c("observed", "vglm"),
+  type = c("HC0", "HC1"),
+  cadjust = NULL
+)
 }
 \arguments{
 \item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, \code{lrm}) or a
@@ -25,8 +33,15 @@ variable cannot be found in the model's original data, it will be extracted
 from this data frame. \strong{Note:} For cluster-robust SEs, the cluster vector
 must have the same length as the model's fitting data, not prediction data.}
 
-\item{adjust}{Logical. Apply small-sample correction for clustering?
-Default is TRUE.}
+\item{adjust}{Deprecated compatibility alias for \code{cadjust} for \code{vglm}
+models.}
+
+\item{bread}{Bread used for a raw \code{vglm} model: \code{"observed"} or \code{"vglm"}.}
+
+\item{type}{HC correction used for a raw \code{vglm} model: \code{"HC0"} or \code{"HC1"}.}
+
+\item{cadjust}{Optional logical cluster correction used for a raw \code{vglm}
+model. By default it is applied when \code{cluster} is supplied.}
 }
 \value{
 A variance-covariance matrix.
