@@ -44,23 +44,24 @@ delta_comparison_factor_case <- local({
     skip_if_not_installed("rms")
     if (is.null(value)) {
       data <- make_delta_comparison_factor_data()
+      visits <- levels(data$time)
       old_options <- options(datadist = NULL)
       on.exit(options(old_options), add = TRUE)
       fit <- suppressWarnings(orm_markov(
         y ~ time + tx + yprev,
         data = data,
         id_var = "id",
+        first_followup_time = visits[1L],
         opt_method = "LM",
         scale = TRUE,
         maxit = 100
       ))
-      visits <- levels(data$time)
       value <<- list(
         data = data,
         fit = fit,
         visits = visits,
         time_map = stats::setNames(c(3, 7, 14, 21), visits),
-        target_times = 0:21,
+        target_times = 1:21,
         y_levels = fit$yunique,
         covariance = fit$var
       )
@@ -79,9 +80,8 @@ delta_factor_time_point <- function(model, case) {
     times = case$visits,
     y_levels = case$y_levels,
     time_map = case$time_map,
-    origin_time = 0,
+    baseline_time = 0,
     target_times = case$target_times,
-    origin = "empirical_baseline",
     time_unit = "days"
   )
 }
@@ -286,6 +286,32 @@ test_that("factor-time ORM differences match public finite differences", {
   expect_equal(treatment$anchor - reference$anchor, 0)
   expect_equal(treatment$auc - reference$auc, point$estimate, tolerance = 1e-12)
 
+  target_weights <- markov.misc:::delta_trapezoid_weights(case$target_times)
+  source_basis <- vapply(
+    seq_along(case$time_map),
+    function(j) {
+      values <- numeric(length(case$time_map))
+      values[j] <- 1
+      stats::approx(
+        x = c(0, unname(case$time_map)),
+        y = c(0, values),
+        xout = case$target_times,
+        ties = "ordered"
+      )$y
+    },
+    numeric(length(case$target_times))
+  )
+  expected_visit_weights <- drop(target_weights %*% source_basis)
+  analytical_visit_weights <- markov.misc:::delta_real_time_visit_weights(
+    avg,
+    attr(point, "comparison_args")
+  )
+  expect_equal(
+    unname(analytical_visit_weights),
+    expected_visit_weights,
+    tolerance = 1e-12
+  )
+
   covariance <- case$covariance[
     colnames(analytical_jacobian),
     colnames(analytical_jacobian),
@@ -295,6 +321,73 @@ test_that("factor-time ORM differences match public finite differences", {
     analytical_jacobian %*% covariance %*% t(analytical_jacobian)
   ))
   expect_equal(inferred$std.error, expected_se, tolerance = 1e-12)
+})
+
+test_that("delta real-time weights exclude baseline unless explicitly targeted", {
+  case <- delta_comparison_factor_case()
+  avg <- avg_sops(
+    case$fit,
+    variables = list(tx = c(0, 1)),
+    times = case$visits,
+    y_levels = case$y_levels
+  )
+  args <- list(
+    time_map = case$time_map,
+    baseline_time = 0,
+    target_times = NULL
+  )
+
+  anchored <- markov.misc:::delta_real_time_visit_weights(avg, args)
+  args$baseline_time <- NULL
+  unanchored <- markov.misc:::delta_real_time_visit_weights(avg, args)
+  expected <- markov.misc:::delta_trapezoid_weights(
+    sort(unique(unname(case$time_map)))
+  )
+
+  expect_equal(unname(anchored), expected)
+  expect_equal(unname(unanchored), expected)
+
+  args$baseline_time <- min(case$time_map)
+  expect_snapshot(
+    markov.misc:::delta_real_time_visit_weights(avg, args),
+    error = TRUE
+  )
+})
+
+test_that("delta real-time weights ignore unused time-map entries", {
+  case <- delta_comparison_factor_case()
+  avg <- avg_sops(
+    case$fit,
+    variables = list(tx = c(0, 1)),
+    times = case$visits,
+    y_levels = case$y_levels
+  )
+  args <- list(
+    time_map = c(unused = -10, case$time_map),
+    baseline_time = 0,
+    target_times = NULL
+  )
+  expected_args <- args
+  expected_args$time_map <- case$time_map
+
+  expect_equal(
+    markov.misc:::delta_real_time_visit_weights(avg, args),
+    markov.misc:::delta_real_time_visit_weights(avg, expected_args)
+  )
+})
+
+test_that("factor-time superpopulation differences use the replayed grid", {
+  case <- delta_comparison_factor_case()
+  point <- delta_factor_time_point(case$fit, case)
+  inferred <- inferences(
+    point,
+    method = "delta",
+    target = "superpopulation"
+  )
+
+  expect_identical(attr(inferred, "target"), "superpopulation")
+  expect_equal(inferred$estimate, point$estimate, tolerance = 1e-12)
+  expect_equal(sum(is.finite(inferred$std.error)), nrow(inferred))
 })
 
 test_that("superpopulation comparisons retain transformed stacked influence", {

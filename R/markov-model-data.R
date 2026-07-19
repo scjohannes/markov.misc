@@ -15,26 +15,20 @@
 #'   returned without cluster-robust covariance and a warning is issued.
 #' @param time_var Character scalar naming the modeled time column used to
 #'   identify the designated starting-profile row.
-#' @param start_time Optional starting-profile visit. `NULL` uses the first
-#'   scheduled numeric time or the first factor level across the pre-NA fitting
-#'   data. This is a cohort-wide visit, never each patient's first retained
-#'   likelihood row.
-#' @param origin_time Origin assigned to the previous-state value carried by the
-#'   starting profile. The default is 0. This metadata may differ from
-#'   `start_time`, for example when the row predicting day 1 carries a day-0
-#'   state in `yprev`.
-#' @param time_map Optional visit-to-real-time mapping retained with the fitted
-#'   model. For factor time with `start_time = NULL`, the visit with the smallest
-#'   mapped real time is designated when the mapping is complete.
+#' @param first_followup_time First scheduled post-baseline outcome time used to
+#'   select the starting-profile row. For numeric time, `NULL` uses 1. Numeric
+#'   schedules may not contain values below 1, and an explicit value must be the
+#'   earliest observed time. Factor and character time require an explicit
+#'   matching value.
 #'
 #' @details Starting profiles are retained before response-driven model-frame
 #'   omission. Every fitted patient must have exactly one complete profile at
-#'   the cohort-wide `start_time`, including ID, model predictors, time, and the
-#'   previous state; the transition response on that row may be missing. A
-#'   patient is included only when at least one usable likelihood transition is
-#'   fitted somewhere. Patients with no fitted transition are excluded, and a
-#'   fitted patient without a complete designated profile is an error. Later
-#'   likelihood rows are not substituted for that profile.
+#'   the cohort-wide `first_followup_time`, including ID, model predictors,
+#'   time, and the previous state; the transition response on that row may be
+#'   missing. A patient is included only when at least one usable likelihood
+#'   transition is fitted somewhere. Patients with no fitted transition are
+#'   excluded, and a fitted patient without a complete designated profile is an
+#'   error. Later likelihood rows are not substituted for that profile.
 #'
 #' @return A fitted `orm` object. If `id_var` is supplied, the object contains
 #'   the robust covariance computed by [rms::robcov()].
@@ -61,9 +55,7 @@ orm_markov <- function(
   ...,
   id_var = NULL,
   time_var = "time",
-  start_time = NULL,
-  origin_time = 0,
-  time_map = NULL,
+  first_followup_time = NULL,
   x = TRUE,
   y = TRUE
 ) {
@@ -78,6 +70,7 @@ orm_markov <- function(
 
   orm_call <- match.call(expand.dots = FALSE)
   dots <- orm_call$...
+  markov_reject_legacy_wrapper_args(dots, "orm_markov()")
   if (length(dots) > 0 && "offset" %in% names(dots)) {
     stop_unsupported_offset()
   }
@@ -120,17 +113,15 @@ orm_markov <- function(
     fit_data = fit_data,
     id_var = id_var,
     time_var = time_var,
-    start_time = start_time,
-    origin_time = origin_time,
-    time_map = time_map
+    first_followup_time = first_followup_time
   )
   fit <- markov_attach_model_data(
     fit,
     data = fit_data,
     id_var = id_var,
     refit_data = stored$refit_data,
-    origin_data = stored$origin_data,
-    origin_metadata = stored$origin_metadata
+    starting_profile_data = stored$starting_profile_data,
+    starting_profile_metadata = stored$starting_profile_metadata
   )
 
   if (!is.null(id_var)) {
@@ -149,8 +140,8 @@ orm_markov <- function(
       data = fit_data,
       id_var = id_var,
       refit_data = stored$refit_data,
-      origin_data = stored$origin_data,
-      origin_metadata = stored$origin_metadata
+      starting_profile_data = stored$starting_profile_data,
+      starting_profile_metadata = stored$starting_profile_metadata
     )
     return(robust)
   }
@@ -208,9 +199,7 @@ blrm_markov <- function(
   ...,
   id_var = NULL,
   time_var = "time",
-  start_time = NULL,
-  origin_time = 0,
-  time_map = NULL,
+  first_followup_time = NULL,
   x = TRUE,
   y = TRUE
 ) {
@@ -228,6 +217,7 @@ blrm_markov <- function(
 
   blrm_call <- match.call(expand.dots = FALSE)
   dots <- blrm_call$...
+  markov_reject_legacy_wrapper_args(dots, "blrm_markov()")
   if (length(dots) > 0 && "offset" %in% names(dots)) {
     stop_unsupported_offset()
   }
@@ -274,17 +264,15 @@ blrm_markov <- function(
     fit_data = fit_data,
     id_var = id_var,
     time_var = time_var,
-    start_time = start_time,
-    origin_time = origin_time,
-    time_map = time_map
+    first_followup_time = first_followup_time
   )
   markov_attach_model_data(
     fit,
     data = fit_data,
     id_var = id_var,
     refit_data = stored$refit_data,
-    origin_data = stored$origin_data,
-    origin_metadata = stored$origin_metadata
+    starting_profile_data = stored$starting_profile_data,
+    starting_profile_metadata = stored$starting_profile_metadata
   )
 }
 
@@ -388,8 +376,8 @@ markov_attach_model_data <- function(
   data,
   id_var = NULL,
   refit_data = NULL,
-  origin_data = NULL,
-  origin_metadata = NULL
+  starting_profile_data = NULL,
+  starting_profile_metadata = NULL
 ) {
   if (!is.null(data)) {
     attr(model, "markov_data") <- data
@@ -400,11 +388,12 @@ markov_attach_model_data <- function(
   if (!is.null(refit_data)) {
     attr(model, "markov_refit_data") <- refit_data
   }
-  if (!is.null(origin_data)) {
-    attr(model, "markov_origin_data") <- origin_data
+  if (!is.null(starting_profile_data)) {
+    attr(model, "markov_starting_profile_data") <- starting_profile_data
   }
-  if (!is.null(origin_metadata)) {
-    attr(model, "markov_origin_metadata") <- origin_metadata
+  if (!is.null(starting_profile_metadata)) {
+    attr(model, "markov_starting_profile_metadata") <-
+      starting_profile_metadata
   }
   model
 }
@@ -463,8 +452,8 @@ markov_model_refit_data <- function(model) {
     markov_model_data(model)
 }
 
-markov_model_origin_metadata <- function(model) {
-  markov_model_metadata_attr(model, "markov_origin_metadata")
+markov_model_starting_profile_metadata <- function(model) {
+  markov_model_metadata_attr(model, "markov_starting_profile_metadata")
 }
 
 markov_format_patient_ids <- function(ids, limit = 5L) {
@@ -475,9 +464,12 @@ markov_format_patient_ids <- function(ids, limit = 5L) {
   )
 }
 
-markov_validate_origin_profiles <- function(model, required_variables = NULL) {
-  profiles <- markov_model_metadata_attr(model, "markov_origin_data")
-  metadata <- markov_model_origin_metadata(model)
+markov_validate_starting_profiles <- function(
+  model,
+  required_variables = NULL
+) {
+  profiles <- markov_model_metadata_attr(model, "markov_starting_profile_data")
+  metadata <- markov_model_starting_profile_metadata(model)
   if (is.null(profiles) || is.null(metadata)) {
     stop(
       "Provide newdata, or fit with `orm_markov()`, `blrm_markov()`, or ",
@@ -504,7 +496,7 @@ markov_validate_origin_profiles <- function(model, required_variables = NULL) {
   if (length(missing_ids)) {
     stop(
       "Fitted patient(s) lack a row at the designated starting visit `",
-      as.character(metadata$start_time),
+      as.character(metadata$first_followup_time),
       "`: ",
       markov_format_patient_ids(missing_ids),
       ". A later likelihood row is not substituted for the starting profile.",
@@ -520,7 +512,7 @@ markov_validate_origin_profiles <- function(model, required_variables = NULL) {
     stop(
       "Fitted patient(s) have multiple rows at the designated starting visit ",
       "`",
-      as.character(metadata$start_time),
+      as.character(metadata$first_followup_time),
       "`: ",
       markov_format_patient_ids(duplicated_ids),
       ". Exactly one starting profile is required per fitted patient.",
@@ -544,7 +536,7 @@ markov_validate_origin_profiles <- function(model, required_variables = NULL) {
       "Fitted patient(s) have incomplete starting-profile predictors: ",
       markov_format_patient_ids(profile_ids[incomplete]),
       ". The transition response is not required, but ID, modeled predictors, ",
-      "time/origin metadata, and the previous state must be complete.",
+      "time metadata, and the previous state must be complete.",
       call. = FALSE
     )
   }
@@ -600,31 +592,113 @@ markov_subset_source_data <- function(data, subset, eval_env) {
   list(data = data[rows, , drop = FALSE], rows = rows)
 }
 
-markov_start_time <- function(time, start_time, time_map) {
-  if (!is.null(start_time)) {
-    if (length(start_time) != 1L || is.na(start_time)) {
-      stop("`start_time` must contain one non-missing value.", call. = FALSE)
-    }
-    return(start_time)
+markov_reject_legacy_wrapper_args <- function(dots, wrapper) {
+  legacy <- intersect(c("start_time", "origin_time", "time_map"), names(dots))
+  if (!length(legacy)) {
+    return(invisible(NULL))
   }
 
-  if (is.factor(time)) {
-    levels <- levels(time)
-    if (!is.null(time_map)) {
-      map <- standardize_time_map(time_map)
-      mapped <- map$real_time[match(levels, map$visit)]
-      if (!anyNA(mapped)) {
-        return(levels[which.min(mapped)])
+  stop(
+    wrapper,
+    " no longer accepts legacy wrapper argument(s): ",
+    paste0("`", legacy, "`", collapse = ", "),
+    ". Use `first_followup_time` to select the stored starting profiles; ",
+    "supply baseline and time-mapping arguments to downstream SOP summary ",
+    "functions.",
+    call. = FALSE
+  )
+}
+
+markov_first_followup_time <- function(time, first_followup_time) {
+  if (is.numeric(time)) {
+    scheduled <- time[!is.na(time)]
+    if (!length(scheduled)) {
+      stop("The numeric time variable has no non-missing scheduled values.")
+    }
+    if (any(!is.finite(scheduled))) {
+      stop("The numeric time variable must contain only finite values.")
+    }
+    if (any(scheduled < 1)) {
+      stop(
+        "The numeric time variable contains a value below 1; follow-up time ",
+        "must begin at 1 or later.",
+        call. = FALSE
+      )
+    }
+
+    if (is.null(first_followup_time)) {
+      if (!1 %in% scheduled) {
+        stop(
+          "The default `first_followup_time = 1` is not observed in the ",
+          "numeric time variable.",
+          call. = FALSE
+        )
       }
+      return(1)
     }
-    return(levels[[1L]])
+    if (
+      !is.numeric(first_followup_time) ||
+        length(first_followup_time) != 1L ||
+        is.na(first_followup_time) ||
+        !is.finite(first_followup_time)
+    ) {
+      stop(
+        "For numeric time, `first_followup_time` must be one finite numeric ",
+        "value.",
+        call. = FALSE
+      )
+    }
+    if (!first_followup_time %in% scheduled) {
+      stop(
+        "`first_followup_time = ",
+        as.character(first_followup_time),
+        "` is not observed in the numeric time variable.",
+        call. = FALSE
+      )
+    }
+    earliest <- min(scheduled)
+    if (!identical(as.numeric(first_followup_time), as.numeric(earliest))) {
+      stop(
+        "For numeric time, `first_followup_time` must equal the earliest ",
+        "observed scheduled time (`",
+        as.character(earliest),
+        "`).",
+        call. = FALSE
+      )
+    }
+    return(first_followup_time)
   }
 
-  finite <- time[!is.na(time)]
-  if (!length(finite)) {
-    stop("The stored time variable has no non-missing scheduled values.")
+  if (!is.factor(time) && !is.character(time)) {
+    stop(
+      "The time variable must be numeric, factor, or character.",
+      call. = FALSE
+    )
   }
-  min(finite)
+  if (is.null(first_followup_time)) {
+    stop(
+      "Factor and character time require an explicit `first_followup_time`.",
+      call. = FALSE
+    )
+  }
+  if (length(first_followup_time) != 1L || is.na(first_followup_time)) {
+    stop(
+      "`first_followup_time` must contain one non-missing value.",
+      call. = FALSE
+    )
+  }
+
+  resolved <- as.character(first_followup_time)
+  observed <- unique(as.character(time[!is.na(time)]))
+  if (!resolved %in% observed) {
+    stop(
+      "`first_followup_time = ",
+      resolved,
+      "` is not observed in the factor or character time variable.",
+      call. = FALSE
+    )
+  }
+  resolved
 }
 
 markov_prepare_stored_data <- function(
@@ -635,15 +709,13 @@ markov_prepare_stored_data <- function(
   fit_data,
   id_var,
   time_var,
-  start_time,
-  origin_time,
-  time_map
+  first_followup_time
 ) {
   if (!is.data.frame(data)) {
     return(list(
       refit_data = NULL,
-      origin_data = NULL,
-      origin_metadata = NULL
+      starting_profile_data = NULL,
+      starting_profile_metadata = NULL
     ))
   }
   source <- markov_subset_source_data(data, subset, eval_env)
@@ -651,30 +723,26 @@ markov_prepare_stored_data <- function(
   if (is.null(id_var)) {
     return(list(
       refit_data = refit_data,
-      origin_data = NULL,
-      origin_metadata = NULL
+      starting_profile_data = NULL,
+      starting_profile_metadata = NULL
     ))
   }
   validate_markov_id_var(time_var, refit_data, "data")
+  scheduled_start <- markov_first_followup_time(
+    refit_data[[time_var]],
+    first_followup_time
+  )
   validate_markov_id_var(id_var, fit_data, "fitted data")
-  if (length(origin_time) != 1L || is.na(origin_time)) {
-    stop("`origin_time` must contain one non-missing value.", call. = FALSE)
-  }
 
   fitted_ids <- unique(as.character(fit_data[[id_var]]))
   if (anyNA(fitted_ids) || any(fitted_ids == "")) {
     stop("Fitted patient IDs must be non-missing and non-empty.", call. = FALSE)
   }
-  scheduled_start <- markov_start_time(
-    refit_data[[time_var]],
-    start_time,
-    time_map
-  )
   at_start <- as.character(refit_data[[time_var]]) ==
     as.character(scheduled_start)
   in_fit <- as.character(refit_data[[id_var]]) %in% fitted_ids
-  origin_data <- refit_data[at_start & in_fit, , drop = FALSE]
-  origin_data$.markov_source_row <- source$rows[at_start & in_fit]
+  starting_profile_data <- refit_data[at_start & in_fit, , drop = FALSE]
+  starting_profile_data$.markov_source_row <- source$rows[at_start & in_fit]
 
   predictor_terms <- stats::delete.response(stats::terms(formula, data = data))
   predictor_variables <- all.vars(predictor_terms)
@@ -686,13 +754,11 @@ markov_prepare_stored_data <- function(
 
   list(
     refit_data = refit_data,
-    origin_data = origin_data,
-    origin_metadata = list(
+    starting_profile_data = starting_profile_data,
+    starting_profile_metadata = list(
       id_var = id_var,
       time_var = time_var,
-      start_time = scheduled_start,
-      origin_time = origin_time,
-      time_map = time_map,
+      first_followup_time = scheduled_start,
       required_variables = required,
       predictor_variables = predictor_variables,
       fitted_ids = fitted_ids,
@@ -753,7 +819,7 @@ resolve_markov_source_data <- function(
   source_data <- if (newdata_supplied) {
     newdata
   } else {
-    metadata <- markov_model_origin_metadata(model)
+    metadata <- markov_model_starting_profile_metadata(model)
     if (
       !is.null(time_var) &&
         !is.null(metadata$time_var) &&
@@ -768,7 +834,7 @@ resolve_markov_source_data <- function(
         call. = FALSE
       )
     }
-    markov_validate_origin_profiles(
+    markov_validate_starting_profiles(
       model,
       required_variables = c(time_var, p_var)
     )

@@ -27,9 +27,7 @@ vglm_markov(
   qr.arg = TRUE,
   smart = TRUE,
   time_var = "time",
-  start_time = NULL,
-  origin_time = 0,
-  time_map = NULL,
+  first_followup_time = NULL,
   ...
 )
 }
@@ -272,17 +270,11 @@ proportional odds fit returned by \code{vglm_markov()}.}
 \item{time_var}{Character scalar naming the modeled time column used to
 identify the designated starting-profile row.}
 
-\item{start_time}{Optional starting-profile visit. \code{NULL} uses the first
-scheduled numeric time or the first factor level across the pre-NA fitting
-data. This is a cohort-wide visit, never each patient's first retained
-likelihood row.}
-
-\item{origin_time}{Origin assigned to the previous-state value carried by the
-starting profile. The default is 0.}
-
-\item{time_map}{Optional visit-to-real-time mapping retained with the fit.
-For factor time with \code{start_time = NULL}, the visit with the smallest
-mapped real time is designated when the mapping is complete.}
+\item{first_followup_time}{First scheduled post-baseline outcome time used to
+select the starting-profile row. For numeric time, \code{NULL} uses 1. Numeric
+schedules may not contain values below 1, and an explicit value must be the
+earliest observed time. Factor and character time require an explicit
+matching value.}
 
 \item{...}{
   further arguments passed into \code{\link[VGAM]{vglm.control}}.
@@ -327,12 +319,12 @@ rejects both \code{offset()} terms and the \code{offset} argument.
 
 Starting profiles are retained before response-driven model-frame
 omission. Every fitted patient must have exactly one complete profile at
-the cohort-wide \code{start_time}, including ID, model predictors, time, and the
-previous state; the transition response on that row may be missing. A
-patient is included only when at least one usable likelihood transition is
-fitted somewhere. Patients with no fitted transition are excluded, and a
-fitted patient without a complete designated profile is an error. Later
-likelihood rows are not substituted for that profile.
+the cohort-wide \code{first_followup_time}, including ID, model predictors,
+time, and the previous state; the transition response on that row may be
+missing. A patient is included only when at least one usable likelihood
+transition is fitted somewhere. Patients with no fitted transition are
+excluded, and a fitted patient without a complete designated profile is an
+error. Later likelihood rows are not substituted for that profile.
 }
 \examples{
 \dontrun{

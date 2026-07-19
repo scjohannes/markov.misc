@@ -942,7 +942,7 @@ delta_stacked_influence <- function(
         source = "stacked_patient_influence",
         covariance_source = "stacked_patient_influence",
         target = "superpopulation",
-        cohort = "fitted_patients_with_origin_profiles",
+        cohort = "fitted_patients_with_starting_profiles",
         covariance_convention = "sample_covariance_of_influence_divided_by_n",
         finite_sample_method = "patient_level_sample_covariance",
         finite_sample_factor = n / (n - 1),

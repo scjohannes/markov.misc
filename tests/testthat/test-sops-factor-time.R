@@ -255,7 +255,8 @@ test_that("factor visit simulation and bootstrap inference smoke-test", {
     y ~ time + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
     data = data,
-    id_var = "id"
+    id_var = "id",
+    first_followup_time = "1"
   )
   baseline <- data[!duplicated(data$id), , drop = FALSE]
 
@@ -316,6 +317,7 @@ test_that("factor visit orm avg_sops requires absorbing state", {
     y ~ tx + time + yprev,
     data = data,
     id_var = "id",
+    first_followup_time = "1",
     opt_method = "LM",
     scale = TRUE,
     penalty = 0.1,
@@ -360,6 +362,7 @@ test_that("factor visit orm SOP interpolation uses absorbing state", {
     y ~ tx + time + yprev,
     data = data,
     id_var = "id",
+    first_followup_time = "1",
     opt_method = "LM",
     scale = TRUE,
     penalty = 0.1,
@@ -383,7 +386,7 @@ test_that("factor visit orm SOP interpolation uses absorbing state", {
     sop_visit,
     time_map = case$visit_days,
     target_times = 0:max(case$visit_days),
-    origin_time = 0
+    baseline_time = 0
   )
   expect_false(anyNA(sop_days$estimate))
 
@@ -396,44 +399,114 @@ test_that("interpolate_sops maps visits, anchors baseline, and normalizes states
   out <- interpolate_sops(
     x,
     time_map = c(v1 = 3, v2 = 7),
-    target_times = c(0, 3, 5, 7),
-    origin_time = 0
+    target_times = c(0, 1, 3, 5, 7),
+    baseline_time = 0
   )
 
+  day_1 <- out[out$tx == 0 & out$time == 1 & out$state == "1", ]
   mid <- out[out$tx == 0 & out$time == 5 & out$state == "1", ]
+  expect_equal(day_1$estimate, 0.25 + (0.8 - 0.25) / 3, tolerance = 1e-10)
   expect_equal(mid$estimate, 0.6, tolerance = 1e-10)
 
-  origin <- out[out$time == 0, c("tx", "state", "estimate")]
+  baseline <- out[out$time == 0, c("tx", "state", "estimate")]
   expect_equal(
-    origin[origin$tx == 0, c("state", "estimate")],
-    origin[origin$tx == 1, c("state", "estimate")],
+    baseline[baseline$tx == 0, c("state", "estimate")],
+    baseline[baseline$tx == 1, c("state", "estimate")],
     ignore_attr = TRUE
   )
-  expect_equal(origin$estimate[origin$state == "1" & origin$tx == 0], 0.25)
-  expect_equal(origin$estimate[origin$state == "2" & origin$tx == 0], 0.75)
+  expect_equal(
+    baseline$estimate[baseline$state == "1" & baseline$tx == 0],
+    0.25
+  )
+  expect_equal(
+    baseline$estimate[baseline$state == "2" & baseline$tx == 0],
+    0.75
+  )
 
   sums <- stats::aggregate(estimate ~ tx + time, out, sum)
   expect_equal(sums$estimate, rep(1, nrow(sums)), tolerance = 1e-10)
 })
 
-test_that("interpolate_sops interpolates stored draws from deterministic origin anchor", {
+test_that("interpolate_sops defaults to baseline plus mapped follow-up nodes", {
+  x <- make_interpolation_case()
+
+  anchored <- interpolate_sops(x, time_map = c(v1 = 3, v2 = 7))
+  unanchored <- interpolate_sops(
+    x,
+    time_map = c(v1 = 3, v2 = 7),
+    baseline_time = NULL
+  )
+
+  expect_equal(sort(unique(anchored$time)), c(0, 3, 7))
+  expect_equal(attr(anchored, "baseline_time"), 0)
+  expect_equal(sort(unique(unanchored$time)), c(3, 7))
+  expect_null(attr(unanchored, "baseline_time"))
+})
+
+test_that("unused time-map entries do not change baseline ordering", {
+  x <- make_interpolation_case()
+  expected <- interpolate_sops(x, time_map = c(v1 = 3, v2 = 7))
+  actual <- interpolate_sops(
+    x,
+    time_map = c(unused = -10, v1 = 3, v2 = 7)
+  )
+
+  expect_equal(actual, expected, ignore_attr = TRUE)
+  expect_equal(sort(unique(actual$time)), c(0, 3, 7))
+})
+
+test_that("interpolate_sops gives individual profiles one-hot baselines", {
+  x <- expand.grid(
+    id = 1:2,
+    time = factor(c("v1", "v2"), levels = c("v1", "v2")),
+    state = factor(c("1", "2"), levels = c("1", "2")),
+    KEEP.OUT.ATTRS = FALSE
+  )
+  x$yprev <- factor(ifelse(x$id == 1, "1", "2"), levels = c("1", "2"))
+  x$estimate <- 0.5
+  class(x) <- c("markov_sops", class(x))
+  attr(x, "p_var") <- "yprev"
+  attr(x, "y_levels") <- factor(1:2)
+
+  out <- interpolate_sops(x, time_map = c(v1 = 3, v2 = 7))
+  baseline <- out[out$time == 0, , drop = FALSE]
+
+  expect_equal(
+    baseline$estimate[baseline$id == 1 & baseline$state == "1"],
+    1
+  )
+  expect_equal(
+    baseline$estimate[baseline$id == 1 & baseline$state == "2"],
+    0
+  )
+  expect_equal(
+    baseline$estimate[baseline$id == 2 & baseline$state == "1"],
+    0
+  )
+  expect_equal(
+    baseline$estimate[baseline$id == 2 & baseline$state == "2"],
+    1
+  )
+})
+
+test_that("interpolate_sops interpolates stored draws from fixed baseline anchor", {
   x <- add_interpolation_draws(make_interpolation_case())
   out <- interpolate_sops(
     x,
     time_map = c(v1 = 3, v2 = 7),
     target_times = 0:7,
-    origin_time = 0
+    baseline_time = 0
   )
   draws <- attr(out, "draws")
 
   expect_s3_class(draws, "data.frame")
   expect_equal(sort(unique(draws$time)), 0:7)
 
-  origin <- out[out$time == 0 & out$tx == 0 & out$state == "1", ]
-  expect_equal(origin$estimate, 0.25, tolerance = 1e-10)
-  expect_equal(origin$conf.low, 0.25, tolerance = 1e-10)
-  expect_equal(origin$conf.high, 0.25, tolerance = 1e-10)
-  expect_equal(origin$std.error, 0, tolerance = 1e-10)
+  baseline <- out[out$time == 0 & out$tx == 0 & out$state == "1", ]
+  expect_equal(baseline$estimate, 0.25, tolerance = 1e-10)
+  expect_equal(baseline$conf.low, 0.25, tolerance = 1e-10)
+  expect_equal(baseline$conf.high, 0.25, tolerance = 1e-10)
+  expect_equal(baseline$std.error, 0, tolerance = 1e-10)
 
   day_1 <- out[out$time == 1 & out$tx == 0 & out$state == "1", ]
   expect_false(is.na(day_1$conf.low))
@@ -460,7 +533,7 @@ test_that("interpolate_sops warns when interval-bearing objects do not store dra
       x,
       time_map = c(v1 = 3, v2 = 7),
       target_times = 1:7,
-      origin_time = 0
+      baseline_time = 0
     ),
     "no stored draws"
   )
@@ -475,7 +548,7 @@ test_that("interpolate_sops warns when interval-bearing objects do not store dra
       x,
       time_map = c(v1 = 3, v2 = 7),
       target_times = 1:7,
-      origin_time = 0
+      baseline_time = 0
     ),
     "posterior draws"
   )
@@ -496,7 +569,7 @@ test_that("interpolate_sops handles blrm-style stored posterior draws", {
       x,
       time_map = c(v1 = 3, v2 = 7),
       target_times = 0:7,
-      origin_time = 0
+      baseline_time = 0
     ),
     NA
   )
@@ -505,9 +578,9 @@ test_that("interpolate_sops handles blrm-style stored posterior draws", {
   expect_s3_class(posterior_draws, "data.frame")
   expect_equal(sort(unique(posterior_draws$time)), 0:7)
 
-  origin <- out[out$time == 0 & out$tx == 0 & out$state == "1", ]
-  expect_equal(origin$conf.low, 0.25, tolerance = 1e-10)
-  expect_equal(origin$conf.high, 0.25, tolerance = 1e-10)
+  baseline <- out[out$time == 0 & out$tx == 0 & out$state == "1", ]
+  expect_equal(baseline$conf.low, 0.25, tolerance = 1e-10)
+  expect_equal(baseline$conf.high, 0.25, tolerance = 1e-10)
 
   day_1 <- out[out$time == 1 & out$tx == 0 & out$state == "1", ]
   day_1_draws <- posterior_draws[
@@ -533,7 +606,7 @@ test_that("plot_sops bars work with derived facet labels on interpolated draws",
     x,
     time_map = c(v1 = 3, v2 = 7),
     target_times = 1:7,
-    origin_time = 0
+    baseline_time = 0
   )
   label_tx <- function(x) {
     x <- as.character(x)
@@ -599,7 +672,7 @@ test_that("interpolate_sops does not extrapolate estimates or draws", {
     x,
     time_map = c(v1 = 1, v2 = 2, v3 = 3),
     target_times = c(1, 1.5, 2, 2.5, 3),
-    origin = "none",
+    baseline_time = NULL,
     normalize = FALSE
   )
   draws <- attr(out, "draws")
@@ -621,6 +694,104 @@ test_that("interpolate_sops does not extrapolate estimates or draws", {
   expect_equal(middle$estimate, 0.6, tolerance = 1e-12)
 })
 
+test_that("individual bootstrap weights propagate through baseline interpolation", {
+  profiles <- data.frame(
+    id = 1:2,
+    rowid = 1:2,
+    yprev = factor(c("1", "2"), levels = c("1", "2")),
+    tx = c(0, 1)
+  )
+  x <- merge(
+    expand.grid(
+      rowid = 1:2,
+      time = factor(c("v1", "v2"), levels = c("v1", "v2")),
+      state = factor(c("1", "2"), levels = c("1", "2"))
+    ),
+    profiles,
+    by = "rowid",
+    sort = FALSE
+  )
+  x$estimate <- ifelse(x$state == "1", 0.6, 0.4)
+  class(x) <- c("markov_sops", class(x))
+  attr(x, "p_var") <- "yprev"
+  attr(x, "y_levels") <- factor(c("1", "2"))
+  attr(x, "newdata_orig") <- profiles
+  attr(x, "newdata_pred") <- profiles
+
+  draws <- do.call(
+    rbind,
+    lapply(1:2, function(draw_id) {
+      draw <- x
+      draw$draw_id <- draw_id
+      draw$score_weight <- c(0.25, 1.75)[draw$rowid]
+      draw
+    })
+  )
+  attr(x, "draws") <- draws
+
+  out <- interpolate_sops(
+    x,
+    time_map = c(v1 = 3, v2 = 7),
+    target_times = 0:7
+  )
+  out_draws <- attr(out, "draws")
+  early <- out_draws[out_draws$time < 3, , drop = FALSE]
+
+  expect_false(anyNA(early$estimate))
+  expect_false(anyNA(early$score_weight))
+  expect_equal(
+    early$score_weight,
+    c(0.25, 1.75)[early$rowid]
+  )
+  baseline <- early[early$time == 0, , drop = FALSE]
+  expect_equal(
+    baseline$estimate,
+    as.numeric(as.character(baseline$state) == as.character(baseline$yprev))
+  )
+})
+
+test_that("averaged bootstrap draws use draw-specific baseline distributions", {
+  x <- add_interpolation_draws(make_interpolation_case())
+  baseline <- attr(x, "newdata_orig")
+  anchors <- lapply(
+    list(c(3, 1, 1, 1), c(1, 1, 1, 3), c(1, 1, 1, 1)),
+    function(weights) {
+      markov.misc:::empirical_baseline_anchor_from_data(
+        x,
+        baseline = baseline,
+        baseline_time = 0,
+        weights = weights
+      )
+    }
+  )
+  attr(x, "baseline_anchor_draws") <-
+    markov.misc:::combine_baseline_anchor_draws(anchors, 1:3)
+
+  out <- interpolate_sops(
+    x,
+    time_map = c(v1 = 3, v2 = 7),
+    target_times = 0:7
+  )
+  draws <- attr(out, "draws")
+  baseline_draws <- draws[
+    draws$time == 0 & draws$tx == 0 & draws$state == "1",
+    ,
+    drop = FALSE
+  ]
+
+  expect_equal(baseline_draws$estimate, c(0.5, 1 / 6, 0.25))
+  baseline_result <- out[out$time == 0 & out$tx == 0 & out$state == "1", ]
+  expect_gt(baseline_result$std.error, 0)
+
+  auc <- time_in_state(
+    x,
+    target_states = "1",
+    time_map = c(v1 = 3, v2 = 7),
+    target_times = 0:7
+  )
+  expect_gt(auc$std.error[auc$tx == 0], 0)
+})
+
 test_that("interpolate_sops guardrails are clear", {
   x <- make_interpolation_case()
   expect_error(
@@ -629,6 +800,31 @@ test_that("interpolate_sops guardrails are clear", {
   )
   expect_error(
     interpolate_sops(x, time_map = c(v1 = 3, v2 = 7), target_times = 8),
+    "`target_times` must stay within the supported time range"
+  )
+  expect_error(
+    interpolate_sops(x, time_map = c(v1 = 3, v2 = 7), baseline_time = 3),
+    "`baseline_time` must be earlier than the earliest mapped SOP time"
+  )
+  expect_error(
+    interpolate_sops(x, time_map = c(v1 = 3, v2 = 7), baseline_time = Inf),
+    "`baseline_time` must be a single finite numeric value or `NULL`"
+  )
+  expect_error(
+    interpolate_sops(
+      x,
+      time_map = c(v1 = 3, v2 = 7),
+      target_times = -1
+    ),
+    "`target_times` must stay within the supported time range"
+  )
+  expect_error(
+    interpolate_sops(
+      x,
+      time_map = c(v1 = 3, v2 = 7),
+      target_times = 1:7,
+      baseline_time = NULL
+    ),
     "`target_times` must stay within the supported time range"
   )
 })
@@ -640,18 +836,38 @@ test_that("time_in_state uses trapezoidal AUC on mapped real time", {
     x,
     target_states = "1",
     time_map = c(v1 = 3, v2 = 7),
-    origin_time = 0
+    baseline_time = 0
   )
   auc <- auc[order(auc$tx), , drop = FALSE]
 
-  expect_equal(auc$total_time[auc$tx == 0], 3.975, tolerance = 1e-10)
-  expect_equal(auc$total_time[auc$tx == 1], 3.825, tolerance = 1e-10)
+  expect_equal(auc$total_time[auc$tx == 0], 2.4, tolerance = 1e-10)
+  expect_equal(auc$total_time[auc$tx == 1], 2.4, tolerance = 1e-10)
+
+  baseline_auc <- time_in_state(
+    x,
+    target_states = "1",
+    time_map = c(v1 = 3, v2 = 7),
+    baseline_time = 0,
+    target_times = 0:7
+  )
+  baseline_auc <- baseline_auc[order(baseline_auc$tx), , drop = FALSE]
+
+  expect_equal(
+    baseline_auc$total_time[baseline_auc$tx == 0],
+    3.975,
+    tolerance = 1e-10
+  )
+  expect_equal(
+    baseline_auc$total_time[baseline_auc$tx == 1],
+    3.825,
+    tolerance = 1e-10
+  )
 
   day_1_auc <- time_in_state(
     x,
     target_states = "1",
     time_map = c(v1 = 3, v2 = 7),
-    origin_time = 0,
+    baseline_time = 0,
     target_times = 1:7
   )
   day_1_auc <- day_1_auc[order(day_1_auc$tx), , drop = FALSE]
@@ -667,7 +883,7 @@ test_that("time_in_state uses trapezoidal AUC on mapped real time", {
     x,
     time_map = c(v1 = 3, v2 = 7),
     target_times = 1:7,
-    origin_time = 0
+    baseline_time = 0
   )
   interpolated_auc <- time_in_state(interpolated, target_states = "1")
   interpolated_auc <- interpolated_auc[

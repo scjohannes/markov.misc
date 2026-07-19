@@ -740,11 +740,25 @@ inferences_simulation <- function(
           )
         }
 
+        baseline_anchor <- if (
+          !is.null(baseline_weights) && (is_avg || !is.null(by))
+        ) {
+          empirical_baseline_anchor_from_data(
+            x = object,
+            baseline = baseline_data,
+            baseline_time = 0,
+            weights = baseline_weights
+          )
+        } else {
+          NULL
+        }
+
         pack_sop_draw_result(
           result,
           group_cols,
           object_keys,
-          draw_weight_col
+          draw_weight_col,
+          baseline_anchor = baseline_anchor
         )
       }
     } else {
@@ -815,11 +829,25 @@ inferences_simulation <- function(
         )
       }
 
+      baseline_anchor <- if (
+        !is.null(baseline_weights) && (is_avg || !is.null(by))
+      ) {
+        empirical_baseline_anchor_from_data(
+          x = object,
+          baseline = baseline_data,
+          baseline_time = 0,
+          weights = baseline_weights
+        )
+      } else {
+        NULL
+      }
+
       pack_sop_draw_result(
         result,
         group_cols,
         object_keys,
-        draw_weight_col
+        draw_weight_col,
+        baseline_anchor = baseline_anchor
       )
     }
   }
@@ -827,8 +855,10 @@ inferences_simulation <- function(
   # --- 6. Apply Across All Draws ---
   globals_list <- c(
     "model",
+    "object",
     "model_chk",
     "beta_draws",
+    "baseline_data",
     "newdata_pred",
     "times",
     "y_levels",
@@ -878,6 +908,10 @@ inferences_simulation <- function(
   if (all(has_weights)) {
     weight_values <- do.call(rbind, lapply(sim_results, `[[`, "weight"))
   }
+  baseline_anchor_draws <- combine_baseline_anchor_draws(
+    lapply(sim_results, `[[`, "baseline_anchor"),
+    successful_ids
+  )
 
   # --- 7. Compute Confidence Intervals ---
   summary_stats <- summarize_sop_draw_matrix(
@@ -918,6 +952,9 @@ inferences_simulation <- function(
       draw_weight_col,
       weight_values
     )
+    if (!is.null(baseline_anchor_draws)) {
+      attr(final_result, "baseline_anchor_draws") <- baseline_anchor_draws
+    }
   }
 
   final_result
@@ -938,7 +975,13 @@ sop_draw_cell_key <- function(data, group_cols) {
   key
 }
 
-pack_sop_draw_result <- function(result, group_cols, object_keys, weight_col) {
+pack_sop_draw_result <- function(
+  result,
+  group_cols,
+  object_keys,
+  weight_col,
+  baseline_anchor = NULL
+) {
   result_keys <- sop_draw_cell_key(result, group_cols)
   index <- match(object_keys, result_keys)
   if (anyNA(index)) {
@@ -950,7 +993,8 @@ pack_sop_draw_result <- function(result, group_cols, object_keys, weight_col) {
       result[[weight_col]][index]
     } else {
       NULL
-    }
+    },
+    baseline_anchor = baseline_anchor
   )
 }
 

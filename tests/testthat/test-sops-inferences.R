@@ -159,6 +159,27 @@ describe("avg_sops() and inferences() pipeline", {
     lapply(out, unname)
   }
 
+  expect_draw_specific_baseline_anchor <- function(result, n_draws, times) {
+    anchors <- attr(result, "baseline_anchor_draws")
+    expect_s3_class(anchors, "data.frame")
+    expect_equal(sort(unique(anchors$draw_id)), seq_len(n_draws))
+    sums <- stats::aggregate(
+      estimate ~ draw_id + tx,
+      data = anchors,
+      FUN = sum
+    )
+    expect_equal(sums$estimate, rep(1, nrow(sums)), tolerance = 1e-12)
+
+    interpolated <- interpolate_sops(
+      result,
+      time_map = stats::setNames(seq_along(times) * 7, times),
+      target_times = c(0, 1, 7)
+    )
+    draws <- attr(interpolated, "draws")
+    early <- draws[draws$time < 7, , drop = FALSE]
+    expect_false(anyNA(early$estimate))
+  }
+
   test_that("create_counterfactual_data() stacks one baseline copy per scenario", {
     baseline <- data.frame(
       id = 1:2,
@@ -714,6 +735,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(attr(inferred, "n_successful"), 2L)
     expect_inference_intervals(inferred)
     expect_equal(sort(unique(draws$draw_id)), 1:2)
+    expect_draw_specific_baseline_anchor(inferred, 2, 1:8)
 
     expect_snapshot_value(
       list(
@@ -762,6 +784,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(attr(inferred, "n_successful"), 2L)
     expect_inference_intervals(inferred)
     expect_equal(sort(unique(draws$draw_id)), 1:2)
+    expect_draw_specific_baseline_anchor(inferred, 2, 1:8)
   })
 
   test_that("numeric previous-state spline supports bootstrap inference", {
@@ -832,6 +855,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(attr(inferred, "n_successful"), 3L)
     expect_inference_intervals(inferred, require_positive_std_error = TRUE)
     expect_equal(sort(unique(draws$draw_id)), 1:3)
+    expect_draw_specific_baseline_anchor(inferred, 3, 1:8)
 
     expect_snapshot_value(
       list(

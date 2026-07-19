@@ -217,9 +217,8 @@ test_that("analytical comparison operators reproduce existing reductions", {
     state_sets = state_sets,
     comparison = "difference",
     time_map = NULL,
-    origin_time = NULL,
+    baseline_time = 0,
     target_times = NULL,
-    origin = "empirical_baseline",
     time_unit = NULL,
     return_draws = FALSE
   )
@@ -237,9 +236,8 @@ test_that("analytical comparison operators reproduce existing reductions", {
     state_sets = state_sets,
     comparison = "difference",
     time_map = c("1" = 3, "2" = 7, "3" = 14),
-    origin_time = 0,
+    baseline_time = 0,
     target_times = 0:14,
-    origin = "empirical_baseline",
     time_unit = "days",
     return_draws = FALSE
   )
@@ -248,9 +246,8 @@ test_that("analytical comparison operators reproduce existing reductions", {
     state_sets = state_sets,
     comparison = "difference",
     time_map = c("1" = 3, "2" = 7, "3" = 14),
-    origin_time = 0,
-    target_times = 0:14,
-    origin = "empirical_baseline"
+    baseline_time = 0,
+    target_times = 0:14
   )
   real_time_operator <- delta_comparison_operator(
     real_time,
@@ -842,7 +839,7 @@ test_that("public delta scope enforces fixed targets and patient clustering", {
 
   supplied <- avg_sops(
     superpopulation_case$model,
-    newdata = markov_validate_origin_profiles(superpopulation_case$model)[
+    newdata = markov_validate_starting_profiles(superpopulation_case$model)[
       seq_len(5L),
       ,
       drop = FALSE

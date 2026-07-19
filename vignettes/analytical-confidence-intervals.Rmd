@@ -133,7 +133,7 @@ head(avg_superpopulation)
 ```
 
 The superpopulation route is a fitted-cohort calculation. It requires one
-stored designated starting profile per fitted patient and exact patient-ID
+stored first-follow-up profile per fitted patient and exact patient-ID
 alignment with the fitted likelihood scores. It is not an external-target or
 random-effects population analysis. VGLM `type` and `cadjust` choices affect the
 empirical coefficient sandwich, but the stacked superpopulation calculation uses
@@ -146,24 +146,26 @@ The fitting wrappers retain starting-profile information before a missing
 transition response can remove a row from the model frame. The contract is:
 
 - a fitted patient must have exactly one complete profile at the designated
-  `start_time`, containing ID, treatment/covariates, modeled time information,
-  and the known previous state such as `yprev`;
+  `first_followup_time`, containing ID, treatment/covariates, modeled time
+  information, and the known previous state such as `yprev`;
 - the transition response at that row is not required;
 - the patient must contribute at least one usable likelihood transition
   somewhere in the fitted data;
 - a complete starting profile plus a missing first outcome plus a later usable
   transition is included;
 - a starting profile with no usable transition anywhere is excluded; and
-- likelihood rows without a complete designated starting profile are an error.
+- likelihood rows without a complete first-follow-up profile are an error.
 
-By default, `start_time` is the first scheduled numeric visit or first factor
-visit (using the smallest mapped real time when `time_map` is complete), while
-`origin_time = 0` records the real time of the previous state. For example, a
-row predicting day 1 can carry the day-0 state in `yprev`. Both values can be
-set explicitly in `orm_markov()` or `vglm_markov()`. Later likelihood rows never
-silently replace a missing designated profile. This standardization contract
-assumes the observation process is non-informative; the analytical variance does
-not correct informative missingness.
+`first_followup_time` only selects and validates this automatic profile. For
+numeric time, its `NULL` default resolves to 1: time 1 must be present and the
+schedule may not contain values below 1. An explicit numeric value must be the
+earliest scheduled follow-up. Factor or character time requires an explicit
+matching value. The wrappers no longer accept `start_time`, `origin_time`, or
+`time_map`; real-time mapping and baseline anchoring belong to downstream SOP
+summaries. Later likelihood rows never silently replace a missing designated
+profile. This standardization contract assumes the observation process is
+non-informative; the analytical variance does not correct informative
+missingness.
 
 Individual `sops()` results accept only an omitted target or
 `target = "fixed"`. Empirical and superpopulation targets apply only to averaged
@@ -227,7 +229,7 @@ head(sop_difference)
 
 Analytical differences are linear transformations of average SOP cells.
 `estimand = "time_in_state"` is also supported, including factor-visit designs
-with real-time mapping, interpolation, an empirical baseline origin, and
+with real-time mapping, interpolation, an observed baseline anchor, and
 trapezoidal integration. See the factor-time vignette for that workflow.
 
 ## Inspect the Analytical State

@@ -96,9 +96,24 @@ The empirical target conditions on the observed standardization profiles. The
 superpopulation target treats the fitted cohort as sampled and combines profile
 variation with fitted-model score variation in a patient-level stacked influence
 function. `orm_markov(id_var = "id")` and `vglm_markov(id_var = "id")` preserve
-one designated starting profile per fitted patient before response-driven row
-omission. A missing first transition response is allowed when that profile is
-complete and the patient contributes a later likelihood transition.
+one first-follow-up profile per fitted patient before response-driven row
+omission. `first_followup_time` selects that row only: for numeric time its
+`NULL` default resolves to 1, time 1 must exist, and values below 1 are rejected;
+factor or character time requires an explicit value. A missing first transition
+response is allowed when ID, predictors, and `yprev` are complete and the
+patient contributes another usable likelihood transition. The same automatic
+profiles support `sops()`, `avg_sops()`, and `avg_comparisons()` when `newdata`
+is omitted.
+
+Real-time summaries are configured downstream rather than in the fitting
+wrapper. `baseline_time = 0` places the observed `yprev` distribution at
+baseline (`NULL` disables this anchor), `time_map` maps factor visits to elapsed
+time, and `target_times` defines the returned and integrated grid. For example,
+with the first modeled SOP mapped to day 7, `target_times = 1:28` interpolates
+from the observed day-0 distribution to day 7 but integrates only days 1--28.
+When `target_times` is omitted, time-in-state summaries integrate the mapped
+follow-up nodes and exclude the baseline interval.
+
 Patient-cluster robustness protects the variance against arbitrary within-patient
 score correlation; it does not correct transition-model bias, informative
 observation, or Markov/proportional-odds misspecification.

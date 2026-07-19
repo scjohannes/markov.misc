@@ -96,6 +96,7 @@ fit_visit <- orm_markov(
   y ~ tx + time + yprev,
   data = model_data,
   id_var = "id",
+  first_followup_time = "1",
   opt_method = "LM",
   scale = TRUE,
   penalty = 0.1,
@@ -117,15 +118,17 @@ attr(sop_visit, "avg_args")$times
 ## Interpolate To Calendar Days
 
 The model is fit on visit labels. `interpolate_sops()` maps those labels to
-nominal calendar days, adds an empirical day-0 baseline anchor, and linearly
-interpolates probabilities between observed visits.
+nominal calendar days, adds the observed `yprev` distribution as a day-0
+baseline anchor, and linearly interpolates probabilities between the anchor and
+modeled visits. The returned grid starts on day 1, so the baseline anchors the
+interpolation without being part of the follow-up summary.
 
 ```{r plot-sops}
 sop_days <- interpolate_sops(
   sop_visit,
   time_map = VISIT_DAYS,
-  target_times = 0:max(VISIT_DAYS),
-  origin_time = 0
+  target_times = 1:max(VISIT_DAYS),
+  baseline_time = 0
 )
 
 plot_sops(
@@ -155,9 +158,8 @@ cmp_days_point <- avg_comparisons(
   y_levels = fit_visit$yunique,
   absorb = as.character(ABSORB),
   time_map = VISIT_DAYS,
-  target_times = 0:max(VISIT_DAYS),
-  origin_time = 0,
-  origin = "empirical_baseline",
+  target_times = 1:max(VISIT_DAYS),
+  baseline_time = 0,
   time_unit = "days"
 )
 
@@ -172,7 +174,8 @@ plot_comparisons(cmp_days) +
 
 The same comparison can use deterministic delta-method inference. The
 analytical comparison operator applies the stored `time_map`, inserts the shared
-empirical-baseline origin, linearly interpolates to `target_times`, and uses
+observed-baseline anchor at `baseline_time`, linearly interpolates to
+`target_times`, and uses
 trapezoidal weights before taking treatment minus reference. Because the factor
 visit levels and real-time grid are fixed, these steps are linear after the SOP
 recursion and its Jacobian have been computed.
@@ -193,7 +196,9 @@ The empirical target conditions on the observed standardization profiles while
 using the patient-cluster robust ORM coefficient covariance. Use
 `target = "superpopulation"` only when the fitted cohort is the sample of
 interest and its profile distribution should enter the patient-level stacked
-influence function. The wrapper uses the first factor visit by default (or the
-smallest mapped real time when `time_map` is complete) as the designated
-starting-profile row; set `start_time` explicitly when another scheduled visit
-defines the profile.
+influence function. Because the model uses factor time, the wrapper requires
+`first_followup_time = "1"` explicitly. This value only selects and validates
+the stored starting profile; `time_map`, `baseline_time`, and `target_times`
+control the downstream real-time calculation. If `target_times` is omitted,
+time-in-state integrates only the mapped follow-up nodes and excludes the
+baseline-to-first-visit interval.

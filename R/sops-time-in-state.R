@@ -31,7 +31,16 @@ time_in_state_tidy <- function(x, target_states, real_time = FALSE) {
   }
   x <- x[keep, , drop = FALSE]
   measure_cols <- sop_measure_cols(x)
-  group_cols <- setdiff(names(x), c("time", "state", measure_cols))
+  weight_cols <- intersect(c("score_weight", "fwb_weight"), names(x))
+  group_cols <- setdiff(
+    names(x),
+    c("time", "state", measure_cols, weight_cols)
+  )
+  weight_metadata <- if (length(weight_cols) > 0L) {
+    unique(x[, c(group_cols, weight_cols), drop = FALSE])
+  } else {
+    NULL
+  }
 
   agg_formula <- stats::as.formula(
     paste(value_col, "~", paste(c(group_cols, "time"), collapse = " + "))
@@ -53,6 +62,9 @@ time_in_state_tidy <- function(x, target_states, real_time = FALSE) {
       na.rm = TRUE
     )
     names(out)[names(out) == value_col] <- "total_time"
+    if (!is.null(weight_metadata)) {
+      out <- left_join_preserve_order(out, weight_metadata, by = group_cols)
+    }
     return(out)
   }
 
@@ -67,7 +79,48 @@ time_in_state_tidy <- function(x, target_states, real_time = FALSE) {
     meta$total_time <- trapezoid_auc(group$time, group[[value_col]])
     meta
   })
-  bind_rows_fill(pieces)
+  out <- bind_rows_fill(pieces)
+  if (!is.null(weight_metadata)) {
+    out <- left_join_preserve_order(out, weight_metadata, by = group_cols)
+  }
+  out
+}
+
+time_in_state_tidy_inference <- function(x, target_states, real_time) {
+  result <- time_in_state_tidy(x, target_states, real_time = real_time)
+  draws <- attr(x, "draws")
+  if (is.null(draws) || !is.data.frame(draws) || !"draw_id" %in% names(draws)) {
+    return(result)
+  }
+
+  draw_result <- time_in_state_tidy(
+    draws,
+    target_states,
+    real_time = real_time
+  )
+  weight_cols <- intersect(
+    c("score_weight", "fwb_weight"),
+    names(draw_result)
+  )
+  group_cols <- setdiff(
+    names(draw_result),
+    c("draw_id", "total_time", weight_cols)
+  )
+  draws_for_ci <- draw_result
+  draws_for_ci$estimate <- draws_for_ci$total_time
+  point_estimates <- result
+  point_estimates$estimate <- point_estimates$total_time
+  ci <- compute_ci_from_draws(
+    draws_df = draws_for_ci,
+    group_cols = group_cols,
+    conf_level = attr(x, "conf_level") %||% 0.95,
+    conf_type = attr(x, "conf_type") %||% "perc",
+    point_estimates = point_estimates
+  )
+
+  result <- left_join_preserve_order(result, ci, by = group_cols)
+  attr(result, "draws") <- draw_result
+  result
 }
 
 time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
@@ -141,12 +194,16 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 #'
 #' Calculates the expected total time spent in specified target state(s).
 #' By default this sums state occupancy probabilities over visit-scale unit
-#' steps. When `time_map` or `origin_time` is supplied, it maps/interpolates to
+#' steps. When `time_map` is supplied, it maps/interpolates to
 #' real time and uses trapezoidal AUC. Already interpolated SOP output from
 #' [interpolate_sops()] is integrated on its current real-time grid.
 #' It automatically adapts to the input format:
 #' \itemize{
 #'   \item **Patient-Level:** If input is an array from \code{soprob_markov}, it returns time-in-state for each patient.
+#'   \item **Tidy SOP:** If input is a `markov_sops` or `markov_avg_sops`
+#'     object, it returns grouped total time. Stored simulation, bootstrap, or
+#'     posterior draws are reduced identically and used to recompute confidence
+#'     intervals and standard errors.
 #'   \item **Legacy Wide Bootstrap-Level:** If input is a data frame with
 #'     `boot_id`, `time`, `tx`, and `state_*` columns, it returns mean
 #'     time-in-state per treatment group and the difference for each bootstrap
@@ -156,6 +213,8 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 #' @param x Input object.
 #'   \itemize{
 #'     \item **Array:** `[Patients x Time x States]` (Frequentist) or `[Draws x Patients x Time x States]` (Bayes).
+#'     \item **Tidy SOP:** A `markov_sops`, `markov_avg_sops`, or
+#'       `markov_interpolated_sops` object.
 #'     \item **Data Frame:** Legacy wide bootstrap SOP data containing columns
 #'       `boot_id`, `time`, `tx`, and `state_*`.
 #'   }
@@ -165,20 +224,24 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 #' @param time_map Optional named numeric vector or data frame mapping visit
 #'   labels to real elapsed times. Supplying this switches tidy SOP and array
 #'   inputs to trapezoidal real-time AUC.
-#' @param origin_time Optional real time for an empirical baseline anchor. For
-#'   tidy outputs from [sops()] or [avg_sops()], this is passed to
-#'   [interpolate_sops()].
+#' @param baseline_time Real time of the observed baseline state for tidy SOP
+#'   outputs. The default `0` supplies a fixed interpolation anchor to
+#'   [interpolate_sops()]. Set to `NULL` to disable baseline anchoring.
 #' @param target_times Optional numeric real-time grid for tidy SOP outputs when
 #'   `time_map` is supplied. This controls the interpolation grid used for AUC,
-#'   for example `target_times = 1:28` with `origin_time = 0` uses day 0 as an anchor
-#'   but starts the AUC at day 1.
-#' @param origin Origin handling for tidy SOP outputs when `origin_time` is
-#'   supplied. See [interpolate_sops()].
+#'   for example `target_times = 1:28` with `baseline_time = 0` uses day 0 as an
+#'   anchor but starts the AUC at day 1. If `NULL`, integration uses only the
+#'   mapped follow-up nodes and excludes the baseline interval.
 #'
 #' @return
 #' \itemize{
 #'   \item **Input = Array (Frequentist):** A named numeric vector of length \code{n_patients}.
 #'   \item **Input = Array (Bayesian):** A matrix of dimension \code{[n_draws x n_patients]}.
+#'   \item **Input = Tidy SOP:** A data frame with `total_time` and grouping
+#'     columns. When stored draws are available, draw-based `conf.low`,
+#'     `conf.high`, and `std.error` columns are recomputed and the reduced draws
+#'     are retained in a `draws` attribute. Any draw-specific baseline anchors
+#'     have already been propagated by [interpolate_sops()].
 #'   \item **Input = Bootstrap DF:** A tibble with columns:
 #'     \itemize{
 #'       \item `boot_id`: Bootstrap iteration
@@ -199,7 +262,7 @@ time_in_state_bootstrap_df <- function(sops, target_states, real_time = FALSE) {
 #'   avg,
 #'   target_states = 1,
 #'   time_map = c("1" = 3, "2" = 7, "3" = 14, "4" = 28),
-#'   origin_time = 0,
+#'   baseline_time = 0,
 #'   target_times = 1:28
 #' )
 #'
@@ -221,19 +284,18 @@ time_in_state <- function(
   x,
   target_states = 1,
   time_map = NULL,
-  origin_time = NULL,
-  target_times = NULL,
-  origin = c("empirical_baseline", "none")
+  baseline_time = 0,
+  target_times = NULL
 ) {
   sops <- x
-  origin <- match.arg(origin)
-  use_real_time <- !is.null(time_map) || !is.null(origin_time)
+  baseline_time_supplied <- !missing(baseline_time)
+  use_real_time <- !is.null(time_map)
 
   if (inherits(sops, "markov_interpolated_sops")) {
-    if (!is.null(time_map) || !is.null(origin_time)) {
+    if (!is.null(time_map) || baseline_time_supplied) {
       stop(
         "`markov_interpolated_sops` is already on the real-time scale; ",
-        "omit `time_map` and `origin_time`."
+        "omit `time_map` and `baseline_time`."
       )
     }
     if (!is.null(target_times)) {
@@ -251,7 +313,19 @@ time_in_state <- function(
       }
       sops <- sops[sops$time %in% target_times, , drop = FALSE]
     }
-    return(time_in_state_tidy(sops, target_states, real_time = TRUE))
+    return(time_in_state_tidy_inference(
+      sops,
+      target_states,
+      real_time = TRUE
+    ))
+  }
+
+  if (
+    baseline_time_supplied &&
+      !is.null(baseline_time) &&
+      is.null(time_map)
+  ) {
+    stop("`baseline_time` requires `time_map` for real-time interpolation.")
   }
 
   if (inherits(sops, c("markov_sops", "markov_avg_sops"))) {
@@ -264,22 +338,42 @@ time_in_state <- function(
       if (is.null(time_map)) {
         stop("`time_map` must be supplied for real-time AUC.")
       }
+      if (is.null(target_times)) {
+        standardized_map <- standardize_time_map(time_map)
+        target_times <- sort(unique(map_sop_time_values(
+          sops$time,
+          standardized_map
+        )))
+      }
       sops <- interpolate_sops(
         sops,
         time_map = time_map,
         target_times = target_times,
-        origin_time = origin_time,
-        origin = origin
+        baseline_time = baseline_time
       )
-      return(time_in_state_tidy(sops, target_states, real_time = TRUE))
+      return(time_in_state_tidy_inference(
+        sops,
+        target_states,
+        real_time = TRUE
+      ))
     }
-    return(time_in_state_tidy(sops, target_states, real_time = FALSE))
+    return(time_in_state_tidy_inference(
+      sops,
+      target_states,
+      real_time = FALSE
+    ))
   }
 
   # =========================================================================
   # BRANCH 1: Bootstrap Data Frame Input
   # =========================================================================
   if (inherits(sops, "data.frame")) {
+    if (baseline_time_supplied && !is.null(baseline_time)) {
+      stop(
+        "Empirical `baseline_time` anchoring is only supported for tidy SOP ",
+        "outputs."
+      )
+    }
     if (!is.null(target_times)) {
       stop("`target_times` is only supported for tidy SOP outputs.")
     }
@@ -351,9 +445,10 @@ time_in_state <- function(
     if (is.null(time_map)) {
       stop("`time_map` must be supplied for real-time AUC.")
     }
-    if (!is.null(origin_time) && origin == "empirical_baseline") {
+    if (baseline_time_supplied && !is.null(baseline_time)) {
       stop(
-        "Empirical `origin_time` anchoring is only supported for tidy SOP outputs."
+        "Empirical `baseline_time` anchoring is only supported for tidy SOP ",
+        "outputs."
       )
     }
     time_names <- dnames[[state_dim - 1L]]

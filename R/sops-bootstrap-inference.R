@@ -100,6 +100,7 @@ inferences_bootstrap <- function(
 
   # --- 4. Define Analysis Function ---
   analysis_fn <- function(boot_data, fwb_weights = NULL) {
+    baseline_anchor <- NULL
     if (engine == "standard") {
       # A patient sampled more than once represents distinct bootstrap
       # patients. Refit wrappers must therefore cluster on the unique
@@ -174,6 +175,13 @@ inferences_bootstrap <- function(
         )
       }
 
+      baseline_anchor <- empirical_baseline_anchor_from_data(
+        x = object,
+        baseline = baseline_boot,
+        baseline_time = 0,
+        weights = baseline_weights
+      )
+
       # Create counterfactual datasets for each variable value
       newdata_cf <- create_counterfactual_data(baseline_boot, grid, variables)
     }
@@ -229,6 +237,7 @@ inferences_bootstrap <- function(
           by = by
         )
       }
+      attr(boot_avg, "baseline_anchor") <- baseline_anchor
       return(boot_avg)
     }
 
@@ -273,7 +282,9 @@ inferences_bootstrap <- function(
       result_list[[cf_i]] <- df
     }
 
-    bind_rows_fill(result_list)
+    result <- bind_rows_fill(result_list)
+    attr(result, "baseline_anchor") <- baseline_anchor
+    result
   }
 
   # --- 5. Apply to Bootstrap Samples ---
@@ -293,6 +304,7 @@ inferences_bootstrap <- function(
       packages = c("rms", "VGAM", "Hmisc", "stats"),
       globals = c(
         "model",
+        "object",
         "prediction_data",
         "newdata_supplied",
         "variables",
@@ -331,6 +343,7 @@ inferences_bootstrap <- function(
       packages = c("rms", "VGAM", "Hmisc", "stats"),
       globals = c(
         "model",
+        "object",
         "prediction_data",
         "newdata_supplied",
         "variables",
@@ -361,6 +374,10 @@ inferences_bootstrap <- function(
   if (length(boot_results) == 0) {
     stop("All bootstrap iterations failed.")
   }
+  baseline_anchor_draws <- combine_baseline_anchor_draws(
+    lapply(boot_results, attr, "baseline_anchor"),
+    seq_along(boot_results)
+  )
 
   # Add draw_id and combine
   for (i in seq_along(boot_results)) {
@@ -414,6 +431,9 @@ inferences_bootstrap <- function(
   # Store full bootstrap draws if requested
   if (return_draws) {
     attr(final_result, "draws") <- boot_df
+    if (!is.null(baseline_anchor_draws)) {
+      attr(final_result, "baseline_anchor_draws") <- baseline_anchor_draws
+    }
   }
 
   final_result
@@ -562,7 +582,7 @@ inferences_bootstrap_sops_fwb <- function(
       )
     }
 
-    array_to_df_individual(
+    result <- array_to_df_individual(
       sops_array,
       times,
       factor(boot_ylevels),
@@ -571,6 +591,15 @@ inferences_bootstrap_sops_fwb <- function(
       weights = prediction_weights,
       weight_col = draw_weight_col
     )
+    if (!newdata_supplied && !is.null(by)) {
+      attr(result, "baseline_anchor") <- empirical_baseline_anchor_from_data(
+        x = object,
+        baseline = prediction_data,
+        baseline_time = 0,
+        weights = prediction_weights
+      )
+    }
+    result
   }
 
   fwb_samples <- generate_fwb_bootstrap_weights(
@@ -588,6 +617,7 @@ inferences_bootstrap_sops_fwb <- function(
     packages = c("rms", "VGAM", "Hmisc", "stats"),
     globals = c(
       "model",
+      "object",
       "prediction_data",
       "refit_data",
       "times",
@@ -612,6 +642,10 @@ inferences_bootstrap_sops_fwb <- function(
   if (length(boot_results) == 0) {
     stop("All bootstrap iterations failed.")
   }
+  baseline_anchor_draws <- combine_baseline_anchor_draws(
+    lapply(boot_results, attr, "baseline_anchor"),
+    seq_along(boot_results)
+  )
 
   for (i in seq_along(boot_results)) {
     boot_results[[i]]$draw_id <- i
@@ -661,6 +695,9 @@ inferences_bootstrap_sops_fwb <- function(
 
   if (return_draws) {
     attr(final_result, "draws") <- boot_df
+    if (!is.null(baseline_anchor_draws)) {
+      attr(final_result, "baseline_anchor_draws") <- baseline_anchor_draws
+    }
   }
 
   final_result

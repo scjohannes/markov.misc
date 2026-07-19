@@ -12,9 +12,7 @@ blrm_markov(
   ...,
   id_var = NULL,
   time_var = "time",
-  start_time = NULL,
-  origin_time = 0,
-  time_map = NULL,
+  first_followup_time = NULL,
   x = TRUE,
   y = TRUE
 )
@@ -38,19 +36,11 @@ prediction.}
 \item{time_var}{Character scalar naming the modeled time column used to
 identify the designated starting-profile row.}
 
-\item{start_time}{Optional starting-profile visit. \code{NULL} uses the first
-scheduled numeric time or the first factor level across the pre-NA fitting
-data. This is a cohort-wide visit, never each patient's first retained
-likelihood row.}
-
-\item{origin_time}{Origin assigned to the previous-state value carried by the
-starting profile. The default is 0. This metadata may differ from
-\code{start_time}, for example when the row predicting day 1 carries a day-0
-state in \code{yprev}.}
-
-\item{time_map}{Optional visit-to-real-time mapping retained with the fitted
-model. For factor time with \code{start_time = NULL}, the visit with the smallest
-mapped real time is designated when the mapping is complete.}
+\item{first_followup_time}{First scheduled post-baseline outcome time used to
+select the starting-profile row. For numeric time, \code{NULL} uses 1. Numeric
+schedules may not contain values below 1, and an explicit value must be the
+earliest observed time. Factor and character time require an explicit
+matching value.}
 
 \item{x}{set to \code{FALSE} to not store the design matrix in the fit.  \code{x=TRUE} is needed if running \code{blrmStats} for example.}
 

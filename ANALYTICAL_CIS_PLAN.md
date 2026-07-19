@@ -206,7 +206,7 @@ For every concern:
 | ACI-06 | Medium | Open | Unnamed penalized-ORM covariance relabeling |
 | ACI-07 | Medium | Open | VGLM raw-to-effective constraint mapping |
 | ACI-08 | Medium | Open | Structural boundary classification |
-| ACI-09 | Medium | Active | First-follow-up profiles and real-time integration conventions |
+| ACI-09 | Medium | Resolved | First-follow-up profiles and real-time integration conventions |
 | ACI-10 | Medium | Open | Memory accounting versus actual process memory |
 | ACI-11 | Medium | Open | Grouped native execution row-layout contract |
 | ACI-12 | Medium | Open | Superpopulation `get_jacobian()` semantics |
@@ -242,11 +242,11 @@ For every concern:
   without the required origin profile is an error; a profile-only patient is
   excluded. Remove zero-score insertion and sensitivity-ratio rescaling.
 - **Resolution log:** Implemented the user-approved contract:
-  every fitted patient must have a complete baseline/origin profile containing
-  the prediction variables and day-0 previous state, but not the first
-  transition response. The origin can be configured (including day 1 or another
-  value) and defaults to numeric time 0. Later likelihood rows do not substitute
-  for the designated origin row. Automatic inference uses model-stored profile
+  every fitted patient must have a complete first-follow-up profile containing
+  the prediction variables and previous state, but not the first transition
+  response. Numeric `first_followup_time` defaults to 1 and factor/character
+  time requires an explicit value. Later likelihood rows do not substitute for
+  the designated first-follow-up row. Automatic inference uses model-stored profile
   data; fixed user `newdata` remains empirical-only; `refit_data` remains solely
   refitting infrastructure. The implementation removes profile-only zero scores
   and sensitivity-ratio scaling, rejects penalized or weighted ORM
@@ -392,7 +392,7 @@ For every concern:
 
 ### ACI-09: First-follow-up profiles and real-time integration conventions
 
-- **Status:** Active on 2026-07-19
+- **Status:** Resolved on 2026-07-19
 - **Priority:** Medium
 - **Current decision:** Separate the first-follow-up profile-selection time from
   the observed baseline-state time and from the requested integration grid.
@@ -406,10 +406,12 @@ For every concern:
   `vglm_markov()`. For numeric time, `NULL` resolves to 1; time 1 must exist and
   values below 1 are rejected. An explicit numeric value must exist and be the
   earliest scheduled follow-up value. Factor or character time requires an
-  explicit matching level/value. Remove `origin_time` and `time_map` from the
-  fitting wrappers. Backward-compatible aliases are not required, and legacy
-  names captured by `...` must receive an informative error rather than leak to
-  a backend fitter.
+  explicit matching level/value. These checks run when `id_var` enables
+  automatic patient profiles; wrappers without `id_var` retain refit data but
+  do not require a time column or store starting-profile metadata. Remove
+  `origin_time` and `time_map` from the fitting wrappers. Backward-compatible
+  aliases are not required, and legacy names captured by `...` must receive an
+  informative error rather than leak to a backend fitter.
 - **Starting-profile contract:** `first_followup_time` selects exactly one
   pre-response-omission row per fitted patient. ID, `yprev`, modeled predictors,
   and time metadata must be complete; the transition response may be missing.
@@ -442,6 +444,15 @@ For every concern:
   bounded by `baseline_time` and the last mapped SOP, normalize probability
   mass as currently documented, and use trapezoidal integration on the sorted
   unique `target_times`.
+- **Draw-specific baseline contract:** Coefficient-only simulation and posterior
+  draws condition on the observed baseline profiles and therefore reuse the
+  point-estimate anchor. Empirical score-bootstrap, fractional weighted
+  bootstrap, and refit-bootstrap draws instead use the same patient weights or
+  resampled cohort as each draw. Individual draw rows propagate their
+  `score_weight` or `fwb_weight` to the baseline node as metadata, never as a
+  trajectory identity key. Averaged and grouped draws retain only compact
+  per-draw baseline-state distributions rather than full patient-by-draw weight
+  matrices.
 - **Implementation tranches:**
   1. Refactor wrapper formals, first-follow-up validation, stored attribute
      names, robust-wrapper metadata copying, and automatic profile resolution in
@@ -477,7 +488,23 @@ For every concern:
   `target_times` are explicit; test the intentional no-`target_times` default
   change separately. Then run `air format .`, focused tests, the full suite,
   affected vignette renders, `devtools::document()`, and `devtools::check()`.
-- **Resolution log:** Pending.
+- **Resolution log:** Implemented the six tranches. Wrapper metadata now uses
+  `markov_starting_profile_*` names; automatic `sops()`, `avg_sops()`, and
+  `avg_comparisons()` share the validated profiles. Downstream point, draw,
+  bootstrap, posterior, and delta paths use `baseline_time`; target grids control
+  AUC bounds, and unused `time_map` entries do not affect baseline ordering or
+  analytical weights. Focused wrapper, factor-time, comparison, delta, and
+  inference suites passed. The complete test suite passed with one expected
+  installed-package skip. The analytical-CI, factor-time ORM, and many-level
+  previous-state spline vignettes rendered successfully. `devtools::check()`
+  completed with 0 errors, 0 warnings, and one environment note because current
+  network time could not be verified. Final review then corrected draw-level
+  baseline handling: individual weighted draws now retain their weights through
+  pre-follow-up interpolation, while averaged/grouped score-bootstrap, FWB, and
+  refit-bootstrap draws store baseline-state anchors computed from the matching
+  draw weights or resampled cohort. Direct `time_in_state()` summaries now
+  integrate those stored draws and recompute draw-based interval and standard
+  error columns on the requested AUC grid.
 
 ### ACI-10: Memory accounting versus process memory
 
@@ -732,3 +759,13 @@ issues.
   profiles; `baseline_time`, `time_map`, and `target_times` will define observed
   baseline anchoring, real-time interpolation, and the integration grid without
   a separate integration-start argument.
+- Resolved ACI-09 after implementing the wrapper/profile rename, observed
+  baseline anchoring, target-grid AUC defaults, comparison/delta propagation,
+  documentation, and regression coverage. Focused and complete tests, three
+  affected vignette renders, roxygen regeneration, and the package check passed.
+- Corrected ACI-09 during final review so empirical resampling draws carry
+  draw-specific baseline anchors. Individual score/FWB weights remain metadata
+  rather than interpolation keys; averaged and grouped paths retain compact
+  baseline-state distributions computed from each draw's weights or resampled
+  cohort. Direct time-in-state summaries reduce the corrected draws and report
+  the resulting AUC uncertainty.

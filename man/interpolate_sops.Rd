@@ -8,8 +8,7 @@ interpolate_sops(
   x,
   time_map,
   target_times = NULL,
-  origin_time = NULL,
-  origin = c("empirical_baseline", "none"),
+  baseline_time = 0,
   normalize = TRUE
 )
 }
@@ -20,13 +19,12 @@ interpolate_sops(
 a data frame with visit and real-time columns. Data frames may use columns
 \code{visit} and \code{real_time}, \code{visit} and \code{time}, or their first two columns.}
 
-\item{target_times}{Optional numeric real-time grid. If \code{NULL}, uses mapped visit
-times, plus \code{origin_time} when an empirical origin anchor is requested.}
+\item{target_times}{Optional numeric real-time grid. If \code{NULL}, uses the
+mapped visit times plus \code{baseline_time} when the baseline anchor is enabled.}
 
-\item{origin_time}{Optional real time for an empirical baseline anchor.}
-
-\item{origin}{Origin handling. \code{"empirical_baseline"} adds an anchor from the
-stored \code{newdata_orig} and previous-state variable; \code{"none"} does not.}
+\item{baseline_time}{Real time of the observed baseline state. The default
+\code{0} adds a fixed anchor from the stored previous-state values. Set to \code{NULL}
+to disable baseline anchoring.}
 
 \item{normalize}{Logical. If \code{TRUE}, normalize interpolated estimates so
 state probabilities sum to one within each time and group.}
@@ -56,7 +54,9 @@ shared across treatment counterfactual groups.
 
 If \code{x} contains stored simulation, bootstrap, or posterior draws, the draws
 are interpolated too. Interval columns are then recomputed from the
-interpolated draws, with the empirical origin anchor treated as fixed.
+interpolated draws. Coefficient-only draws treat the empirical baseline anchor
+as fixed; empirical score-bootstrap, FWB, and refit-bootstrap draws use the
+corresponding draw-specific patient weights or resampled cohort.
 If interval columns are present but stored draws are unavailable,
 \code{interpolate_sops()} warns and falls back to interpolating interval endpoints.
 Each numeric series is interpolated only within its own finite source-time
@@ -76,7 +76,7 @@ interpolate_sops(
   avg,
   time_map = c("1" = 3, "2" = 7, "3" = 14, "4" = 28),
   target_times = 0:28,
-  origin_time = 0
+  baseline_time = 0
 )
 }
 

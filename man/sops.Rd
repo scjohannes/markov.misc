@@ -124,10 +124,10 @@ data frame. The output contains one row per patient-time-state combination
 (or stratum-time-state if \code{by} is used).
 
 Automatic prediction from a wrapper-fitted model uses the cohort-wide
-designated \code{start_time} retained before response-driven model-frame omission.
-The transition response is not required on that row, but ID, modeled
-predictors, time information, and previous state must be complete. Each
-included patient must contribute at least one usable fitted transition
+designated \code{first_followup_time} retained before response-driven model-frame
+omission. The transition response is not required on that row, but ID,
+modeled predictors, time information, and previous state must be complete.
+Each included patient must contribute at least one usable fitted transition
 somewhere; later rows are not substituted for a missing starting profile.
 
 For \code{rmsb::blrm()} models, SOPs are computed on sampled posterior draws and

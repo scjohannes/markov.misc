@@ -27,11 +27,12 @@
 #' @param time_map Optional named numeric vector or data frame mapping visit
 #'   labels to real elapsed times. Used by `"time_in_state"` and
 #'   `"time_benefit"`.
-#' @param origin_time Optional real time for an empirical baseline anchor. See
+#' @param baseline_time Real time of the observed baseline state used as an
+#'   interpolation anchor, or `NULL` to disable baseline anchoring. See
 #'   [interpolate_sops()].
-#' @param target_times Optional numeric real-time grid when `time_map` is supplied.
-#' @param origin Origin handling when `origin_time` is supplied. See
-#'   [interpolate_sops()].
+#' @param target_times Optional numeric real-time grid when `time_map` is
+#'   supplied. When omitted, real-time comparisons use the mapped modeled
+#'   follow-up times and exclude the baseline interval.
 #' @param time_unit Optional label stored in output.
 #' @param refit_data Optional full longitudinal data used only by refit-bootstrap
 #'   inference. It is not used for point estimates. See [avg_sops()].
@@ -97,9 +98,8 @@ avg_comparisons <- function(
   y_levels = NULL,
   absorb = NULL,
   time_map = NULL,
-  origin_time = NULL,
+  baseline_time = 0,
   target_times = NULL,
-  origin = c("empirical_baseline", "none"),
   time_unit = NULL,
   refit_data = NULL,
   id_var = NULL,
@@ -116,9 +116,18 @@ avg_comparisons <- function(
   return_draws = FALSE,
   ...
 ) {
+  extra_args <- list(...)
+  legacy_args <- intersect(names(extra_args), c("origin_time", "origin"))
+  if (length(legacy_args) > 0L) {
+    stop(
+      "`",
+      legacy_args[1L],
+      "` is no longer supported; use `baseline_time` instead.",
+      call. = FALSE
+    )
+  }
   estimand <- match.arg(estimand)
   comparison <- match.arg(comparison)
-  origin <- match.arg(origin)
   posterior_summary <- match.arg(posterior_summary)
 
   if (missing(times) || is.null(times)) {
@@ -165,9 +174,8 @@ avg_comparisons <- function(
       return_draws = return_draws,
       comparison = comparison,
       time_map = time_map,
-      origin_time = origin_time,
+      baseline_time = baseline_time,
       target_times = target_times,
-      origin = origin,
       time_unit = time_unit,
       ...
     )
@@ -195,7 +203,7 @@ avg_comparisons <- function(
       posterior_summary = posterior_summary,
       conf_level = conf_level,
       return_draws = inherits(model, "blrm") || isTRUE(return_draws),
-      extra_args = list(...)
+      extra_args = extra_args
     )
     state_sets <- normalize_comparison_state_sets(
       state_sets,
@@ -207,9 +215,8 @@ avg_comparisons <- function(
       state_sets = state_sets,
       comparison = comparison,
       time_map = time_map,
-      origin_time = origin_time,
+      baseline_time = baseline_time,
       target_times = target_times,
-      origin = origin,
       time_unit = time_unit,
       return_draws = return_draws
     )
@@ -229,11 +236,10 @@ avg_comparisons <- function(
     posterior_summary = posterior_summary,
     conf_level = conf_level,
     time_map = time_map,
-    origin_time = origin_time,
+    baseline_time = baseline_time,
     target_times = target_times,
-    origin = origin,
     time_unit = time_unit,
-    extra_args = list(...)
+    extra_args = extra_args
   )
 
   result

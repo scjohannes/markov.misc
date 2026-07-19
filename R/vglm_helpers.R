@@ -35,27 +35,23 @@
 #'   column in `data`. When supplied, [robcov_vglm()] is applied automatically.
 #' @param time_var Character scalar naming the modeled time column used to
 #'   identify the designated starting-profile row.
-#' @param start_time Optional starting-profile visit. `NULL` uses the first
-#'   scheduled numeric time or the first factor level across the pre-NA fitting
-#'   data. This is a cohort-wide visit, never each patient's first retained
-#'   likelihood row.
-#' @param origin_time Origin assigned to the previous-state value carried by the
-#'   starting profile. The default is 0.
-#' @param time_map Optional visit-to-real-time mapping retained with the fit.
-#'   For factor time with `start_time = NULL`, the visit with the smallest
-#'   mapped real time is designated when the mapping is complete.
+#' @param first_followup_time First scheduled post-baseline outcome time used to
+#'   select the starting-profile row. For numeric time, `NULL` uses 1. Numeric
+#'   schedules may not contain values below 1, and an explicit value must be the
+#'   earliest observed time. Factor and character time require an explicit
+#'   matching value.
 #' @param constraints Optional VGAM constraints list. For inline registered RMS
 #'   basis terms, names should match the column-level constraint names in a full
 #'   proportional odds fit returned by `vglm_markov()`.
 #'
 #' @details Starting profiles are retained before response-driven model-frame
 #'   omission. Every fitted patient must have exactly one complete profile at
-#'   the cohort-wide `start_time`, including ID, model predictors, time, and the
-#'   previous state; the transition response on that row may be missing. A
-#'   patient is included only when at least one usable likelihood transition is
-#'   fitted somewhere. Patients with no fitted transition are excluded, and a
-#'   fitted patient without a complete designated profile is an error. Later
-#'   likelihood rows are not substituted for that profile.
+#'   the cohort-wide `first_followup_time`, including ID, model predictors,
+#'   time, and the previous state; the transition response on that row may be
+#'   missing. A patient is included only when at least one usable likelihood
+#'   transition is fitted somewhere. Patients with no fitted transition are
+#'   excluded, and a fitted patient without a complete designated profile is an
+#'   error. Later likelihood rows are not substituted for that profile.
 #'
 #' @return A fitted S4 `vglm` object with internal Markov marker attributes, or
 #'   a `robcov_vglm` object when `id_var` is supplied.
@@ -135,11 +131,11 @@ vglm_markov <- function(
   qr.arg = TRUE,
   smart = TRUE,
   time_var = "time",
-  start_time = NULL,
-  origin_time = 0,
-  time_map = NULL,
+  first_followup_time = NULL,
   ...
 ) {
+  markov_call <- match.call(expand.dots = FALSE)
+  markov_reject_legacy_wrapper_args(markov_call$..., "vglm_markov()")
   dataname <- as.character(substitute(data))
   function.name <- "vglm"
   ocall <- match.call()
@@ -424,17 +420,15 @@ vglm_markov <- function(
     fit_data = fit_data,
     id_var = id_var,
     time_var = time_var,
-    start_time = start_time,
-    origin_time = origin_time,
-    time_map = time_map
+    first_followup_time = first_followup_time
   )
   answer <- markov_attach_model_data(
     answer,
     data = fit_data,
     id_var = id_var,
     refit_data = stored$refit_data,
-    origin_data = stored$origin_data,
-    origin_metadata = stored$origin_metadata
+    starting_profile_data = stored$starting_profile_data,
+    starting_profile_metadata = stored$starting_profile_metadata
   )
 
   if (!is.null(id_var)) {
@@ -444,8 +438,8 @@ vglm_markov <- function(
       data = fit_data,
       id_var = id_var,
       refit_data = stored$refit_data,
-      origin_data = stored$origin_data,
-      origin_metadata = stored$origin_metadata
+      starting_profile_data = stored$starting_profile_data,
+      starting_profile_metadata = stored$starting_profile_metadata
     )
     return(robust)
   }

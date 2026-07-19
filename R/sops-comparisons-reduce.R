@@ -6,24 +6,22 @@ avg_comparison_from_avg_sops <- function(
   state_sets,
   comparison,
   time_map,
-  origin_time,
+  baseline_time,
   target_times,
-  origin,
   time_unit,
   return_draws
 ) {
-  if (
-    estimand == "time_in_state" && (!is.null(time_map) || !is.null(origin_time))
-  ) {
-    if (is.null(time_map)) {
-      stop("`time_map` must be supplied for real-time AUC.")
-    }
+  if (estimand == "time_in_state" && !is.null(time_map)) {
+    target_times <- comparison_real_time_target_times(
+      x,
+      time_map,
+      target_times
+    )
     x <- interpolate_sops(
       x,
       time_map = time_map,
       target_times = target_times,
-      origin_time = origin_time,
-      origin = origin
+      baseline_time = baseline_time
     )
   }
 
@@ -86,6 +84,14 @@ avg_comparison_from_avg_sops <- function(
   }
 
   point
+}
+
+comparison_real_time_target_times <- function(x, time_map, target_times) {
+  if (!is.null(target_times)) {
+    return(target_times)
+  }
+  time_map <- standardize_time_map(time_map)
+  sort(unique(map_sop_time_values(x$time, time_map)))
 }
 
 reduce_avg_sop_metric_df <- function(
@@ -366,9 +372,8 @@ avg_comparison_time_benefit_point <- function(
   return_draws,
   comparison,
   time_map,
-  origin_time,
+  baseline_time,
   target_times,
-  origin,
   time_unit,
   ...
 ) {
@@ -394,16 +399,17 @@ avg_comparison_time_benefit_point <- function(
     ...
   )
 
-  if (!is.null(time_map) || !is.null(origin_time)) {
-    if (is.null(time_map)) {
-      stop("`time_map` must be supplied for real-time AUC.")
-    }
+  if (!is.null(time_map)) {
+    target_times <- comparison_real_time_target_times(
+      ind,
+      time_map,
+      target_times
+    )
     ind <- interpolate_sops(
       ind,
       time_map = time_map,
       target_times = target_times,
-      origin_time = origin_time,
-      origin = origin
+      baseline_time = baseline_time
     )
   }
 

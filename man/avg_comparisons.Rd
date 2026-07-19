@@ -16,9 +16,8 @@ avg_comparisons(
   y_levels = NULL,
   absorb = NULL,
   time_map = NULL,
-  origin_time = NULL,
+  baseline_time = 0,
   target_times = NULL,
-  origin = c("empirical_baseline", "none"),
   time_unit = NULL,
   refit_data = NULL,
   id_var = NULL,
@@ -69,13 +68,13 @@ standardization.}
 labels to real elapsed times. Used by \code{"time_in_state"} and
 \code{"time_benefit"}.}
 
-\item{origin_time}{Optional real time for an empirical baseline anchor. See
+\item{baseline_time}{Real time of the observed baseline state used as an
+interpolation anchor, or \code{NULL} to disable baseline anchoring. See
 \code{\link[=interpolate_sops]{interpolate_sops()}}.}
 
-\item{target_times}{Optional numeric real-time grid when \code{time_map} is supplied.}
-
-\item{origin}{Origin handling when \code{origin_time} is supplied. See
-\code{\link[=interpolate_sops]{interpolate_sops()}}.}
+\item{target_times}{Optional numeric real-time grid when \code{time_map} is
+supplied. When omitted, real-time comparisons use the mapped modeled
+follow-up times and exclude the baseline interval.}
 
 \item{time_unit}{Optional label stored in output.}
 

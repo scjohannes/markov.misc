@@ -128,36 +128,32 @@ delta_real_time_visit_weights <- function(avg, args) {
   time_map <- standardize_time_map(args$time_map)
   source_labels <- unique(as.character(avg$time))
   source_real <- map_sop_time_values(source_labels, time_map)
-  origin <- args$origin %||% "empirical_baseline"
-  use_origin <- !is.null(args$origin_time) &&
-    identical(origin, "empirical_baseline")
+  baseline_time <- args$baseline_time
+  use_baseline <- !is.null(baseline_time)
 
-  if (!is.null(args$origin_time)) {
+  if (use_baseline) {
     if (
-      !is.numeric(args$origin_time) ||
-        length(args$origin_time) != 1L ||
-        is.na(args$origin_time) ||
-        !is.finite(args$origin_time)
+      !is.numeric(baseline_time) ||
+        length(baseline_time) != 1L ||
+        is.na(baseline_time) ||
+        !is.finite(baseline_time)
     ) {
-      stop("`origin_time` must be a single finite numeric value.")
+      stop("`baseline_time` must be a single finite numeric value or `NULL`.")
+    }
+    if (baseline_time >= min(source_real)) {
+      stop("`baseline_time` must be earlier than the earliest mapped SOP time.")
     }
   }
-  mapped_range <- range(time_map$real_time)
-  lower <- if (use_origin) args$origin_time else mapped_range[1L]
+  mapped_range <- range(source_real)
+  lower <- if (use_baseline) baseline_time else mapped_range[1L]
   upper <- mapped_range[2L]
-  if (lower > upper) {
-    stop("`origin_time` must not be greater than the largest mapped time.")
-  }
   target_times <- args$target_times
   if (is.null(target_times)) {
-    target_times <- sort(unique(c(
-      if (use_origin) args$origin_time else NULL,
-      source_real
-    )))
+    target_times <- sort(unique(source_real))
   }
   target_times <- validate_sop_xout(target_times, lower, upper)
 
-  augmented_times <- c(if (use_origin) args$origin_time else NULL, source_real)
+  augmented_times <- c(if (use_baseline) baseline_time else NULL, source_real)
   node_times <- sort(unique(augmented_times))
   node_index <- match(source_real, node_times)
   counts <- tabulate(
@@ -203,7 +199,7 @@ delta_comparison_operator <- function(object, avg, args, avg_args) {
   }
 
   real_time <- identical(args$estimand, "time_in_state") &&
-    (!is.null(args$time_map) || !is.null(args$origin_time))
+    !is.null(args$time_map)
   visit_weights <- if (real_time) {
     if (is.null(args$time_map)) {
       stop("`time_map` must be supplied for real-time AUC.")

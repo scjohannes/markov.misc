@@ -17,11 +17,89 @@ test_that("vglm_markov stores fitting data and returns robust wrapper with id_va
   expect_equal(nrow(attr(fit, "markov_data")), nrow(data))
   expect_equal(nrow(attr(fit, "markov_refit_data")), nrow(data))
   expect_equal(
-    nrow(attr(fit, "markov_origin_data")),
+    nrow(attr(fit, "markov_starting_profile_data")),
     length(unique(data$id))
   )
-  expect_equal(attr(fit, "markov_origin_metadata")$start_time, min(data$time))
-  expect_equal(attr(fit, "markov_origin_metadata")$origin_time, 0)
+  metadata <- attr(fit, "markov_starting_profile_metadata")
+  expect_equal(metadata$first_followup_time, 1)
+  expect_equal(
+    attr(fit$vglm_fit, "markov_starting_profile_metadata"),
+    metadata
+  )
+})
+
+test_that("Markov wrappers validate numeric first follow-up schedules", {
+  skip_if_not_installed("VGAM")
+  local_reproducible_output(width = 80)
+
+  data <- make_test_data(n_patients = 35, follow_up_time = 6, seed = 1016)
+  no_one <- data
+  no_one$time <- no_one$time + 1
+  expect_snapshot(
+    vglm_markov(
+      ordered(y) ~ time_lin + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = no_one,
+      id_var = "id"
+    ),
+    error = TRUE
+  )
+
+  below_one <- data
+  below_one$time[[1L]] <- 0
+  expect_snapshot(
+    vglm_markov(
+      ordered(y) ~ time_lin + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = below_one,
+      id_var = "id"
+    ),
+    error = TRUE
+  )
+
+  alternative <- data
+  alternative$time <- alternative$time + 1
+  fit <- vglm_markov(
+    ordered(y) ~ time_lin + tx + yprev,
+    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+    data = alternative,
+    id_var = "id",
+    first_followup_time = 2
+  )
+  expect_equal(
+    markov_model_starting_profile_metadata(fit)$first_followup_time,
+    2
+  )
+
+  expect_snapshot(
+    vglm_markov(
+      ordered(y) ~ time_lin + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id",
+      first_followup_time = 2
+    ),
+    error = TRUE
+  )
+})
+
+test_that("Markov wrappers reject legacy starting-profile arguments", {
+  skip_if_not_installed("VGAM")
+  local_reproducible_output(width = 80)
+
+  data <- make_test_data(n_patients = 35, follow_up_time = 6, seed = 1017)
+  expect_snapshot(
+    vglm_markov(
+      ordered(y) ~ time_lin + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id",
+      start_time = 1,
+      origin_time = 0,
+      time_map = 1:6
+    ),
+    error = TRUE
+  )
 })
 
 test_that("vglm_markov aligns stored fitting data after subset and NA drops", {
@@ -57,6 +135,26 @@ test_that("vglm_markov aligns stored fitting data after subset and NA drops", {
   )
 })
 
+test_that("vglm_markov without id_var does not require a profile schedule", {
+  skip_if_not_installed("VGAM")
+
+  data <- make_test_data(n_patients = 35, follow_up_time = 6, seed = 1018)
+  data$time <- NULL
+  expect_warning(
+    fit <- vglm_markov(
+      ordered(y) ~ time_lin + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data
+    ),
+    "`id_var` was not supplied"
+  )
+
+  expect_s4_class(fit, "vglm")
+  expect_equal(nrow(attr(fit, "markov_refit_data")), nrow(data))
+  expect_null(attr(fit, "markov_starting_profile_data"))
+  expect_null(attr(fit, "markov_starting_profile_metadata"))
+})
+
 test_that("orm_markov stores fitting data and applies rms robust covariance", {
   skip_if_not_installed("rms")
 
@@ -89,7 +187,7 @@ test_that("orm_markov stores fitting data and applies rms robust covariance", {
   expect_equal(nrow(attr(fit, "markov_data")), nrow(data))
   expect_equal(nrow(attr(fit, "markov_refit_data")), nrow(data))
   expect_equal(
-    nrow(attr(fit, "markov_origin_data")),
+    nrow(attr(fit, "markov_starting_profile_data")),
     length(unique(data$id))
   )
   expect_false(is.null(fit$orig.var))
@@ -190,7 +288,7 @@ test_that("missing first outcome preserves a complete starting profile", {
   )
 
   fitted_data <- attr(fit, "markov_data")
-  profiles <- markov_validate_origin_profiles(fit)
+  profiles <- markov_validate_starting_profiles(fit)
   expect_equal(
     any(fitted_data$id == 1 & fitted_data$time == min(data$time)),
     FALSE
@@ -198,15 +296,26 @@ test_that("missing first outcome preserves a complete starting profile", {
   expect_equal(1 %in% fitted_data$id, TRUE)
   expect_equal(profiles$time[profiles$id == 1], min(data$time))
   expect_equal(is.na(profiles$y[profiles$id == 1]), TRUE)
-  expect_no_error(
-    avg_sops(
-      fit,
-      variables = list(tx = c(0, 1)),
-      times = 1:2,
-      y_levels = 1:6,
-      absorb = 6
-    )
+  individual <- sops(fit, times = 1:2, y_levels = 1:6, absorb = 6)
+  average <- avg_sops(
+    fit,
+    variables = list(tx = c(0, 1)),
+    times = 1:2,
+    y_levels = 1:6,
+    absorb = 6
   )
+  comparison <- avg_comparisons(
+    fit,
+    variables = list(tx = c(0, 1)),
+    estimand = "sop",
+    state_sets = list(low = 1:2),
+    times = 1:2,
+    y_levels = 1:6,
+    absorb = 6
+  )
+  expect_equal(attr(individual, "newdata_orig")$id, profiles$id)
+  expect_equal(attr(average, "newdata_orig")$id, profiles$id)
+  expect_equal(attr(comparison, "newdata_orig")$id, profiles$id)
 })
 
 test_that("profile-only patients are excluded from the fitted cohort", {
@@ -220,7 +329,7 @@ test_that("profile-only patients are excluded from the fitted cohort", {
     data = data,
     id_var = "id"
   )
-  profiles <- markov_validate_origin_profiles(fit)
+  profiles <- markov_validate_starting_profiles(fit)
   fitted_ids <- unique(attr(fit, "markov_data")$id)
 
   expect_equal(1 %in% profiles$id, FALSE)
@@ -317,58 +426,71 @@ test_that("refit_data cannot change automatic standardization profiles", {
   expect_equal(attr(altered, "refit_data"), altered_refit)
 })
 
-test_that("factor-time starting visits honor level order and time_map", {
+test_that("factor and character time require explicit first follow-up values", {
   skip_if_not_installed("VGAM")
+  local_reproducible_output(width = 80)
 
   data <- make_test_data(n_patients = 35, follow_up_time = 6, seed = 1015)
   complete_ids <- as.integer(names(which(table(data$id) == 6L)))
   data <- data[data$id %in% complete_ids, , drop = FALSE]
   visits <- paste0("v", seq_len(6L))
   data$time <- factor(paste0("v", data$time), levels = visits)
-  fit_levels <- vglm_markov(
+  expect_snapshot(
+    vglm_markov(
+      ordered(y) ~ time + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id"
+    ),
+    error = TRUE
+  )
+
+  fit_factor <- vglm_markov(
     ordered(y) ~ time + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
     data = data,
-    id_var = "id"
+    id_var = "id",
+    first_followup_time = "v1"
   )
   expect_equal(
-    unique(as.character(markov_validate_origin_profiles(fit_levels)$time)),
+    unique(as.character(markov_validate_starting_profiles(fit_factor)$time)),
     "v1"
   )
 
-  mapping <- stats::setNames(c(3, 0, 7, 14, 21, 28), visits)
-  fit_map <- vglm_markov(
-    ordered(y) ~ time + tx + yprev,
+  data$visit <- as.character(data$time)
+  expect_snapshot(
+    vglm_markov(
+      ordered(y) ~ time_lin + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id",
+      time_var = "visit"
+    ),
+    error = TRUE
+  )
+  fit_character <- vglm_markov(
+    ordered(y) ~ time_lin + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
     data = data,
     id_var = "id",
-    time_map = mapping,
-    origin_time = -1
+    time_var = "visit",
+    first_followup_time = "v1"
   )
-  metadata <- markov_model_origin_metadata(fit_map)
   expect_equal(
-    unique(as.character(markov_validate_origin_profiles(fit_map)$time)),
-    "v2"
+    unique(markov_validate_starting_profiles(fit_character)$visit),
+    "v1"
   )
-  expect_equal(metadata$start_time, "v2")
-  expect_equal(metadata$origin_time, -1)
-  expect_equal(metadata$time_map, mapping)
 
-  fit_explicit <- vglm_markov(
-    ordered(y) ~ time + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data,
-    id_var = "id",
-    start_time = "v3",
-    origin_time = 1
+  expect_snapshot(
+    vglm_markov(
+      ordered(y) ~ time + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id",
+      first_followup_time = "v7"
+    ),
+    error = TRUE
   )
-  explicit_metadata <- markov_model_origin_metadata(fit_explicit)
-  expect_equal(
-    unique(as.character(markov_validate_origin_profiles(fit_explicit)$time)),
-    "v3"
-  )
-  expect_equal(explicit_metadata$start_time, "v3")
-  expect_equal(explicit_metadata$origin_time, 1)
 })
 
 test_that("sops treats supplied newdata rows as fixed prediction profiles", {

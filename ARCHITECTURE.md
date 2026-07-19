@@ -187,8 +187,8 @@ Important attributes are set in `set_sops_attrs()`:
 | `y_levels`, `absorb` | State support and absorbing states. |
 | `time_covariates` | Time-dependent covariate lookup used when formulas contain spline bases or other derived time columns. |
 | `by` | Stratification variables for grouped individual SOPs. |
-| `newdata_orig` | Original fixed profiles supplied by the user, or the wrapper-stored designated starting profiles when `newdata = NULL`. It is never filled from `refit_data`. |
-| `newdata_pred` | The fixed prediction profiles used by recursive SOP prediction, with `rowid` regenerated internally. User-supplied `newdata` keeps every row; automatic prediction uses exactly one validated designated-start row per fitted patient. |
+| `newdata_orig` | Original fixed profiles supplied by the user, or the wrapper-stored first-follow-up profiles when `newdata = NULL`. It is never filled from `refit_data`. |
+| `newdata_pred` | The fixed prediction profiles used by recursive SOP prediction, with `rowid` regenerated internally. User-supplied `newdata` keeps every row; automatic prediction uses exactly one validated first-follow-up row per fitted patient. |
 | `refit_data` | Full longitudinal data used only by refit-bootstrap inference, not by point estimation. Wrapper-fitted models can provide this automatically. |
 | `id_var` | Patient or cluster ID variable propagated from wrappers or SOP arguments. It is used for starting-profile validation, refit resampling, cluster-robust inference, and `blrm` random effects, not as the ordinary prediction-row key. |
 | `avg_args` | Extra marginalization instructions for `markov_avg_sops`: variables, grid, ID variable, and grouping. |
@@ -280,12 +280,12 @@ Supported model families:
 
 | Family | Typical fit | Notes |
 | --- | --- | --- |
-| `orm_markov()` | `orm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rms path. Stores separate likelihood-row, pre-NA refit, and designated-start profile data, fits with `x = TRUE, y = TRUE`, rejects offsets, normalizes the stored `rms::orm()` call for weighted refits, and applies `rms::robcov()` automatically when `id_var` is supplied. |
+| `orm_markov()` | `orm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rms path. Stores separate likelihood-row, pre-NA refit, and first-follow-up profile data, fits with `x = TRUE, y = TRUE`, rejects offsets, normalizes the stored `rms::orm()` call for weighted refits, and applies `rms::robcov()` automatically when `id_var` is supplied. |
 | `rms::orm` | `orm(y ~ tx + time + yprev, x = TRUE, y = TRUE)` | Full proportional odds. Can be wrapped by `rms::robcov()`, but plain fits do not store unmodeled ID columns for automatic SOP refits. |
-| `blrm_markov()` | `blrm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rmsb path. Stores separate likelihood-row, pre-NA refit, and designated-start profile data for automatic SOP prediction and random-effect ID resolution. Posterior draws remain the uncertainty source. |
+| `blrm_markov()` | `blrm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rmsb path. Stores separate likelihood-row, pre-NA refit, and first-follow-up profile data for automatic SOP prediction and random-effect ID resolution. Posterior draws remain the uncertainty source. |
 | `rmsb::blrm` | Bayesian ordinal regression | Posterior draws drive SOP uncertainty directly. Supports selected random-effect handling through `cluster()`, but plain fits do not store unmodeled ID columns for automatic SOP data resolution. |
 | `VGAM::vglm` | `vglm(..., family = cumulative(reverse = TRUE, ...))` | Must be a cumulative model with `reverse = TRUE`. Offsets are unsupported. |
-| `vglm_markov()` | `vglm_markov(..., data = data, id_var = "id")` | Recommended VGAM path. Stores separate likelihood-row, pre-NA refit, and designated-start profile data, supports inline `rms::rcs()` terms and partial proportional odds constraints, and returns `robcov_vglm` automatically when `id_var` is supplied. |
+| `vglm_markov()` | `vglm_markov(..., data = data, id_var = "id")` | Recommended VGAM path. Stores separate likelihood-row, pre-NA refit, and first-follow-up profile data, supports inline `rms::rcs()` terms and partial proportional odds constraints, and returns `robcov_vglm` automatically when `id_var` is supplied. |
 | `robcov_vglm` | `robcov_vglm(vglm_fit, cluster = id)` | Stores a robust sandwich covariance while preserving the underlying `vglm` fit for prediction. |
 
 The model validation boundary is `validate_markov_model()` in
@@ -319,7 +319,7 @@ When `newdata` is supplied to `sops()` or `avg_sops()`, every row is treated as
 a separate fixed prediction profile. The APIs regenerate `rowid` so ungrouped
 individual inference can join draws back to prediction rows without depending
 on user-supplied identifiers. When `newdata = NULL`, automatic prediction
-requires wrapper-stored designated starting profiles; `refit_data` is never a
+requires wrapper-stored first-follow-up profiles; `refit_data` is never a
 prediction-profile fallback.
 
 The fitting wrappers retain four distinct data roles:
@@ -328,20 +328,35 @@ The fitting wrappers retain four distinct data roles:
 | --- | --- | --- |
 | Likelihood rows | `markov_data` | Rows actually retained by the fitted model; every included patient contributes at least one such row. |
 | Refit rows | `markov_refit_data` | Subsetted longitudinal rows captured before response-driven omission; used only for refit/bootstrap workflows. |
-| Automatic prediction profiles | `markov_origin_data` plus `markov_origin_metadata` | Exactly one complete designated-start row for every fitted patient, retained before response omission. The response itself is not required. |
+| Automatic prediction profiles | `markov_starting_profile_data` plus `markov_starting_profile_metadata` | Exactly one complete first-follow-up row for every fitted patient, retained before response omission. The response itself is not required. |
 | User prediction profiles | `newdata` | Fixed profiles supplied explicitly to `sops()` or `avg_sops()`. |
 
-The designated row is selected at one cohort-wide `start_time`. By default this
-is the earliest numeric scheduled time, or the first factor visit (the smallest
-mapped real time when a complete `time_map` is available). `origin_time`
-defaults to 0 and records the real time of the previous state carried by that
-row, so a day-1 transition row can correctly carry a known day-0 `yprev`.
-Completeness checks cover ID, modeled predictors, time metadata, and previous
-state but exclude the transition response. Thus a missing first outcome does not
-exclude a patient who contributes a later likelihood transition. A person with
-no usable likelihood transition is outside the fitted-cohort estimand, while a
-fitted patient with no complete designated-start profile is an error; later rows
-are never substituted.
+The designated row is selected at one cohort-wide `first_followup_time`. For
+numeric time, `NULL` resolves to 1, time 1 must exist, values below 1 are
+rejected, and an explicit value must be the earliest scheduled follow-up.
+Factor or character time requires an explicit matching value. Completeness
+checks cover ID, modeled predictors, time metadata, and previous state but
+exclude the transition response. Thus a missing first outcome does not exclude
+a patient who contributes another likelihood transition. A person with no
+usable likelihood transition is outside the fitted-cohort estimand, while a
+fitted patient with no complete first-follow-up profile is an error; later rows
+are never substituted. The resolved scalar is retained in
+`markov_starting_profile_metadata` for validation and auditability but does not
+control SOP recursion, interpolation, or integration.
+
+`markov_prepare_stored_data()` creates these attributes before response
+omission, and `markov_validate_starting_profiles()` enforces their exact
+patient-level contract when automatic profiles are resolved.
+
+The wrappers do not store real-time mapping or baseline-anchor settings.
+Downstream functions use `baseline_time` (default 0) to place the observed
+`yprev` distribution on the real-time scale; `NULL` disables that anchor.
+`time_map` maps modeled factor visits to elapsed time, and `target_times`
+defines the returned interpolation grid and integration interval. With an
+observed day-0 baseline, a first mapped SOP at day 7, and
+`target_times = 1:28`, interpolation uses the day-0 anchor while integration
+uses only days 1--28. Without `target_times`, time-in-state summaries integrate
+the mapped follow-up nodes and exclude the baseline interval.
 
 `avg_sops()` is a G-computation wrapper. It creates a counterfactual grid from
 `variables`, duplicates the fixed standardization profiles for each grid row,
@@ -408,10 +423,10 @@ replay through the reference engine.
 
 For `markov_avg_comparisons`, linear estimands replay through `avg_sops()` and then
 reduce draw-level SOPs. The nonlinear `time_benefit` estimand replays paired
-patient/profile-level SOP arrays. When `time_map` or `origin_time` is stored on
-the comparison object, each draw is converted through the same tidy SOP
-interpolation path as the point estimate before trapezoidal real-time AUC is
-computed.
+patient/profile-level SOP arrays. When `time_map` is stored on the comparison
+object, its `baseline_time` and `target_times` settings send each draw through
+the same tidy SOP interpolation path as the point estimate before trapezoidal
+real-time AUC is computed.
 
 ### Analytical Delta-Method Path
 
@@ -438,7 +453,7 @@ not accepted.
 
 The superpopulation target is deliberately narrower than a generic
 external-target analysis. It requires the stored fitted cohort, one validated
-designated-start profile per fitted patient ID, and exact score/profile ID
+first-follow-up profile per fitted patient ID, and exact score/profile ID
 alignment. User-supplied `newdata` is a fixed standardization cohort and cannot
 request `target = "superpopulation"`.
 
@@ -506,7 +521,7 @@ orientation. The covariance is `stats::cov(influence) / n`, which equals the
 centered patient-level HC0 crossproduct multiplied by `n / (n - 1)`. This is a
 patient sample-covariance convention, not the fitted backend's HC1 or cluster
 adjustment. Every profile patient must have a score contribution somewhere in
-the fitted data and every score patient must have a complete designated-start
+the fitted data and every score patient must have a complete first-follow-up
 profile; no zero scores or sensitivity-ratio scaling are inserted. A custom
 coefficient covariance is not accepted for this target because it cannot supply
 the joint score/profile cross-covariance. Backend VGLM HC/cadjust choices affect
@@ -554,7 +569,7 @@ oversized request raises the typed `markov_misc_delta_too_large` condition.
 linear operator `L` over average SOP cells. The operator encodes comparison
 level minus reference level, state-set selection, visit selection or summation,
 and, for real-time time-in-state differences, the stored visit-to-time mapping,
-shared empirical-baseline origin, linear interpolation, and trapezoidal
+shared observed-baseline anchor, linear interpolation, and trapezoidal
 integration weights. It must reproduce the stored point estimates before it is
 used. Propagation is then `L J` for coefficient-form state or `influence L'` for
 influence-form state. This is why fixed factor-time designs remain linear after
@@ -755,7 +770,8 @@ in three places:
 - Prediction uses `vglm_fit`.
 - Inference uses the robust covariance in `var`.
 - Wrapper metadata such as `markov_data`, `markov_refit_data`,
-  `markov_origin_data`, `markov_origin_metadata`, and `markov_id_var` is copied
+  `markov_starting_profile_data`, `markov_starting_profile_metadata`, and
+  `markov_id_var` is copied
   from the underlying `vglm` fit so prediction, refit, and likelihood rows
   retain their distinct contracts.
 
@@ -969,7 +985,13 @@ paths follow `stats::approx(rule = 1)` semantics: each series is interpolated
 only within its own finite source-time support and remains `NA` outside it.
 `time_in_state()` then integrates
 probabilities by summing visit-scale probabilities or using trapezoidal AUC on
-real-time grids.
+real-time grids. It applies the same reduction to stored simulation, bootstrap,
+and posterior draws and recomputes draw-based confidence intervals and standard
+errors; interpolation has already propagated any draw-specific baseline anchors.
+With no explicit `target_times`, `interpolate_sops()` returns the baseline and
+mapped follow-up nodes, whereas `time_in_state()` selects only the mapped
+follow-up nodes before interpolation so its default AUC excludes the baseline
+interval.
 
 `avg_comparisons()` is the comparison layer above SOP prediction. For linear
 estimands such as state-specific SOPs and time in state, it computes marginal
@@ -1095,7 +1117,7 @@ Important validation checks include:
   `id_var`; observation rows are never an implicit independence unit.
 - Fitted-cohort superpopulation inference rejects user-supplied `newdata`, custom
   coefficient covariance, profile-only patients, and unmatched score/profile
-  IDs. A missing first transition response is allowed when the designated-start
+  IDs. A missing first transition response is allowed when the first-follow-up
   predictors are complete and the patient contributes a later likelihood row.
 - `markov.misc.delta_max_bytes` preflights analytical workspace, retained state,
   and accessor materialization with a typed allocation error.

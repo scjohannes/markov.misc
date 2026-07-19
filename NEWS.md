@@ -22,6 +22,11 @@
   missing when the patient contributes a usable later transition. Patients with
   no usable fitted transition are excluded, and `refit_data` is not used as a
   prediction-profile fallback.
+- `orm_markov()`, `vglm_markov()`, and `blrm_markov()` now use
+  `first_followup_time` solely to select automatic starting profiles. Numeric
+  time defaults to 1 and rejects schedules below 1; factor or character time
+  requires an explicit value. The wrappers no longer accept `start_time`,
+  `origin_time`, or `time_map`.
 - `vcov()` methods for analytical SOP and average-comparison results now
   materialize selected covariance blocks from retained coefficient or patient
   influence representations instead of storing a dense all-cell covariance.
@@ -79,12 +84,14 @@
 - `avg_comparisons()` now computes average SOP, time-in-state, and ordinal
   time-benefit contrasts between counterfactual levels, with uncertainty added
   through the existing `inferences()` workflow.
-- `avg_comparisons(metric = "time_benefit")` inference now reuses the shared
+- `avg_comparisons(estimand = "time_benefit")` inference now reuses the shared
   SOP simulation draw engine, honors `workers` for simulation draws, and applies
   the same longitudinal-data validation used by other refit bootstrap paths.
-- `avg_comparisons(metric = "time_benefit")` inference now applies stored
-  `time_map`/`origin_time` settings to draw-level SOPs before computing
-  real-time AUC intervals.
+- `avg_comparisons(estimand = "time_benefit")` inference now applies stored
+  `time_map`, `baseline_time`, and `target_times` settings to draw-level SOPs
+  before computing real-time AUC intervals. `baseline_time = 0` anchors
+  interpolation at the observed previous-state distribution; omitted
+  `target_times` exclude the baseline interval from real-time AUC by default.
 - `bootstrap_standardized_sops()` and `plot_bootstrap_sops()` have been moved
   to `archive/`; use `avg_sops()` with `inferences(method = "bootstrap")` and
   `plot_sops()` for active bootstrap SOP workflows.
