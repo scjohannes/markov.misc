@@ -4,15 +4,37 @@
 #'
 #' `orm_markov()` is a thin package-aware wrapper around [rms::orm()] for
 #' Markov SOP workflows. It fits with `x = TRUE` and `y = TRUE` by default,
-#' rejects offsets, stores the row-aligned fitting data on the returned model,
-#' and computes cluster-robust standard errors automatically when `id_var` is
-#' supplied.
+#' rejects offsets, stores separate likelihood, refit, and designated-start
+#' profile data on the returned model, and computes cluster-robust standard
+#' errors automatically when `id_var` is supplied.
 #'
 #' @inheritParams rms::orm
 #' @param id_var Optional character scalar naming the patient or cluster ID
 #'   column in `data`. When supplied, the returned object is wrapped with
 #'   [rms::robcov()] using this column as the cluster. When omitted, the fit is
 #'   returned without cluster-robust covariance and a warning is issued.
+#' @param time_var Character scalar naming the modeled time column used to
+#'   identify the designated starting-profile row.
+#' @param start_time Optional starting-profile visit. `NULL` uses the first
+#'   scheduled numeric time or the first factor level across the pre-NA fitting
+#'   data. This is a cohort-wide visit, never each patient's first retained
+#'   likelihood row.
+#' @param origin_time Origin assigned to the previous-state value carried by the
+#'   starting profile. The default is 0. This metadata may differ from
+#'   `start_time`, for example when the row predicting day 1 carries a day-0
+#'   state in `yprev`.
+#' @param time_map Optional visit-to-real-time mapping retained with the fitted
+#'   model. For factor time with `start_time = NULL`, the visit with the smallest
+#'   mapped real time is designated when the mapping is complete.
+#'
+#' @details Starting profiles are retained before response-driven model-frame
+#'   omission. Every fitted patient must have exactly one complete profile at
+#'   the cohort-wide `start_time`, including ID, model predictors, time, and the
+#'   previous state; the transition response on that row may be missing. A
+#'   patient is included only when at least one usable likelihood transition is
+#'   fitted somewhere. Patients with no fitted transition are excluded, and a
+#'   fitted patient without a complete designated profile is an error. Later
+#'   likelihood rows are not substituted for that profile.
 #'
 #' @return A fitted `orm` object. If `id_var` is supplied, the object contains
 #'   the robust covariance computed by [rms::robcov()].
@@ -38,6 +60,10 @@ orm_markov <- function(
   data,
   ...,
   id_var = NULL,
+  time_var = "time",
+  start_time = NULL,
+  origin_time = 0,
+  time_map = NULL,
   x = TRUE,
   y = TRUE
 ) {
@@ -60,7 +86,12 @@ orm_markov <- function(
   if (is.null(id_var)) {
     warn_missing_markov_id_var("orm_markov()")
   } else {
-    warn_duplicate_markov_id_time(data, id_var, wrapper = "orm_markov()")
+    warn_duplicate_markov_id_time(
+      data,
+      id_var,
+      time_var = time_var,
+      wrapper = "orm_markov()"
+    )
   }
 
   fit <- rms::orm(
@@ -81,7 +112,26 @@ orm_markov <- function(
   )
   fit_frame <- markov_rms_model_frame(orm_call, dots, parent.frame())
   fit_data <- markov_align_model_data(data, fit_frame)
-  fit <- markov_attach_model_data(fit, fit_data, id_var)
+  stored <- markov_prepare_stored_data(
+    data = data,
+    formula = formula,
+    subset = dots$subset,
+    eval_env = parent.frame(),
+    fit_data = fit_data,
+    id_var = id_var,
+    time_var = time_var,
+    start_time = start_time,
+    origin_time = origin_time,
+    time_map = time_map
+  )
+  fit <- markov_attach_model_data(
+    fit,
+    data = fit_data,
+    id_var = id_var,
+    refit_data = stored$refit_data,
+    origin_data = stored$origin_data,
+    origin_metadata = stored$origin_metadata
+  )
 
   if (!is.null(id_var)) {
     robust <- rms::robcov(fit, cluster = fit_data[[id_var]])
@@ -94,7 +144,14 @@ orm_markov <- function(
       x = x,
       y = y
     )
-    robust <- markov_attach_model_data(robust, fit_data, id_var)
+    robust <- markov_attach_model_data(
+      robust,
+      data = fit_data,
+      id_var = id_var,
+      refit_data = stored$refit_data,
+      origin_data = stored$origin_data,
+      origin_metadata = stored$origin_metadata
+    )
     return(robust)
   }
 
@@ -105,8 +162,9 @@ orm_markov <- function(
 #'
 #' `blrm_markov()` is a thin package-aware wrapper around [rmsb::blrm()] for
 #' Markov SOP workflows. It fits with `x = TRUE` and `y = TRUE` by default,
-#' rejects offsets, and stores the row-aligned fitting data and optional patient
-#' ID column on the returned model. Bayesian fits do not receive
+#' rejects offsets, and stores separate likelihood, refit, and designated-start
+#' profile data plus the optional patient ID on the returned model. Bayesian
+#' fits do not receive
 #' cluster-robust covariance; posterior uncertainty comes from the fitted
 #' `blrm` draws.
 #'
@@ -115,6 +173,12 @@ orm_markov <- function(
 #'   column in `data`. When supplied, SOP calls can reuse the stored full data
 #'   and infer the ID column for baseline extraction and random-effect
 #'   prediction.
+#' @inheritParams orm_markov
+#'
+#' @details The designated-start profile and fitted-patient eligibility contract
+#'   is the same as for [orm_markov()]. In particular, the transition response
+#'   at the starting row may be missing when that patient contributes another
+#'   usable likelihood transition.
 #'
 #' @return A fitted `blrm` object with `markov.misc` stored-data metadata.
 #'
@@ -143,6 +207,10 @@ blrm_markov <- function(
   data,
   ...,
   id_var = NULL,
+  time_var = "time",
+  start_time = NULL,
+  origin_time = 0,
+  time_map = NULL,
   x = TRUE,
   y = TRUE
 ) {
@@ -168,7 +236,12 @@ blrm_markov <- function(
   if (is.null(id_var)) {
     warn_missing_markov_id_var("blrm_markov()")
   } else {
-    warn_duplicate_markov_id_time(data, id_var, wrapper = "blrm_markov()")
+    warn_duplicate_markov_id_time(
+      data,
+      id_var,
+      time_var = time_var,
+      wrapper = "blrm_markov()"
+    )
   }
 
   fit <- rmsb::blrm(
@@ -193,7 +266,26 @@ blrm_markov <- function(
   )
   fit_frame <- markov_rms_model_frame(blrm_call, dots, parent.frame())
   fit_data <- markov_align_model_data(data, fit_frame)
-  markov_attach_model_data(fit, fit_data, id_var)
+  stored <- markov_prepare_stored_data(
+    data = data,
+    formula = formula,
+    subset = dots$subset,
+    eval_env = parent.frame(),
+    fit_data = fit_data,
+    id_var = id_var,
+    time_var = time_var,
+    start_time = start_time,
+    origin_time = origin_time,
+    time_map = time_map
+  )
+  markov_attach_model_data(
+    fit,
+    data = fit_data,
+    id_var = id_var,
+    refit_data = stored$refit_data,
+    origin_data = stored$origin_data,
+    origin_metadata = stored$origin_metadata
+  )
 }
 
 markov_normalize_rms_call <- function(
@@ -291,12 +383,28 @@ warn_duplicate_markov_id_time <- function(
   invisible(NULL)
 }
 
-markov_attach_model_data <- function(model, data, id_var = NULL) {
+markov_attach_model_data <- function(
+  model,
+  data,
+  id_var = NULL,
+  refit_data = NULL,
+  origin_data = NULL,
+  origin_metadata = NULL
+) {
   if (!is.null(data)) {
     attr(model, "markov_data") <- data
   }
   if (!is.null(id_var)) {
     attr(model, "markov_id_var") <- id_var
+  }
+  if (!is.null(refit_data)) {
+    attr(model, "markov_refit_data") <- refit_data
+  }
+  if (!is.null(origin_data)) {
+    attr(model, "markov_origin_data") <- origin_data
+  }
+  if (!is.null(origin_metadata)) {
+    attr(model, "markov_origin_metadata") <- origin_metadata
   }
   model
 }
@@ -337,6 +445,265 @@ markov_model_id_var <- function(model, id_var = NULL) {
   NULL
 }
 
+markov_model_metadata_attr <- function(model, name) {
+  value <- attr(model, name, exact = TRUE)
+  if (!is.null(value)) {
+    return(value)
+  }
+
+  if (inherits(model, "robcov_vglm") && !is.null(model$vglm_fit)) {
+    return(attr(model$vglm_fit, name, exact = TRUE))
+  }
+
+  NULL
+}
+
+markov_model_refit_data <- function(model) {
+  markov_model_metadata_attr(model, "markov_refit_data") %||%
+    markov_model_data(model)
+}
+
+markov_model_origin_metadata <- function(model) {
+  markov_model_metadata_attr(model, "markov_origin_metadata")
+}
+
+markov_format_patient_ids <- function(ids, limit = 5L) {
+  ids <- unique(as.character(ids))
+  paste0(
+    paste(utils::head(ids, limit), collapse = ", "),
+    if (length(ids) > limit) " ..." else ""
+  )
+}
+
+markov_validate_origin_profiles <- function(model, required_variables = NULL) {
+  profiles <- markov_model_metadata_attr(model, "markov_origin_data")
+  metadata <- markov_model_origin_metadata(model)
+  if (is.null(profiles) || is.null(metadata)) {
+    stop(
+      "Provide newdata, or fit with `orm_markov()`, `blrm_markov()`, or ",
+      "`vglm_markov()` so ",
+      "automatic SOP prediction has stored starting-profile metadata.",
+      call. = FALSE
+    )
+  }
+
+  id_var <- metadata$id_var
+  fitted_ids <- as.character(metadata$fitted_ids)
+  if (
+    is.null(id_var) ||
+      !id_var %in% names(profiles) ||
+      anyNA(fitted_ids) ||
+      any(fitted_ids == "") ||
+      anyDuplicated(fitted_ids)
+  ) {
+    stop("Stored starting-profile patient metadata is invalid.", call. = FALSE)
+  }
+
+  profile_ids <- as.character(profiles[[id_var]])
+  missing_ids <- setdiff(fitted_ids, profile_ids)
+  if (length(missing_ids)) {
+    stop(
+      "Fitted patient(s) lack a row at the designated starting visit `",
+      as.character(metadata$start_time),
+      "`: ",
+      markov_format_patient_ids(missing_ids),
+      ". A later likelihood row is not substituted for the starting profile.",
+      call. = FALSE
+    )
+  }
+
+  duplicated_ids <- unique(profile_ids[
+    duplicated(profile_ids) |
+      duplicated(profile_ids, fromLast = TRUE)
+  ])
+  if (length(duplicated_ids)) {
+    stop(
+      "Fitted patient(s) have multiple rows at the designated starting visit ",
+      "`",
+      as.character(metadata$start_time),
+      "`: ",
+      markov_format_patient_ids(duplicated_ids),
+      ". Exactly one starting profile is required per fitted patient.",
+      call. = FALSE
+    )
+  }
+
+  required <- unique(c(metadata$required_variables, required_variables))
+  missing_variables <- setdiff(required, names(profiles))
+  if (length(missing_variables)) {
+    stop(
+      "Stored starting profiles are missing required prediction variables: ",
+      paste(missing_variables, collapse = ", "),
+      ".",
+      call. = FALSE
+    )
+  }
+  incomplete <- !stats::complete.cases(profiles[, required, drop = FALSE])
+  if (any(incomplete)) {
+    stop(
+      "Fitted patient(s) have incomplete starting-profile predictors: ",
+      markov_format_patient_ids(profile_ids[incomplete]),
+      ". The transition response is not required, but ID, modeled predictors, ",
+      "time/origin metadata, and the previous state must be complete.",
+      call. = FALSE
+    )
+  }
+
+  fitting_data <- markov_model_data(model)
+  factor_predictors <- intersect(
+    metadata$predictor_variables %||% character(),
+    names(profiles)[vapply(profiles, is.factor, logical(1))]
+  )
+  for (variable in factor_predictors) {
+    if (is.null(fitting_data) || !variable %in% names(fitting_data)) {
+      next
+    }
+    supported <- unique(as.character(fitting_data[[variable]]))
+    unsupported <- !as.character(profiles[[variable]]) %in% supported
+    if (any(unsupported)) {
+      stop(
+        "Fitted patient(s) have unsupported factor value(s) for starting ",
+        "predictor `",
+        variable,
+        "`: ",
+        markov_format_patient_ids(profile_ids[unsupported]),
+        ".",
+        call. = FALSE
+      )
+    }
+  }
+
+  unexpected_ids <- setdiff(profile_ids, fitted_ids)
+  if (length(unexpected_ids)) {
+    stop(
+      "Stored starting profiles contain patient(s) with no usable likelihood ",
+      "transition: ",
+      markov_format_patient_ids(unexpected_ids),
+      ".",
+      call. = FALSE
+    )
+  }
+
+  profiles <- profiles[match(fitted_ids, profile_ids), , drop = FALSE]
+  rownames(profiles) <- NULL
+  profiles
+}
+
+markov_subset_source_data <- function(data, subset, eval_env) {
+  if (is.null(subset)) {
+    return(list(data = data, rows = seq_len(nrow(data))))
+  }
+
+  selection <- eval(subset, data, eval_env)
+  rows <- seq_len(nrow(data))[selection]
+  rows <- rows[!is.na(rows)]
+  list(data = data[rows, , drop = FALSE], rows = rows)
+}
+
+markov_start_time <- function(time, start_time, time_map) {
+  if (!is.null(start_time)) {
+    if (length(start_time) != 1L || is.na(start_time)) {
+      stop("`start_time` must contain one non-missing value.", call. = FALSE)
+    }
+    return(start_time)
+  }
+
+  if (is.factor(time)) {
+    levels <- levels(time)
+    if (!is.null(time_map)) {
+      map <- standardize_time_map(time_map)
+      mapped <- map$real_time[match(levels, map$visit)]
+      if (!anyNA(mapped)) {
+        return(levels[which.min(mapped)])
+      }
+    }
+    return(levels[[1L]])
+  }
+
+  finite <- time[!is.na(time)]
+  if (!length(finite)) {
+    stop("The stored time variable has no non-missing scheduled values.")
+  }
+  min(finite)
+}
+
+markov_prepare_stored_data <- function(
+  data,
+  formula,
+  subset,
+  eval_env,
+  fit_data,
+  id_var,
+  time_var,
+  start_time,
+  origin_time,
+  time_map
+) {
+  if (!is.data.frame(data)) {
+    return(list(
+      refit_data = NULL,
+      origin_data = NULL,
+      origin_metadata = NULL
+    ))
+  }
+  source <- markov_subset_source_data(data, subset, eval_env)
+  refit_data <- source$data
+  if (is.null(id_var)) {
+    return(list(
+      refit_data = refit_data,
+      origin_data = NULL,
+      origin_metadata = NULL
+    ))
+  }
+  validate_markov_id_var(time_var, refit_data, "data")
+  validate_markov_id_var(id_var, fit_data, "fitted data")
+  if (length(origin_time) != 1L || is.na(origin_time)) {
+    stop("`origin_time` must contain one non-missing value.", call. = FALSE)
+  }
+
+  fitted_ids <- unique(as.character(fit_data[[id_var]]))
+  if (anyNA(fitted_ids) || any(fitted_ids == "")) {
+    stop("Fitted patient IDs must be non-missing and non-empty.", call. = FALSE)
+  }
+  scheduled_start <- markov_start_time(
+    refit_data[[time_var]],
+    start_time,
+    time_map
+  )
+  at_start <- as.character(refit_data[[time_var]]) ==
+    as.character(scheduled_start)
+  in_fit <- as.character(refit_data[[id_var]]) %in% fitted_ids
+  origin_data <- refit_data[at_start & in_fit, , drop = FALSE]
+  origin_data$.markov_source_row <- source$rows[at_start & in_fit]
+
+  predictor_terms <- stats::delete.response(stats::terms(formula, data = data))
+  predictor_variables <- all.vars(predictor_terms)
+  required <- unique(c(
+    id_var,
+    predictor_variables,
+    time_var
+  ))
+
+  list(
+    refit_data = refit_data,
+    origin_data = origin_data,
+    origin_metadata = list(
+      id_var = id_var,
+      time_var = time_var,
+      start_time = scheduled_start,
+      origin_time = origin_time,
+      time_map = time_map,
+      required_variables = required,
+      predictor_variables = predictor_variables,
+      fitted_ids = fitted_ids,
+      factor_levels = lapply(
+        refit_data[vapply(refit_data, is.factor, logical(1))],
+        levels
+      )
+    )
+  )
+}
+
 markov_align_model_data <- function(data, model_or_frame) {
   if (!is.data.frame(data)) {
     return(NULL)
@@ -374,15 +741,44 @@ markov_align_model_data <- function(data, model_or_frame) {
   data
 }
 
-resolve_markov_source_data <- function(model, newdata, refit_data = NULL) {
+resolve_markov_source_data <- function(
+  model,
+  newdata,
+  refit_data = NULL,
+  time_var = NULL,
+  p_var = NULL
+) {
   newdata_supplied <- !is.null(newdata)
-  refit_data <- refit_data %||% markov_model_data(model)
-  source_data <- newdata %||% refit_data
+  refit_data <- refit_data %||% markov_model_refit_data(model)
+  source_data <- if (newdata_supplied) {
+    newdata
+  } else {
+    metadata <- markov_model_origin_metadata(model)
+    if (
+      !is.null(time_var) &&
+        !is.null(metadata$time_var) &&
+        !identical(time_var, metadata$time_var)
+    ) {
+      stop(
+        "Automatic SOP prediction requested `time_var = \"",
+        time_var,
+        "\"`, but the fitted wrapper stored starting profiles using `",
+        metadata$time_var,
+        "`. Refit with the intended `time_var` or supply explicit `newdata`.",
+        call. = FALSE
+      )
+    }
+    markov_validate_origin_profiles(
+      model,
+      required_variables = c(time_var, p_var)
+    )
+  }
 
   if (is.null(source_data)) {
     stop(
-      "Provide newdata, or fit with `orm_markov()`, `blrm_markov()`, or ",
-      "`vglm_markov(id_var = ...)` so the model stores its original data."
+      "Provide `newdata`, or fit with `orm_markov()`, `blrm_markov()`, or ",
+      "`vglm_markov()` so ",
+      "the model stores its designated starting profiles."
     )
   }
   if (!is.data.frame(source_data)) {

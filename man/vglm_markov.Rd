@@ -26,6 +26,10 @@ vglm_markov(
   form2 = NULL,
   qr.arg = TRUE,
   smart = TRUE,
+  time_var = "time",
+  start_time = NULL,
+  origin_time = 0,
+  time_map = NULL,
   ...
 )
 }
@@ -265,6 +269,21 @@ proportional odds fit returned by \code{vglm_markov()}.}
 
   }
 
+\item{time_var}{Character scalar naming the modeled time column used to
+identify the designated starting-profile row.}
+
+\item{start_time}{Optional starting-profile visit. \code{NULL} uses the first
+scheduled numeric time or the first factor level across the pre-NA fitting
+data. This is a cohort-wide visit, never each patient's first retained
+likelihood row.}
+
+\item{origin_time}{Origin assigned to the previous-state value carried by the
+starting profile. The default is 0.}
+
+\item{time_map}{Optional visit-to-real-time mapping retained with the fit.
+For factor time with \code{start_time = NULL}, the visit with the smallest
+mapped real time is designated when the mapping is complete.}
+
 \item{...}{
   further arguments passed into \code{\link[VGAM]{vglm.control}}.
 
@@ -277,9 +296,10 @@ a \code{robcov_vglm} object when \code{id_var} is supplied.
 }
 \description{
 \code{vglm_markov()} is the recommended VGAM fitting entrypoint for
-\code{markov.misc} SOP workflows. It follows \code{VGAM::vglm()} closely, stores the
-row-aligned fitting data for downstream SOP inference, and marks the fit so
-the SOP prediction code can use package-native Markov prediction. For inline
+\code{markov.misc} SOP workflows. It follows \code{VGAM::vglm()} closely, stores
+separate likelihood, refit, and designated-start profile data for downstream
+SOP inference, and marks the fit so the SOP prediction code can use
+package-native Markov prediction. For inline
 registered RMS spline terms such as \code{rcs(time, 4)}, \code{lsp(time, 5)}, or their
 namespace-qualified forms, the internal VGAM assignment metadata is split by
 generated spline column.
@@ -304,6 +324,15 @@ automatic cluster-robust covariance and FWB refits need \code{id_var}.
 
 Offsets are not supported in \code{markov.misc} SOP workflows, so \code{vglm_markov()}
 rejects both \code{offset()} terms and the \code{offset} argument.
+
+Starting profiles are retained before response-driven model-frame
+omission. Every fitted patient must have exactly one complete profile at
+the cohort-wide \code{start_time}, including ID, model predictors, time, and the
+previous state; the transition response on that row may be missing. A
+patient is included only when at least one usable likelihood transition is
+fitted somewhere. Patients with no fitted transition are excluded, and a
+fitted patient without a complete designated profile is an error. Later
+likelihood rows are not substituted for that profile.
 }
 \examples{
 \dontrun{

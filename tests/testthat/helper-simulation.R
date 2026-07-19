@@ -82,7 +82,12 @@ make_score_bootstrap_case <- function(
   list(
     data = data,
     baseline = data[data$time == 1, , drop = FALSE],
-    model = make_test_model(data, robust = TRUE),
+    model = vglm_markov(
+      ordered(y) ~ time_lin + time_nlin_1 + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id"
+    ),
     times = seq_len(follow_up_time),
     y_levels = 1:6,
     absorb = 6

@@ -111,7 +111,7 @@ The package is organized by workflow stage rather than by model class.
 | Model fitting helpers | `R/vglm_helpers.R`, `R/vgam_helpers.R`, `R/robcov_vglm.R`, `R/mvn_helpers.R` | Fit package-aware VGAM Markov models, compute effective coefficients, compute robust covariance, mutate coefficients for simulation draws. |
 | SOP API | `R/sops-api.R` | Public user entrypoints for individual and marginal SOPs. |
 | SOP engine | `R/sops-engine.R`, `R/sops-backends.R`, `R/sops-fast-path.R`, `R/sops-result-helpers.R` | Validate models, predict transition probabilities, run first- and second-order Markov recursions, reshape arrays to tidy objects. |
-| SOP inference | `R/sops-inference.R`, `R/sops-delta-core.R`, `R/sops-delta-population.R`, `R/sops-delta-inference.R`, `R/sops-delta-accessors.R`, `R/sops-delta-comparisons.R`, `R/sops-inference-draws.R`, `R/sops-draws.R`, `R/sops-score-bootstrap.R`, `R/sops-bootstrap-inference.R`, `R/sops-comparisons-inference.R` | Compute deterministic first-order delta intervals or uncertainty intervals from MVN coefficient draws, posterior draws, score bootstrap draws, ordinary refit bootstrap samples, or fractional weighted refits. |
+| SOP inference | `R/sops-inference.R`, `R/sops-delta-core.R`, `R/sops-delta-superpopulation.R`, `R/sops-delta-inference.R`, `R/sops-delta-accessors.R`, `R/sops-delta-comparisons.R`, `R/sops-inference-draws.R`, `R/sops-draws.R`, `R/sops-score-bootstrap.R`, `R/sops-bootstrap-inference.R`, `R/sops-comparisons-inference.R` | Compute deterministic first-order delta intervals or uncertainty intervals from MVN coefficient draws, posterior draws, score bootstrap draws, ordinary refit bootstrap samples, or fractional weighted refits. |
 | Bootstrap infrastructure | `R/bootstrap_helpers.R`, `R/bootstrap-coefs.R`, `R/bootstrap-tidy.R` | Memory-efficient group bootstrap sampling, fractional weighted bootstrap weights, just-in-time materialization, model refitting, and bootstrap coefficient summaries. |
 | Endpoint summaries | `R/endpoint-summaries.R`, `R/endpoint-tte.R`, `R/competing-risks.R`, `R/sops-time-in-state.R`, `R/sops-interpolate.R`, `R/sops-comparisons.R`, `R/sops-comparisons-setup.R`, `R/sops-comparisons-reduce.R` | Convert trajectories or SOPs to days-at-home, time-to-event, competing-risk, real-time interpolation, time-in-state summaries, and average counterfactual comparisons. |
 | Operating characteristics | `R/power.R` | Sample from Arrow superpopulations, run iteration-level analyses, summarize power, type I error, bias, coverage, and Monte Carlo error. |
@@ -187,10 +187,10 @@ Important attributes are set in `set_sops_attrs()`:
 | `y_levels`, `absorb` | State support and absorbing states. |
 | `time_covariates` | Time-dependent covariate lookup used when formulas contain spline bases or other derived time columns. |
 | `by` | Stratification variables for grouped individual SOPs. |
-| `newdata_orig` | Original source data supplied to the SOP call, or wrapper-stored model data when `newdata = NULL`. User-supplied rows are treated as fixed prediction profiles; wrapper-stored data may be full longitudinal data. |
-| `newdata_pred` | The fixed prediction data used by recursive SOP prediction, with `rowid` regenerated internally. For user-supplied `newdata`, every row is kept. For stored longitudinal source data, this is extracted as the earliest row per `id_var`. |
+| `newdata_orig` | Original fixed profiles supplied by the user, or the wrapper-stored designated starting profiles when `newdata = NULL`. It is never filled from `refit_data`. |
+| `newdata_pred` | The fixed prediction profiles used by recursive SOP prediction, with `rowid` regenerated internally. User-supplied `newdata` keeps every row; automatic prediction uses exactly one validated designated-start row per fitted patient. |
 | `refit_data` | Full longitudinal data used only by refit-bootstrap inference, not by point estimation. Wrapper-fitted models can provide this automatically. |
-| `id_var` | Patient or cluster ID variable propagated from wrappers or SOP arguments. It is used for stored-data extraction, refit resampling, and `blrm` random effects, not as the ordinary prediction-row key. |
+| `id_var` | Patient or cluster ID variable propagated from wrappers or SOP arguments. It is used for starting-profile validation, refit resampling, cluster-robust inference, and `blrm` random effects, not as the ordinary prediction-row key. |
 | `avg_args` | Extra marginalization instructions for `markov_avg_sops`: variables, grid, ID variable, and grouping. |
 | `comparison_args` | Extra comparison instructions for `markov_avg_comparisons`: estimand, states, comparison function, real-time mapping, posterior settings, and original extra SOP arguments. |
 | `draws`, `simulation_draws`, `bootstrap_draws` | Optional stored draw-level outputs. |
@@ -280,12 +280,12 @@ Supported model families:
 
 | Family | Typical fit | Notes |
 | --- | --- | --- |
-| `orm_markov()` | `orm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rms path. Stores full data and ID metadata, fits with `x = TRUE, y = TRUE`, rejects offsets, normalizes the stored `rms::orm()` call for weighted refits, and applies `rms::robcov()` automatically when `id_var` is supplied. |
+| `orm_markov()` | `orm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rms path. Stores separate likelihood-row, pre-NA refit, and designated-start profile data, fits with `x = TRUE, y = TRUE`, rejects offsets, normalizes the stored `rms::orm()` call for weighted refits, and applies `rms::robcov()` automatically when `id_var` is supplied. |
 | `rms::orm` | `orm(y ~ tx + time + yprev, x = TRUE, y = TRUE)` | Full proportional odds. Can be wrapped by `rms::robcov()`, but plain fits do not store unmodeled ID columns for automatic SOP refits. |
-| `blrm_markov()` | `blrm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rmsb path. Stores full data and ID metadata for automatic SOP prediction data and random-effect ID resolution. Posterior draws remain the uncertainty source. |
+| `blrm_markov()` | `blrm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rmsb path. Stores separate likelihood-row, pre-NA refit, and designated-start profile data for automatic SOP prediction and random-effect ID resolution. Posterior draws remain the uncertainty source. |
 | `rmsb::blrm` | Bayesian ordinal regression | Posterior draws drive SOP uncertainty directly. Supports selected random-effect handling through `cluster()`, but plain fits do not store unmodeled ID columns for automatic SOP data resolution. |
 | `VGAM::vglm` | `vglm(..., family = cumulative(reverse = TRUE, ...))` | Must be a cumulative model with `reverse = TRUE`. Offsets are unsupported. |
-| `vglm_markov()` | `vglm_markov(..., data = data, id_var = "id")` | Recommended VGAM path. Stores full data and ID metadata, supports inline `rms::rcs()` terms and partial proportional odds constraints, and returns `robcov_vglm` automatically when `id_var` is supplied. |
+| `vglm_markov()` | `vglm_markov(..., data = data, id_var = "id")` | Recommended VGAM path. Stores separate likelihood-row, pre-NA refit, and designated-start profile data, supports inline `rms::rcs()` terms and partial proportional odds constraints, and returns `robcov_vglm` automatically when `id_var` is supplied. |
 | `robcov_vglm` | `robcov_vglm(vglm_fit, cluster = id)` | Stores a robust sandwich covariance while preserving the underlying `vglm` fit for prediction. |
 
 The model validation boundary is `validate_markov_model()` in
@@ -316,11 +316,32 @@ flowchart TD
 ```
 
 When `newdata` is supplied to `sops()` or `avg_sops()`, every row is treated as
-a separate baseline prediction profile. The APIs regenerate `rowid` so
-ungrouped individual inference can join draws back to prediction rows without
-depending on user-supplied identifiers. When `newdata = NULL`, wrapper-stored or
-explicit `refit_data` is treated as longitudinal source data and collapsed to
-one prediction row per `id_var`.
+a separate fixed prediction profile. The APIs regenerate `rowid` so ungrouped
+individual inference can join draws back to prediction rows without depending
+on user-supplied identifiers. When `newdata = NULL`, automatic prediction
+requires wrapper-stored designated starting profiles; `refit_data` is never a
+prediction-profile fallback.
+
+The fitting wrappers retain four distinct data roles:
+
+| Data role | Stored representation | Contract |
+| --- | --- | --- |
+| Likelihood rows | `markov_data` | Rows actually retained by the fitted model; every included patient contributes at least one such row. |
+| Refit rows | `markov_refit_data` | Subsetted longitudinal rows captured before response-driven omission; used only for refit/bootstrap workflows. |
+| Automatic prediction profiles | `markov_origin_data` plus `markov_origin_metadata` | Exactly one complete designated-start row for every fitted patient, retained before response omission. The response itself is not required. |
+| User prediction profiles | `newdata` | Fixed profiles supplied explicitly to `sops()` or `avg_sops()`. |
+
+The designated row is selected at one cohort-wide `start_time`. By default this
+is the earliest numeric scheduled time, or the first factor visit (the smallest
+mapped real time when a complete `time_map` is available). `origin_time`
+defaults to 0 and records the real time of the previous state carried by that
+row, so a day-1 transition row can correctly carry a known day-0 `yprev`.
+Completeness checks cover ID, modeled predictors, time metadata, and previous
+state but exclude the transition response. Thus a missing first outcome does not
+exclude a patient who contributes a later likelihood transition. A person with
+no usable likelihood transition is outside the fitted-cohort estimand, while a
+fitted patient with no complete designated-start profile is an error; later rows
+are never substituted.
 
 `avg_sops()` is a G-computation wrapper. It creates a counterfactual grid from
 `variables`, duplicates the fixed standardization profiles for each grid row,
@@ -403,21 +424,23 @@ not retain a `draws` attribute; they attach a versioned `analytical` state that
 supports covariance and Jacobian access without constructing a full result-cell
 covariance by default.
 
-The target labels distinguish what is held fixed. Empirical and population
+The target labels distinguish what is held fixed. Empirical and superpopulation
 targets apply only to averaged objects; individual SOPs accept an omitted target
-or `target = "fixed"` only.
+or `target = "fixed"` only. The unreleased `target = "population"` spelling is
+not accepted.
 
 | Object | Default / allowed target | Interpretation |
 | --- | --- | --- |
 | `markov_sops` | omitted or `fixed` only | Coefficient uncertainty for the displayed prediction profiles. No other analytical target is available. |
 | `markov_avg_sops` | `empirical` | Conditional inference for the average over the observed standardization profiles, treating those profiles as fixed. |
 | `markov_avg_comparisons` | `empirical` | The same fixed-profile interpretation after a supported linear comparison operator. |
-| Stored-cohort averages and comparisons | explicit `population` | Same-cohort population inference that also treats the sampled profile distribution as random. |
+| Stored-cohort averages and comparisons | explicit `superpopulation` | Fitted-cohort inference that also treats the sampled profile distribution as random. |
 
-The population target is deliberately narrower than a generic external-target
-analysis. It requires the stored fitting cohort, one baseline profile per
-patient ID, and score/profile ID alignment. User-supplied `newdata` is a fixed
-standardization cohort and cannot request `target = "population"`.
+The superpopulation target is deliberately narrower than a generic
+external-target analysis. It requires the stored fitted cohort, one validated
+designated-start profile per fitted patient ID, and exact score/profile ID
+alignment. User-supplied `newdata` is a fixed standardization cohort and cannot
+request `target = "superpopulation"`.
 
 ```mermaid
 flowchart TD
@@ -427,7 +450,7 @@ flowchart TD
   REDUCE --> EMP{"Target representation"}
   EMP -- "fixed individual / empirical average" --> COV["Patient-cluster coefficient covariance"]
   COV --> COEF["Store J and V"]
-  EMP -- "same-cohort population" --> SCORE["Aggregate likelihood scores by patient"]
+  EMP -- "fitted-cohort superpopulation" --> SCORE["Aggregate likelihood scores by patient"]
   SCORE --> IF["Centered profile term + coefficient influence"]
   IF --> INFL["Store average J and patient influence matrix"]
   COEF --> OP["Optional supported comparison operator L"]
@@ -450,8 +473,8 @@ probability and derivative mass are carried forward together.
 Fixed-profile SOPs retain the patient-by-time-by-state probability array and
 patient-by-time-by-state-by-raw-coefficient Jacobian. Averaged empirical targets
 instead average each counterfactual scenario inside the native recursion and
-retain only scenario-by-time-by-state probabilities and Jacobians. Population
-targets additionally retain individual probabilities for the profile term, but
+retain only scenario-by-time-by-state probabilities and Jacobians.
+Superpopulation targets additionally retain individual probabilities for the profile term, but
 never individual Jacobians. The delta memory preflight therefore counts the
 actual target-specific outputs plus the rolling probability/Jacobian workspace.
 Crossed raw ordinal probabilities are errors in this path; they are not repaired
@@ -473,23 +496,30 @@ fits or use `Design$mmcolnames` for spline terms; those two backend-owned forms
 are validated and relabeled to the raw coefficient order. Explicit user
 covariance matrices remain strictly name-matched.
 
-For `target = "population"`, `R/sops-delta-population.R` aggregates raw
+For `target = "superpopulation"`, `R/sops-delta-superpopulation.R` aggregates raw
 transition-row scores by patient and combines them with patient-level profile
 functionals. If `h_i` is the vector of counterfactual SOP cells for patient
 `i`, `G` is the average raw-coefficient Jacobian, `s_i` is the patient score,
 and `Ainv` is inverse per-patient sensitivity, the stored influence row is the
 centered profile contribution plus `G Ainv s_i` in the implementation's matrix
-orientation. The covariance is `stats::cov(influence) / n`. Patients with a
-target profile but no likelihood row receive a zero score; the sensitivity is
-rescaled to the full profile-cohort size. Score patients absent from the target
-profiles are an alignment error. A custom coefficient covariance is not
-accepted for this target because it cannot supply the joint score/profile
-cross-covariance.
+orientation. The covariance is `stats::cov(influence) / n`, which equals the
+centered patient-level HC0 crossproduct multiplied by `n / (n - 1)`. This is a
+patient sample-covariance convention, not the fitted backend's HC1 or cluster
+adjustment. Every profile patient must have a score contribution somewhere in
+the fitted data and every score patient must have a complete designated-start
+profile; no zero scores or sensitivity-ratio scaling are inserted. A custom
+coefficient covariance is not accepted for this target because it cannot supply
+the joint score/profile cross-covariance. Backend VGLM HC/cadjust choices affect
+empirical coefficient propagation but are intentionally ignored by this stacked
+superpopulation covariance; their ignored values and the bread source are
+reported in metadata.
 
-Weighted ORM fits are rejected for the same-cohort population target because
-the current ORM row-score constructor is unweighted. Their empirical target
-remains available because it propagates the fitted backend covariance without
-constructing the stacked score/profile influence function.
+Weighted ORM fits are rejected for the fitted-cohort superpopulation target
+because the current ORM row-score constructor is unweighted. Penalized ORM fits
+are also rejected because the likelihood-score and penalized-sensitivity
+contract has not been established. Their empirical target remains available
+because it propagates the fitted backend covariance without constructing the
+stacked score/profile influence function.
 
 The independent cluster is always the patient. An explicit row-aligned
 `cluster` vector takes precedence; otherwise the fitted object must contain both
@@ -532,7 +562,7 @@ the SOP recursion itself has been differentiated.
 
 The implemented analytical scope is first-order, full proportional odds,
 reverse cumulative logit, and frequentist `orm`, `vglm`, or `robcov_vglm`.
-Individual SOPs, empirical average SOPs, same-cohort population average SOPs,
+Individual SOPs, empirical average SOPs, fitted-cohort superpopulation average SOPs,
 and difference comparisons for `estimand = "sop"` or
 `estimand = "time_in_state"` are supported. Analytical comparison intervals
 are Wald intervals. Ratios, `time_benefit`, `by`-stratum inference, partial or
@@ -724,9 +754,10 @@ in three places:
 - `validate_markov_model()` unwraps the fit for model-family checks.
 - Prediction uses `vglm_fit`.
 - Inference uses the robust covariance in `var`.
-- Wrapper metadata such as `markov_data` and `markov_id_var` is copied from the
-  underlying `vglm` fit so refit-bootstrap inference can recover the original
-  longitudinal data.
+- Wrapper metadata such as `markov_data`, `markov_refit_data`,
+  `markov_origin_data`, `markov_origin_metadata`, and `markov_id_var` is copied
+  from the underlying `vglm` fit so prediction, refit, and likelihood rows
+  retain their distinct contracts.
 
 The score calculation uses VGAM's VLM model matrix and derivative information to
 obtain observation-level score contributions. The default bread is the inverse
@@ -891,7 +922,8 @@ draw the engine:
    when explicitly requested).
 5. Replays SOP prediction with the updated coefficients.
 6. Passes normalized baseline weights into marginal or grouped SOP averaging
-   only when the prediction population is the empirical stored/refit cohort.
+   only when the prediction population is the empirical wrapper-stored
+   designated-profile cohort.
    Ungrouped stored-data `sops()` draw output exposes those weights as
    `score_weight` so users can reproduce custom weighted summaries. Prediction
    data cannot already contain `score_weight` when this draw column is attached.
@@ -1061,8 +1093,10 @@ Important validation checks include:
 - Analytical covariance requires the complete named raw-coefficient scale.
   Patient clustering is resolved explicitly or from stored fitting data plus
   `id_var`; observation rows are never an implicit independence unit.
-- Same-cohort population inference rejects user-supplied `newdata`, custom
-  coefficient covariance, and unmatched score/profile IDs.
+- Fitted-cohort superpopulation inference rejects user-supplied `newdata`, custom
+  coefficient covariance, profile-only patients, and unmatched score/profile
+  IDs. A missing first transition response is allowed when the designated-start
+  predictors are complete and the patient contributes a later likelihood row.
 - `markov.misc.delta_max_bytes` preflights analytical workspace, retained state,
   and accessor materialization with a typed allocation error.
 - Operating-characteristic sampling validates `sample_size`, `allocation_ratio`,
@@ -1117,16 +1151,16 @@ Analytical inference has three focused test boundaries:
   central finite differences used only as a test oracle, for ORM and VGLM raw
   coefficients, factor visits, absorbing states, invalid structures, crossed
   probabilities, and allocation limits.
-- `test-sops-delta-population.R` checks patient cluster resolution, backend
-  covariance conventions, row-score aggregation, inverse-sensitivity scaling,
-  zero-score profiles, score/profile alignment, and the finite-sample cross
-  term in the stacked influence function.
+- `test-sops-delta-superpopulation.R` checks patient cluster resolution, backend
+  covariance conventions, row-score aggregation, exact score/profile alignment,
+  profile-only rejection, and the finite-sample cross term in the stacked
+  influence function.
 - `test-sops-delta-inference.R` checks public dispatch, interval defaults,
   linear SOP and real-time time-in-state comparison operators, low-rank
-  accessors, and population/custom-covariance errors.
+  accessors, and superpopulation/custom-covariance errors.
 - `test-sops-delta-splines.R` checks penalized ORM spline covariance aliases,
   exact coefficient order, native-versus-R recursion, public finite-difference
-  Jacobians, and weighted-ORM population rejection.
+  Jacobians, and weighted/penalized ORM superpopulation rejection.
 
 MVN and bootstrap methods remain useful alternative inferential procedures;
 numerical agreement with their nonlinear draws is not a validation requirement
@@ -1209,7 +1243,7 @@ Useful regression themes include:
 - MVN, score-bootstrap, posterior, standard refit-bootstrap, and FWB refit
   inference paths.
 - Analytical raw-coefficient Jacobians, patient-cluster covariance, stacked
-  population influence functions, low-rank covariance access, and supported
+  superpopulation influence functions, low-rank covariance access, and supported
   linear comparison operators.
 - Draw extraction, interpolation, and time-in-state integration.
 - Missing-state bootstrap samples and mapping back to original state labels.
@@ -1284,7 +1318,7 @@ patchwork object when `combine = TRUE` and a named ggplot list otherwise.
 | `R/viz-helpers.R` | shared ggplot helpers | Common plotting validation, faceting, and default discrete scales. |
 | `R/sops-inference.R` | `inferences()`, `inferences_simulation()` | Main inference dispatcher and coefficient-draw replay. |
 | `R/sops-delta-core.R` | `get_effective_coef_map()`, `run_sop_delta_plan()`, `compile_and_run_sop_delta()` | Analytic first-order full-PO category derivatives and SOP Jacobian recursion on the complete raw-coefficient scale. |
-| `R/sops-delta-population.R` | `resolve_delta_cluster()`, `get_delta_cluster_vcov()`, `get_delta_score_components()`, `delta_stacked_influence()` | Patient-cluster covariance resolution and same-cohort population influence construction. |
+| `R/sops-delta-superpopulation.R` | `resolve_delta_cluster()`, `get_delta_cluster_vcov()`, `get_delta_score_components()`, `delta_stacked_influence()` | Patient-cluster covariance resolution and fitted-cohort superpopulation influence construction. |
 | `R/sops-delta-inference.R` | `inferences_delta_sops()`, `delta_finalize_result()` | Analytical SOP dispatch, target reduction, intervals, and factorized result state. |
 | `R/sops-delta-accessors.R` | `get_jacobian()`, `vcov.markov_sops()`, `vcov.markov_avg_sops()`, `vcov.markov_avg_comparisons()` | Selected Jacobian and covariance materialization from analytical state. |
 | `R/sops-delta-comparisons.R` | `inferences_delta_comparisons()`, `delta_comparison_operator()` | Linear propagation for SOP and time-in-state differences, including real-time interpolation and trapezoidal integration. |
@@ -1323,5 +1357,5 @@ patchwork object when `combine = TRUE` and a named ggplot list otherwise.
 | Real-time interpolation | Mapping visit-index SOPs to elapsed time and interpolating probabilities for AUC/time-in-state summaries. |
 | Analytical delta method | First-order propagation of the fitted raw-coefficient covariance or patient influence through an analytic SOP Jacobian. |
 | Empirical target | An average over the observed standardization profiles, conditional on those profiles. |
-| Population target | A same-cohort average whose profile distribution is treated as sampled and enters the stacked influence function. |
+| Superpopulation target | A fitted-cohort average whose profile distribution is treated as sampled and enters the stacked influence function. |
 | Stacked influence function | Patient-level sum of the centered profile functional and coefficient-estimation influence, retaining their covariance. |

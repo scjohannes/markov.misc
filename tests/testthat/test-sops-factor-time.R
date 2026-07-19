@@ -251,10 +251,11 @@ test_that("factor visit simulation and bootstrap inference smoke-test", {
   skip_if_not_installed("mvtnorm")
 
   data <- make_factor_visit_case(n_patients = 60, seed = 2027)
-  fit <- VGAM::vglm(
+  fit <- vglm_markov(
     y ~ time + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
+    data = data,
+    id_var = "id"
   )
   baseline <- data[!duplicated(data$id), , drop = FALSE]
 

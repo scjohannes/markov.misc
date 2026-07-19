@@ -100,6 +100,13 @@ inferences_bootstrap <- function(
 
   # --- 4. Define Analysis Function ---
   analysis_fn <- function(boot_data, fwb_weights = NULL) {
+    if (engine == "standard") {
+      # A patient sampled more than once represents distinct bootstrap
+      # patients. Refit wrappers must therefore cluster on the unique
+      # bootstrap identifier, not the repeated source identifier.
+      boot_data[[id_var]] <- boot_data$new_id
+    }
+
     fit_weights <- NULL
     if (engine == "fwb") {
       fit_weights <- boot_data$fwb_weight

@@ -1,11 +1,11 @@
-# population comparisons retain the transformed stacked influence
+# superpopulation comparisons retain transformed stacked influence
 
     Code
-      inferences(point, method = "delta", target = "population", vcov = case$
+      inferences(point, method = "delta", target = "superpopulation", vcov = case$
         covariance)
     Condition
       Error:
-      ! `vcov` cannot be supplied with `target = "population"`; population inference uses the fitted-model score components and stacked influence function.
+      ! `vcov` cannot be supplied with `target = "superpopulation"`; superpopulation inference uses fitted-model score components and the stacked patient influence function.
 
 # analytical comparison scope rejects deferred estimands
 

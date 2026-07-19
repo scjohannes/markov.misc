@@ -297,7 +297,7 @@ test_that("factor-time ORM differences match public finite differences", {
   expect_equal(inferred$std.error, expected_se, tolerance = 1e-12)
 })
 
-test_that("population comparisons retain the transformed stacked influence", {
+test_that("superpopulation comparisons retain transformed stacked influence", {
   case <- delta_comparison_factor_case()
   point <- avg_comparisons(
     case$fit,
@@ -311,7 +311,7 @@ test_that("population comparisons retain the transformed stacked influence", {
   inferred <- inferences(
     point,
     method = "delta",
-    target = "population"
+    target = "superpopulation"
   )
   analytical <- attr(inferred, "analytical")
   rows <- c(1L, nrow(inferred))
@@ -334,7 +334,7 @@ test_that("population comparisons retain the transformed stacked influence", {
     inferences(
       point,
       method = "delta",
-      target = "population",
+      target = "superpopulation",
       vcov = case$covariance
     ),
     error = TRUE

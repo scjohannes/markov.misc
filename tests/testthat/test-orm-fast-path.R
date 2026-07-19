@@ -190,15 +190,17 @@ test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
   data <- add_test_age(data)
   local_orm_datadist(data)
 
-  fit_default <- rms::orm(
+  fit_default <- orm_markov(
     y ~ rms::rcs(time, 3) * tx + yprev + age,
     data = data,
+    id_var = "id",
     x = TRUE,
     y = TRUE
   )
-  fit_scaled <- rms::orm(
+  fit_scaled <- orm_markov(
     y ~ rms::rcs(time, 3) * tx + yprev + age,
     data = data,
+    id_var = "id",
     x = TRUE,
     y = TRUE,
     scale = TRUE
@@ -232,8 +234,8 @@ test_that("orm scale=TRUE agrees with default scale in SOP workflows", {
   )
   expect_equal(sops_scaled$estimate, sops_default$estimate, tolerance = 1e-10)
 
-  robust_default <- rms::robcov(fit_default, cluster = data$id)
-  robust_scaled <- rms::robcov(fit_scaled, cluster = data$id)
+  robust_default <- fit_default
+  robust_scaled <- fit_scaled
   avg_default <- markov.misc::avg_sops(
     robust_default,
     refit_data = data,
@@ -328,13 +330,14 @@ test_that("orm supports MVN and score-bootstrap inference", {
   data <- add_test_age(data)
   local_orm_datadist(data)
 
-  fit <- rms::orm(
+  fit <- orm_markov(
     y ~ rms::rcs(time, 3) * tx + yprev + age,
     data = data,
+    id_var = "id",
     x = TRUE,
     y = TRUE
   )
-  robust_fit <- rms::robcov(fit, cluster = data$id)
+  robust_fit <- fit
   baseline <- data[!duplicated(data$id), ]
 
   avg <- markov.misc::avg_sops(

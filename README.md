@@ -81,29 +81,32 @@ sop_empirical <- inferences(
   target = "empirical"
 )
 
-sop_population <- inferences(
+sop_superpopulation <- inferences(
   sop,
   method = "delta",
-  target = "population"
+  target = "superpopulation"
 )
 
 # Materialize only the analytical rows needed downstream.
 J <- get_jacobian(sop_empirical, rows = 1:8)
-V <- stats::vcov(sop_population, rows = 1:8)
+V <- stats::vcov(sop_superpopulation, rows = 1:8)
 ```
 
 The empirical target conditions on the observed standardization profiles. The
-population target treats the same stored fitting cohort as sampled and combines
-profile variation with fitted-model score variation in a patient-level stacked
-influence function. `orm_markov(id_var = "id")` and
-`vglm_markov(id_var = "id")` store the row-aligned patient IDs needed for this
-calculation. Patient-cluster robustness protects the variance against arbitrary
-within-patient score correlation; it does not correct transition-model bias or
-Markov/proportional-odds misspecification.
+superpopulation target treats the fitted cohort as sampled and combines profile
+variation with fitted-model score variation in a patient-level stacked influence
+function. `orm_markov(id_var = "id")` and `vglm_markov(id_var = "id")` preserve
+one designated starting profile per fitted patient before response-driven row
+omission. A missing first transition response is allowed when that profile is
+complete and the patient contributes a later likelihood transition.
+Patient-cluster robustness protects the variance against arbitrary within-patient
+score correlation; it does not correct transition-model bias, informative
+observation, or Markov/proportional-odds misspecification.
 
-The empirical and population targets apply only to averaged SOP or comparison
-objects. For an individual `sops()` result, omit `target` or use
-`target = "fixed"`; no other analytical target is accepted.
+The empirical and superpopulation targets apply only to averaged SOP or
+comparison objects. For an individual `sops()` result, omit `target` or use
+`target = "fixed"`; no other analytical target is accepted. The old unreleased
+`target = "population"` spelling is not supported.
 
 ## Learn More
 

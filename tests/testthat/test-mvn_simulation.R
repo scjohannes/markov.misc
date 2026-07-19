@@ -396,8 +396,12 @@ describe("MVN Simulation-Based Inference for SOPs", {
       skip_if_not_installed("rms")
 
       data <- make_test_data(n_patients = 50, seed = 778, follow_up_time = 10)
-      baseline_data <- data[data$time == 1, ]
-      m_robust <- make_test_model(data, robust = TRUE)
+      m_robust <- vglm_markov(
+        ordered(y) ~ time_lin + time_nlin_1 + tx + yprev,
+        family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+        data = data,
+        id_var = "id"
+      )
 
       avg_result <- avg_sops(
         model = m_robust,

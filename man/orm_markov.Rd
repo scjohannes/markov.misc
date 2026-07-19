@@ -4,7 +4,18 @@
 \alias{orm_markov}
 \title{Fit an rms Markov Model}
 \usage{
-orm_markov(formula, data, ..., id_var = NULL, x = TRUE, y = TRUE)
+orm_markov(
+  formula,
+  data,
+  ...,
+  id_var = NULL,
+  time_var = "time",
+  start_time = NULL,
+  origin_time = 0,
+  time_map = NULL,
+  x = TRUE,
+  y = TRUE
+)
 }
 \arguments{
 \item{formula}{
@@ -29,6 +40,23 @@ column in \code{data}. When supplied, the returned object is wrapped with
 \code{\link[rms:robcov]{rms::robcov()}} using this column as the cluster. When omitted, the fit is
 returned without cluster-robust covariance and a warning is issued.}
 
+\item{time_var}{Character scalar naming the modeled time column used to
+identify the designated starting-profile row.}
+
+\item{start_time}{Optional starting-profile visit. \code{NULL} uses the first
+scheduled numeric time or the first factor level across the pre-NA fitting
+data. This is a cohort-wide visit, never each patient's first retained
+likelihood row.}
+
+\item{origin_time}{Origin assigned to the previous-state value carried by the
+starting profile. The default is 0. This metadata may differ from
+\code{start_time}, for example when the row predicting day 1 carries a day-0
+state in \code{yprev}.}
+
+\item{time_map}{Optional visit-to-real-time mapping retained with the fitted
+model. For factor time with \code{start_time = NULL}, the visit with the smallest
+mapped real time is designated when the mapping is complete.}
+
 \item{x}{
 causes the expanded design matrix (with missings excluded)
 to be returned under the name \code{x}.  For \code{print}, an object
@@ -47,9 +75,19 @@ the robust covariance computed by \code{\link[rms:robcov]{rms::robcov()}}.
 \description{
 \code{orm_markov()} is a thin package-aware wrapper around \code{\link[rms:orm]{rms::orm()}} for
 Markov SOP workflows. It fits with \code{x = TRUE} and \code{y = TRUE} by default,
-rejects offsets, stores the row-aligned fitting data on the returned model,
-and computes cluster-robust standard errors automatically when \code{id_var} is
-supplied.
+rejects offsets, stores separate likelihood, refit, and designated-start
+profile data on the returned model, and computes cluster-robust standard
+errors automatically when \code{id_var} is supplied.
+}
+\details{
+Starting profiles are retained before response-driven model-frame
+omission. Every fitted patient must have exactly one complete profile at
+the cohort-wide \code{start_time}, including ID, model predictors, time, and the
+previous state; the transition response on that row may be missing. A
+patient is included only when at least one usable likelihood transition is
+fitted somewhere. Patients with no fitted transition are excluded, and a
+fitted patient without a complete designated profile is an error. Later
+likelihood rows are not substituted for that profile.
 }
 \examples{
 \dontrun{

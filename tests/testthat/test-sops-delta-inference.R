@@ -35,9 +35,20 @@ test_that("the delta target preserves established positional arguments", {
   expect_identical(
     names(formals(inferences)),
     c(
-      "x", "method", "n_draws", "vcov", "cluster", "workers", "seed",
-      "conf_level", "conf_type", "null", "return_draws", "update_datadist",
-      "use_coefstart", "target"
+      "x",
+      "method",
+      "n_draws",
+      "vcov",
+      "cluster",
+      "workers",
+      "seed",
+      "conf_level",
+      "conf_type",
+      "null",
+      "return_draws",
+      "update_datadist",
+      "use_coefstart",
+      "target"
     )
   )
 })
@@ -103,7 +114,7 @@ delta_public_orm_case <- local({
   }
 })
 
-delta_public_population_case <- local({
+delta_public_superpopulation_case <- local({
   value <- NULL
   function() {
     skip_if_not_installed("VGAM")
@@ -185,7 +196,10 @@ central_public_sops_jacobian <- function(object, model) {
 }
 
 `[.delta_subset_trap` <- function(x, ...) {
-  stop("Analytical state was subset before its allocation guard.", call. = FALSE)
+  stop(
+    "Analytical state was subset before its allocation guard.",
+    call. = FALSE
+  )
 }
 
 as.data.frame.delta_finalize_trap <- function(x, ...) {
@@ -492,7 +506,7 @@ test_that("public delta workflow returns bounded SOP and Wald comparison interva
   )
 })
 
-test_that("population targets reject explicit coefficient covariance", {
+test_that("superpopulation targets reject explicit coefficient covariance", {
   object <- data.frame(
     estimand = "sop",
     time = 1,
@@ -513,7 +527,7 @@ test_that("population targets reject explicit coefficient covariance", {
   condition <- tryCatch(
     delta_validate_comparison_scope(
       object,
-      target = "population",
+      target = "superpopulation",
       vcov = diag(1),
       conf_type = "wald"
     ),
@@ -618,8 +632,8 @@ test_that("public empirical ORM averages use complete named covariance", {
   expect_identical(attr(inferred, "covariance_source"), "explicit")
 })
 
-test_that("same-cohort population averages expose the direct stacked influence", {
-  case <- delta_public_population_case()
+test_that("fitted-cohort superpopulation averages expose stacked influence", {
+  case <- delta_public_superpopulation_case()
   avg <- avg_sops(
     case$model,
     variables = list(tx = c(0, 1)),
@@ -627,7 +641,7 @@ test_that("same-cohort population averages expose the direct stacked influence",
     y_levels = case$y_levels,
     absorb = max(case$y_levels)
   )
-  inferred <- inferences(avg, method = "delta", target = "population")
+  inferred <- inferences(avg, method = "delta", target = "superpopulation")
 
   avg_args <- attr(avg, "avg_args")
   newdata <- attr(avg, "newdata_pred")
@@ -675,7 +689,7 @@ test_that("same-cohort population averages expose the direct stacked influence",
     profile_ids = profile_ids,
     score_components = get_delta_score_components(
       case$model,
-      cluster = delta_population_cluster(avg, NULL, avg_args$id_var)
+      cluster = delta_superpopulation_cluster(NULL)
     )
   )
   analytical <- attr(inferred, "analytical")
@@ -702,7 +716,81 @@ test_that("same-cohort population averages expose the direct stacked influence",
     ignore_attr = TRUE
   )
   expect_identical(analytical$profile_ids, profile_ids)
-  expect_identical(attr(inferred, "target"), "population")
+  expect_identical(attr(inferred, "target"), "superpopulation")
+  metadata <- attr(inferred, "covariance_metadata")
+  expect_equal(attr(inferred, "covariance_source"), "stacked_patient_influence")
+  expect_equal(metadata$n_patients, length(profile_ids))
+  expect_equal(metadata$finite_sample_method, "patient_level_sample_covariance")
+  expect_equal(
+    metadata$finite_sample_factor,
+    length(profile_ids) / (length(profile_ids) - 1L)
+  )
+  expect_equal(metadata$bread_source, "robcov_vglm_observed")
+})
+
+test_that("backend HC settings affect empirical but not superpopulation inference", {
+  case <- delta_public_superpopulation_case()
+  raw <- case$model$vglm_fit
+  data <- case$data
+  hc0 <- robcov_vglm(
+    raw,
+    cluster = attr(raw, "markov_data")$id,
+    type = "HC0",
+    cadjust = FALSE
+  )
+  hc1 <- robcov_vglm(
+    raw,
+    cluster = attr(raw, "markov_data")$id,
+    type = "HC1",
+    cadjust = TRUE
+  )
+
+  point_hc0 <- avg_sops(
+    hc0,
+    variables = list(tx = c(0, 1)),
+    times = 1:2,
+    y_levels = case$y_levels,
+    absorb = max(case$y_levels)
+  )
+  point_hc1 <- avg_sops(
+    hc1,
+    variables = list(tx = c(0, 1)),
+    times = 1:2,
+    y_levels = case$y_levels,
+    absorb = max(case$y_levels)
+  )
+  empirical_hc0 <- inferences(point_hc0, method = "delta")
+  empirical_hc1 <- inferences(point_hc1, method = "delta")
+  super_hc0 <- inferences(
+    point_hc0,
+    method = "delta",
+    target = "superpopulation"
+  )
+  super_hc1 <- inferences(
+    point_hc1,
+    method = "delta",
+    target = "superpopulation"
+  )
+
+  expect_gt(max(abs(empirical_hc0$std.error - empirical_hc1$std.error)), 1e-10)
+  expect_equal(super_hc0$estimate, super_hc1$estimate, tolerance = 1e-12)
+  expect_equal(super_hc0$std.error, super_hc1$std.error, tolerance = 1e-12)
+  expect_equal(
+    attr(super_hc0, "covariance_metadata")$backend_hc_type_ignored,
+    "HC0"
+  )
+  expect_equal(
+    attr(super_hc1, "covariance_metadata")$backend_hc_type_ignored,
+    "HC1"
+  )
+  expect_identical(
+    attr(super_hc0, "covariance_metadata")$backend_cadjust_ignored,
+    FALSE
+  )
+  expect_identical(
+    attr(super_hc1, "covariance_metadata")$backend_cadjust_ignored,
+    TRUE
+  )
 })
 
 test_that("public delta scope enforces fixed targets and patient clustering", {
@@ -730,21 +818,42 @@ test_that("public delta scope enforces fixed targets and patient clustering", {
     error = TRUE
   )
 
-  population_case <- delta_public_population_case()
+  superpopulation_case <- delta_public_superpopulation_case()
   avg <- avg_sops(
-    population_case$model,
+    superpopulation_case$model,
     variables = list(tx = c(0, 1)),
     times = 1:2,
-    y_levels = population_case$y_levels,
-    absorb = max(population_case$y_levels)
+    y_levels = superpopulation_case$y_levels,
+    absorb = max(superpopulation_case$y_levels)
   )
   expect_snapshot(
     inferences(
       avg,
       method = "delta",
-      target = "population",
-      vcov = population_case$model$var
+      target = "superpopulation",
+      vcov = superpopulation_case$model$var
     ),
+    error = TRUE
+  )
+  expect_snapshot(
+    inferences(avg, method = "delta", target = "population"),
+    error = TRUE
+  )
+
+  supplied <- avg_sops(
+    superpopulation_case$model,
+    newdata = markov_validate_origin_profiles(superpopulation_case$model)[
+      seq_len(5L),
+      ,
+      drop = FALSE
+    ],
+    variables = list(tx = c(0, 1)),
+    times = 1:2,
+    y_levels = superpopulation_case$y_levels,
+    absorb = max(superpopulation_case$y_levels)
+  )
+  expect_snapshot(
+    inferences(supplied, method = "delta", target = "superpopulation"),
     error = TRUE
   )
 })

@@ -34,10 +34,11 @@ avg_sops(
 For \code{orm} models, the family must be logistic.}
 
 \item{newdata}{Optional data frame of standardization profiles. When
-supplied, every row is treated as a separate baseline profile and the
+supplied, every row is treated as a separate fixed profile and the
 internal \code{rowid} column is regenerated. If \code{NULL}, uses data stored by
-\code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}} and extracts one
-prediction row per \code{id_var}.}
+\code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}} and requires exactly
+one complete designated starting profile per fitted patient. \code{refit_data}
+is never used as a prediction-profile fallback.}
 
 \item{variables}{A named list specifying the variable(s) to standardize over.
 E.g., \code{list(tx = c(0, 1))} creates counterfactual datasets for treatment
@@ -130,6 +131,12 @@ each time-state-treatment combination, yielding population-average
 
 The result represents the expected SOP if the entire population received
 treatment vs. control, averaged over the observed covariate distribution.
+For automatic wrapper-stored standardization, that distribution contains
+exactly the fitted patients with a complete designated starting profile and
+at least one usable likelihood transition. A missing response at the
+designated row alone does not exclude a patient who contributes a later
+transition. Patients with no usable fitted transition are excluded, and a
+fitted patient without a complete designated profile is an error.
 For \code{rmsb::blrm()} models, patient-level posterior arrays are chunked and
 marginalized by draw before summarizing to reduce memory use.
 State-wise medians and interval bounds are not constrained to sum to one
@@ -146,7 +153,7 @@ fit <- vglm_markov(
   id_var = "id"
 )
 
-# Wrapper-fitted models can use stored data and extract baseline rows.
+# Wrapper-fitted models can use their stored designated starting profiles.
 result <- avg_sops(
   model = fit,
   variables = list(tx = c(0, 1)),

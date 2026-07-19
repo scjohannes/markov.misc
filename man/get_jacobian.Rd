@@ -19,6 +19,6 @@ per fitted model coefficient.
 }
 \description{
 Extracts the raw-coefficient Jacobian retained by analytical delta-method
-inference. Population-target results return the average Jacobian used in the
-stacked influence function.
+inference. Superpopulation-target results return the average Jacobian used in
+the stacked influence function.
 }

@@ -11,6 +11,10 @@ blrm_markov(
   data,
   ...,
   id_var = NULL,
+  time_var = "time",
+  start_time = NULL,
+  origin_time = 0,
+  time_map = NULL,
   x = TRUE,
   y = TRUE
 )
@@ -31,6 +35,23 @@ column in \code{data}. When supplied, SOP calls can reuse the stored full data
 and infer the ID column for baseline extraction and random-effect
 prediction.}
 
+\item{time_var}{Character scalar naming the modeled time column used to
+identify the designated starting-profile row.}
+
+\item{start_time}{Optional starting-profile visit. \code{NULL} uses the first
+scheduled numeric time or the first factor level across the pre-NA fitting
+data. This is a cohort-wide visit, never each patient's first retained
+likelihood row.}
+
+\item{origin_time}{Origin assigned to the previous-state value carried by the
+starting profile. The default is 0. This metadata may differ from
+\code{start_time}, for example when the row predicting day 1 carries a day-0
+state in \code{yprev}.}
+
+\item{time_map}{Optional visit-to-real-time mapping retained with the fitted
+model. For factor time with \code{start_time = NULL}, the visit with the smallest
+mapped real time is designated when the mapping is complete.}
+
 \item{x}{set to \code{FALSE} to not store the design matrix in the fit.  \code{x=TRUE} is needed if running \code{blrmStats} for example.}
 
 \item{y}{set to \code{FALSE} to not store the response variable in the fit}
@@ -41,10 +62,17 @@ A fitted \code{blrm} object with \code{markov.misc} stored-data metadata.
 \description{
 \code{blrm_markov()} is a thin package-aware wrapper around \code{\link[rmsb:blrm]{rmsb::blrm()}} for
 Markov SOP workflows. It fits with \code{x = TRUE} and \code{y = TRUE} by default,
-rejects offsets, and stores the row-aligned fitting data and optional patient
-ID column on the returned model. Bayesian fits do not receive
+rejects offsets, and stores separate likelihood, refit, and designated-start
+profile data plus the optional patient ID on the returned model. Bayesian
+fits do not receive
 cluster-robust covariance; posterior uncertainty comes from the fitted
 \code{blrm} draws.
+}
+\details{
+The designated-start profile and fitted-patient eligibility contract
+is the same as for \code{\link[=orm_markov]{orm_markov()}}. In particular, the transition response
+at the starting row may be missing when that patient contributes another
+usable likelihood transition.
 }
 \examples{
 \dontrun{

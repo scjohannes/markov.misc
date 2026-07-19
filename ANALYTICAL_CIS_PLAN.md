@@ -20,15 +20,16 @@ the post-implementation concerns that will be investigated one at a time.
   empirical-cohort propagation unless the user supplies a valid complete
   coefficient covariance.
 - For averaged objects, treat `target = "empirical"` as conditional on the
-  observed standardization profiles. Treat `target = "population"` as a
-  same-cohort population target and use a stacked patient influence function
-  that retains profile/model-score covariance. Individual `sops()` accepts only
-  an omitted target or `target = "fixed"`.
+  observed standardization profiles. Treat `target = "superpopulation"` as a
+  fitted-cohort superpopulation target and use a stacked patient influence
+  function that retains profile/model-score covariance. The unreleased
+  `target = "population"` spelling is unsupported. Individual `sops()` accepts
+  only an omitted target or `target = "fixed"`.
 - Store factorized analytical state and materialize selected Jacobian or
   covariance blocks with `get_jacobian()` and `vcov()`.
 - Support linear differences for SOP and time-in-state estimands, including
-  visit-to-real-time mapping, empirical-baseline origin handling, linear
-  interpolation, and trapezoidal integration.
+  visit-to-real-time mapping, observed-baseline anchoring, linear interpolation,
+  and trapezoidal integration.
 - Fail explicitly outside the approved scope rather than silently switching to
   numerical differentiation, row-level clusters, or another inferential target.
 
@@ -39,7 +40,7 @@ the post-implementation concerns that will be investigated one at a time.
 | Individual `sops()` | Omitted or `fixed` only | Componentwise logit-delta under `conf_type = "auto"` |
 | `avg_sops()` | `empirical` | Componentwise logit-delta under `conf_type = "auto"` |
 | Supported `avg_comparisons()` | `empirical` | Identity-scale Wald under `conf_type = "auto"` |
-| Stored-cohort averages/comparisons | explicit `population` | Same-cohort stacked influence covariance |
+| Stored-cohort averages/comparisons | explicit `superpopulation` | Fitted-cohort stacked influence covariance |
 
 Patient is always the independent cluster. An explicit row-aligned `cluster`
 vector takes precedence; otherwise stored fitting data and stored `id_var`
@@ -73,7 +74,7 @@ bias, informative missingness, or Markov/proportional-odds misspecification.
   `markov.misc.delta_max_bytes` and the typed
   `markov_misc_delta_too_large` condition.
 
-### Covariance and Population Targets
+### Covariance and Superpopulation Targets
 
 - [x] Validate complete named, finite, symmetric, positive-semidefinite custom
   covariance matrices for coefficient-form targets.
@@ -82,35 +83,35 @@ bias, informative missingness, or Markov/proportional-odds misspecification.
 - [x] Aggregate raw transition-row scores by patient and construct inverse
   per-patient sensitivity from inverse total information, not from the robust
   sandwich covariance.
-- [x] Align same-cohort profile and score IDs exactly, retain zero-score
-  profiles, reject score-only patients, and scale sensitivity to the full
-  profile cohort.
+- [x] Align designated starting-profile and score IDs exactly. Include only
+  fitted patients with at least one usable likelihood transition, reject
+  score-only patients whose starting profile is unavailable, and never insert
+  profile-only zero-score patients.
 - [x] Form vector stacked influences and use
   `stats::cov(influence) / n` with the finite-sample convention reported in
   metadata.
 - [x] Reject custom covariance and user-supplied external profiles for the
-  population target.
+  superpopulation target.
 
 ### Result Access and Comparisons
 
 - [x] Store coefficient-form analytical state as `J` plus coefficient `V`.
-- [x] Store population-form analytical state as average `J` plus the patient
-  influence matrix.
+- [x] Store superpopulation-form analytical state as average `J` plus the
+  patient influence matrix.
 - [x] Add row-selective `get_jacobian()` and S3 `vcov()` methods without storing
   a dense all-cell covariance.
 - [x] Implement linear operators for SOP and time-in-state differences.
 - [x] Reproduce point estimates before propagating a comparison operator.
-- [x] Support factor-time real-time differences through the stored `time_map`,
-  origin, interpolation grid, and trapezoidal weights.
+- [x] Support factor-time real-time differences through a supplied `time_map`,
+  observed-baseline anchor, interpolation grid, and trapezoidal weights.
 
 ### Tests and Documentation
 
 - [x] Add focused core tests for ORM/VGLM derivatives, absorbing states, factor
   visits, validation conditions, and allocation guards.
-- [x] Add focused population tests for cluster resolution, covariance
-  conventions, score scaling/alignment, zero-score profiles, and the stacked
-  cross term. The population test file passed 51 assertions with no warnings in
-  the implementation session.
+- [x] Add focused superpopulation tests for cluster resolution, covariance
+  conventions, exact score/profile alignment, profile-only exclusion, and the
+  stacked cross term.
 - [x] Add focused public/accessor/comparison tests for dispatch, interval
   defaults, selected covariance blocks, and linear comparison operators.
 - [x] Update `ARCHITECTURE.md`, `README.md`, `NEWS.md`, and the factor-time
@@ -128,8 +129,8 @@ bias, informative missingness, or Markov/proportional-odds misspecification.
 - First-order Markov recursion.
 - Full proportional odds with reverse cumulative logit.
 - Frequentist `orm`, `vglm`, and `robcov_vglm` backends.
-- Individual SOPs, empirical average SOPs, and same-cohort population average
-  SOPs.
+- Individual SOPs, empirical average SOPs, and fitted-cohort superpopulation
+  average SOPs.
 - Difference comparisons for `estimand = "sop"` and
   `estimand = "time_in_state"`.
 - Numeric or factor visit designs supported by the first-order execution plan.
@@ -197,46 +198,68 @@ For every concern:
 
 | ID | Priority | Status | Concern |
 | --- | --- | --- | --- |
-| ACI-01 | High | Open | Population finite-sample normalization |
-| ACI-02 | High | Open | Population score orientation and cross-term scaling |
-| ACI-03 | High | Open | Penalized ORM population inference |
-| ACI-04 | High | Open | Zero-score profile sensitivity scaling |
+| ACI-01 | High | Resolved | Superpopulation finite-sample normalization and fitted-cohort contract |
+| ACI-02 | High | Open | Superpopulation score orientation and cross-term scaling |
+| ACI-03 | High | Resolved | Penalized ORM superpopulation inference |
+| ACI-04 | High | Resolved | Zero-score profile sensitivity scaling |
 | ACI-05 | High | Open | Stored ORM robust covariance identity and correction metadata |
 | ACI-06 | Medium | Open | Unnamed penalized-ORM covariance relabeling |
 | ACI-07 | Medium | Open | VGLM raw-to-effective constraint mapping |
 | ACI-08 | Medium | Open | Structural boundary classification |
-| ACI-09 | Medium | Open | Factor-time interpolation and integration conventions |
+| ACI-09 | Medium | Active | First-follow-up profiles and real-time integration conventions |
 | ACI-10 | Medium | Open | Memory accounting versus actual process memory |
 | ACI-11 | Medium | Open | Grouped native execution row-layout contract |
-| ACI-12 | Medium | Open | Population `get_jacobian()` semantics |
+| ACI-12 | Medium | Open | Superpopulation `get_jacobian()` semantics |
 | ACI-13 | Medium | Open | `vcov()` dispatch for non-delta result objects |
 | ACI-14 | Medium | Open | Dense comparison and covariance materialization |
 | ACI-15 | Medium | Open | Numerical validation tolerances and portability |
 | ACI-16 | Medium | Open | Native C++ maintenance and semantic parity |
 | ACI-17 | Low | Open | Performance benchmark generalizability |
-| ACI-18 | High | Open | Independent population-inference validation oracle |
+| ACI-18 | High | Open | Independent superpopulation-inference validation oracle |
 | ACI-19 | Low | Open | Public target terminology and formal defaults |
 | ACI-20 | Low | Open | Generated native build artifacts in the worktree |
 
-### ACI-01: Population finite-sample normalization
+### ACI-01: Superpopulation finite-sample normalization and fitted-cohort contract
 
-- **Status:** Open
+- **Status:** Resolved on 2026-07-19
 - **Priority:** High
-- **Current decision:** Population covariance is
+- **Current decision:** Superpopulation covariance is
   `stats::cov(influence) / n`. Because `stats::cov()` uses denominator `n - 1`,
-  this is an HC1-like finite-sample convention.
-- **Concern:** This follows the approved formula but is not the raw empirical
-  influence covariance based on denominator `n^2`. It also does not literally
-  preserve every empirical backend's HC/cadjust convention for the population
-  target.
-- **Resolution approach:** Derive the target covariance and finite-sample
-  correction from the manuscript's estimating equations. Compare
-  `crossprod(phi) / n^2`, `stats::cov(phi) / n`, and backend correction factors
-  in hand-calculated clustered examples. Decide whether population correction
-  should be fixed, backend-specific, or user-selectable.
-- **Resolution log:** Pending.
+  this is the manuscript's patient-level sample-covariance correction,
+  `n / (n - 1)`, relative to the centered patient-level HC0 expression. Do not
+  call this backend HC1. The unreleased `target = "population"` spelling is
+  removed rather than deprecated; the public target is
+  `target = "superpopulation"`.
+- **Concern:** The covariance normalization must remain distinct from backend
+  row-level HC/cadjust conventions. Its patient cohort must also match the
+  fitted cohort exactly without introducing profile-only zero-score patients.
+- **Resolution approach:** Retain `stats::cov(phi) / n` and test its exact
+  centered-matrix identity. Refactor fitting wrappers to retain one complete
+  designated-origin prediction profile before response-driven model-frame row
+  omission. Include exactly the patients who both have that profile and
+  contribute at least one usable likelihood transition anywhere in the fitted
+  data. A missing first transition outcome alone is allowed; a fitted patient
+  without the required origin profile is an error; a profile-only patient is
+  excluded. Remove zero-score insertion and sensitivity-ratio rescaling.
+- **Resolution log:** Implemented the user-approved contract:
+  every fitted patient must have a complete baseline/origin profile containing
+  the prediction variables and day-0 previous state, but not the first
+  transition response. The origin can be configured (including day 1 or another
+  value) and defaults to numeric time 0. Later likelihood rows do not substitute
+  for the designated origin row. Automatic inference uses model-stored profile
+  data; fixed user `newdata` remains empirical-only; `refit_data` remains solely
+  refitting infrastructure. The implementation removes profile-only zero scores
+  and sensitivity-ratio scaling, rejects penalized or weighted ORM
+  superpopulation inference before Jacobian allocation, exposes the covariance
+  convention and ignored backend HC settings in metadata, and retains
+  `stats::cov(phi) / n`. Work began after checkpoint commit `7b04ff6`.
+  `air format .`, focused analytical/profile tests, the complete test suite, and
+  `devtools::document()` passed. The analytical-CI, factor-time ORM, and
+  many-level previous-state spline vignettes rendered successfully. The final
+  `devtools::check()` completed with 0 errors and 0 warnings; its sole note was
+  the isolated environment's inability to verify the current network time.
 
-### ACI-02: Population score orientation and cross-term scaling
+### ACI-02: Superpopulation score orientation and cross-term scaling
 
 - **Status:** Open
 - **Priority:** High
@@ -254,40 +277,49 @@ For every concern:
   without requiring agreement with MVN draws or bootstrap percentiles.
 - **Resolution log:** Pending.
 
-### ACI-03: Penalized ORM population inference
+### ACI-03: Penalized ORM superpopulation inference
 
-- **Status:** Open
+- **Status:** Resolved on 2026-07-19
 - **Priority:** High
 - **Current decision:** Empirical inference supports penalized ORM fits.
-  Population inference is not currently rejected solely because an ORM fit is
-  penalized.
-- **Concern:** The inverse sensitivity may reflect the penalty while reconstructed
-  patient scores are likelihood scores. Uncertainty from selecting or tuning
-  the penalty is not represented. The many-level spline vignette exercises the
-  empirical target, not this population contract.
-- **Resolution approach:** Derive the influence function with fixed penalty and
-  determine whether the penalty contribution cancels after centering. Separately
-  decide whether penalty-selection uncertainty is in scope. Until the derivation
-  is confirmed, consider explicitly rejecting penalized ORM population
-  inference while retaining empirical support.
-- **Resolution log:** Pending.
+  Superpopulation inference deliberately rejects penalized ORM fits before
+  allocating the analytical Jacobian. Supporting this combination is not part
+  of the current analytical-CI contract.
+- **Concern:** The reconstructed patient contributions are unpenalized
+  likelihood scores, whereas the inverse sensitivity from a penalized fit may
+  include curvature from the penalty. Combining those quantities does not
+  establish a coherent stacked patient influence function. It would also omit
+  uncertainty introduced by selecting or tuning the penalty.
+- **Resolution approach:** Retain an explicit, informative early error for
+  `target = "superpopulation"` with a penalized ORM fit. Preserve empirical
+  inference because it propagates the fitted coefficient covariance through
+  the SOP Jacobian and does not require reconstructing the superpopulation
+  score/sensitivity system.
+- **Resolution log:** The rejection is an intentional scope decision, not a
+  temporary fallback. Regression tests verify that empirical delta inference
+  remains available for penalized ORM fits and that superpopulation inference
+  fails before the potentially large Jacobian allocation. The
+  `many-levels-previous-state-spline` vignette exercises the supported empirical
+  path.
 
 ### ACI-04: Zero-score profile sensitivity scaling
 
-- **Status:** Open
+- **Status:** Resolved on 2026-07-19 as an inseparable part of ACI-01
 - **Priority:** High
-- **Current decision:** Baseline-profile patients without likelihood rows are
-  retained with zero scores, and inverse per-profile sensitivity is rescaled by
-  `n_profiles / n_score_patients`.
-- **Concern:** This is appropriate if those patients are cohort members with a
-  zero contribution to the study-cohort estimating equation. It may be
-  inappropriate if their absent transition rows reflect selection, informative
-  missingness, or a different risk-set definition.
-- **Resolution approach:** State the sampling and missingness assumptions
-  explicitly, derive the estimating equation when patients have no transition
-  rows, and test fixtures with known score/profile cohort relationships. Decide
-  whether additional metadata or a stricter error is needed.
-- **Resolution log:** Pending.
+- **Current decision:** A patient without any usable likelihood transition is
+  excluded from the fitted-cohort estimand. No zero-score row or sensitivity
+  rescaling is constructed.
+- **Concern:** The previous implementation could include profile-only patients
+  with synthetic zero scores and rescale sensitivity by
+  `n_profiles / n_score_patients`, changing the fitted estimating-equation
+  cohort.
+- **Resolution approach:** Define the cohort by the fitted patient IDs, retain
+  starting profiles before response-driven row omission, and require exact
+  profile/score patient matching. A missing first outcome is allowed when a
+  later usable transition exists.
+- **Resolution log:** Resolved by the ACI-01 contract. Regression tests cover a
+  missing first outcome, later likelihood contribution, profile-only exclusion,
+  missing fitted-patient profiles, and exact score/profile matching.
 
 ### ACI-05: Stored ORM robust covariance identity and corrections
 
@@ -358,21 +390,93 @@ For every concern:
   saturation.
 - **Resolution log:** Pending.
 
-### ACI-09: Factor-time interpolation and integration conventions
+### ACI-09: First-follow-up profiles and real-time integration conventions
 
-- **Status:** Open
+- **Status:** Active on 2026-07-19
 - **Priority:** Medium
-- **Current decision:** Use linear interpolation, average source contributions
-  at duplicated mapped times, anchor empirical-origin contrasts at zero, and
-  apply trapezoidal integration on requested real times.
-- **Concern:** The implementation reproduces current vignette point estimates,
-  but duplicate-time collapse, empirical-origin anchoring, and interpolation
-  outside explicit SOP nodes are estimand conventions that should be confirmed
-  independently of code replay.
-- **Resolution approach:** Write the estimand mathematically for regular and
-  irregular factor times. Work through small hand examples with duplicated
-  mappings and origins between visits. Confirm or revise the existing point
-  estimator and analytical operator together.
+- **Current decision:** Separate the first-follow-up profile-selection time from
+  the observed baseline-state time and from the requested integration grid.
+  The fitting wrappers need only `first_followup_time`; real-time summaries use
+  `baseline_time`, `time_map`, and `target_times`. Linear interpolation from the
+  observed baseline state to the first model-based SOP is retained, and
+  trapezoidal integration begins at `min(target_times)`, not automatically at
+  baseline.
+- **Public API contract:** Replace `start_time` with
+  `first_followup_time = NULL` in `orm_markov()`, `blrm_markov()`, and
+  `vglm_markov()`. For numeric time, `NULL` resolves to 1; time 1 must exist and
+  values below 1 are rejected. An explicit numeric value must exist and be the
+  earliest scheduled follow-up value. Factor or character time requires an
+  explicit matching level/value. Remove `origin_time` and `time_map` from the
+  fitting wrappers. Backward-compatible aliases are not required, and legacy
+  names captured by `...` must receive an informative error rather than leak to
+  a backend fitter.
+- **Starting-profile contract:** `first_followup_time` selects exactly one
+  pre-response-omission row per fitted patient. ID, `yprev`, modeled predictors,
+  and time metadata must be complete; the transition response may be missing.
+  Every included patient must contribute at least one usable likelihood row
+  somewhere. Patients with no likelihood row are excluded, fitted patients
+  without a complete first-follow-up profile are errors, and explicit user
+  `newdata` continues to replace automatic profiles. The resolved scalar is
+  retained only for audit metadata and error messages; it does not control SOP
+  recursion, interpolation, or integration.
+- **Real-time contract:** Replace downstream `origin_time` with
+  `baseline_time = 0` and remove the `origin` selector. A finite
+  `baseline_time` adds the observed `yprev` distribution as the interpolation
+  anchor; `baseline_time = NULL` disables it. The baseline time must precede the
+  earliest mapped model-based SOP. `time_map` maps modeled factor visits to the
+  continuous scale. `target_times` defines the returned interpolation grid and
+  the integration interval, so no `integration_start_time` argument is added.
+  For example, `baseline_time = 0`, a first mapped SOP at day 7, and
+  `target_times = 1:28` interpolate from the observed day-0 distribution to the
+  day-7 SOP but integrate only days 1 through 28.
+- **Defaults when `target_times` is absent:** `interpolate_sops()` returns the
+  baseline anchor and mapped SOP nodes when baseline anchoring is enabled.
+  `time_in_state()` and time-in-state comparisons integrate the mapped
+  follow-up nodes only, excluding the baseline interval by default. To begin
+  integration before the first mapped follow-up, the user supplies the desired
+  real-time grid; its minimum becomes the integration start. Including
+  `baseline_time` explicitly includes the full baseline-to-follow-up interval
+  in the AUC.
+- **Preserved conventions:** Continue to average source contributions at
+  duplicated mapped times, use linear interpolation only within the support
+  bounded by `baseline_time` and the last mapped SOP, normalize probability
+  mass as currently documented, and use trapezoidal integration on the sorted
+  unique `target_times`.
+- **Implementation tranches:**
+  1. Refactor wrapper formals, first-follow-up validation, stored attribute
+     names, robust-wrapper metadata copying, and automatic profile resolution in
+     `R/markov-model-data.R`, `R/vglm_helpers.R`, `R/robcov_vglm.R`, and
+     `R/sops-api.R`.
+  2. Rename and simplify baseline-anchor helpers and public arguments in
+     `R/sops-interpolate.R` and `R/sops-time-in-state.R`; keep point estimates,
+     stored draws, posterior draws, and interval recomputation aligned.
+  3. Propagate `baseline_time` and the target-grid contract through
+     `R/sops-comparisons.R`, comparison setup/reduction/replay helpers, bootstrap
+     inference, and stored comparison metadata.
+  4. Update the analytical comparison operator in
+     `R/sops-delta-comparisons.R` so its baseline-node augmentation,
+     interpolation matrix, trapezoidal weights, and point-estimate replay use
+     the same grid. The shared baseline anchor must continue to cancel exactly
+     in supported treatment differences.
+  5. Rename internal `origin` data/metadata helpers to starting-profile terms so
+     model metadata cannot be confused with the downstream baseline-time
+     anchor.
+  6. Regenerate roxygen documentation and update `NEWS.md`, `README.md`,
+     `ARCHITECTURE.md`, the analytical-CI vignette, and the factor-time vignette.
+- **Validation plan:** Add wrapper tests for numeric default 1, missing time 1,
+  values below 1, explicit alternative numeric starts, mandatory factor starts,
+  absent factor levels, duplicate/missing patient profiles, missing first
+  outcomes with later likelihood rows, and all three automatic SOP/comparison
+  consumers. Add hand-calculated interpolation/AUC tests showing a fixed day-0
+  baseline anchor with `target_times = 1:28`, default exclusion of the baseline
+  interval, explicit inclusion when requested, `baseline_time = NULL`, invalid
+  anchor ordering, duplicate mapped times, and fixed `newdata`. Repeat these for
+  point estimates, simulation/bootstrap/posterior draws, empirical delta
+  inference, and supported superpopulation differences. Require the renamed API
+  to reproduce current valid `origin_time = 0` estimates exactly when the same
+  `target_times` are explicit; test the intentional no-`target_times` default
+  change separately. Then run `air format .`, focused tests, the full suite,
+  affected vignette renders, `devtools::document()`, and `devtools::check()`.
 - **Resolution log:** Pending.
 
 ### ACI-10: Memory accounting versus process memory
@@ -406,20 +510,20 @@ For every concern:
   grouping no longer depends on contiguity, then benchmark the cost.
 - **Resolution log:** Pending.
 
-### ACI-12: Population `get_jacobian()` semantics
+### ACI-12: Superpopulation `get_jacobian()` semantics
 
 - **Status:** Open
 - **Priority:** Medium
-- **Current decision:** For a population target, `get_jacobian()` returns `G`,
+- **Current decision:** For a superpopulation target, `get_jacobian()` returns `G`,
   the average derivative with respect to model coefficients. Profile-distribution
   variation remains available only through the stored influence representation
   and `vcov()`.
 - **Concern:** The name `get_jacobian()` may suggest that the returned matrix
-  fully represents population uncertainty, which it does not.
+  fully represents superpopulation uncertainty, which it does not.
 - **Resolution approach:** Assess likely downstream usage. Either retain the
   contract with stronger naming/documentation and metadata, add a separate
-  influence accessor, or reject `get_jacobian()` for population targets if the
-  partial interpretation is too easy to misuse.
+  influence accessor, or reject `get_jacobian()` for superpopulation targets if
+  the partial interpretation is too easy to misuse.
 - **Resolution log:** Pending.
 
 ### ACI-13: `vcov()` dispatch for non-delta results
@@ -496,15 +600,15 @@ For every concern:
   break-even regions rather than a single general speedup claim.
 - **Resolution log:** Pending.
 
-### ACI-18: Independent population-inference validation oracle
+### ACI-18: Independent superpopulation-inference validation oracle
 
 - **Status:** Open
 - **Priority:** High
 - **Current decision:** Validate recursive Jacobians against central finite
-  differences and population covariance against hand calculations of the
+  differences and superpopulation covariance against hand calculations of the
   approved stacked influence formula. Do not require close MVN/bootstrap
   agreement.
-- **Concern:** Finite differences validate `G`, but the population hand tests
+- **Concern:** Finite differences validate `G`, but the superpopulation hand tests
   reproduce the same score/sensitivity formula as production code. This leaves
   no fully independent oracle for the complete stacked influence calculation.
 - **Resolution approach:** Implement a small, deliberately slow test-only
@@ -518,8 +622,9 @@ For every concern:
 - **Status:** Open
 - **Priority:** Low
 - **Current decision:** Use `fixed` for individual `sops()` and
-  `empirical`/`population` for averaged results. Use `conf_type = "auto"` as the
-  formal default while preserving percentile behavior for draw methods.
+  `empirical`/`superpopulation` for averaged results. The unreleased
+  `population` spelling has no alias. Use `conf_type = "auto"` as the formal
+  default while preserving percentile behavior for draw methods.
 - **Concern:** Users may naturally describe fixed observed `newdata` as
   empirical. Code that inspects `formals(inferences)` also observes a changed
   default even though runtime draw behavior is preserved.
@@ -554,7 +659,7 @@ tracked above.
   derivative workspace as simultaneous, causing a 300,960,000-byte estimate in
   the many-level empirical workflow.
 - **Resolution:** Average empirical Jacobians inside native recursion; retain
-  individual probabilities only for the population target; count rolling
+  individual probabilities only for the superpopulation target; count rolling
   workspace rather than mutually exclusive origin workspaces.
 - **Evidence:** The full many-level spline vignette renders under the default
   256 MiB limit. Grouped results match full individual recursion and the test-only
@@ -606,4 +711,24 @@ issues.
 - Added ACI-01 through ACI-20 after a post-implementation confidence audit.
 - Recorded RID-01 through RID-04 so corrected decisions and their evidence are
   retained rather than lost.
-- No concern has been selected as **Active** yet.
+- Checkpointed the concern register in commit `7b04ff6`.
+- Marked ACI-01 **Active**. Confirmed that the manuscript estimator remains
+  `stats::cov(phi) / n`, renamed the public target to `"superpopulation"`
+  without a `"population"` compatibility alias, and adopted the fitted-cohort
+  and preserved-origin-profile contract recorded under ACI-01.
+- Resolved ACI-01 after separating likelihood, refit, starting-profile, and user
+  prediction data; enforcing exact fitted-patient profile/score matching; and
+  completing focused tests, the full suite, three affected vignette renders,
+  roxygen regeneration, and the package check. ACI-04 was resolved as an
+  inseparable consequence because the approved cohort contract removes the
+  zero-score-patient pathway entirely.
+- Resolved ACI-03 by making rejection of penalized ORM superpopulation inference
+  an intentional scope decision. The reconstructed likelihood scores and the
+  penalty-aware sensitivity do not currently define a verified stacked patient
+  influence function, and penalty-selection uncertainty is not represented.
+  Empirical delta inference for penalized ORM fits remains supported.
+- Marked ACI-09 **Active** and approved the first-follow-up/baseline-time
+  separation. `first_followup_time` will only select and validate automatic
+  profiles; `baseline_time`, `time_map`, and `target_times` will define observed
+  baseline anchoring, real-time interpolation, and the integration grid without
+  a separate integration-start argument.

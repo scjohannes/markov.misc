@@ -191,6 +191,9 @@ head(cmp_days_delta)
 For comparisons, `conf_type = "auto"` selects identity-scale Wald intervals.
 The empirical target conditions on the observed standardization profiles while
 using the patient-cluster robust ORM coefficient covariance. Use
-`target = "population"` only when the stored fitting cohort is the population
-sample of interest and its profile distribution should enter the patient-level
-stacked influence function.
+`target = "superpopulation"` only when the fitted cohort is the sample of
+interest and its profile distribution should enter the patient-level stacked
+influence function. The wrapper uses the first factor visit by default (or the
+smallest mapped real time when `time_map` is complete) as the designated
+starting-profile row; set `start_time` explicitly when another scheduled visit
+defines the profile.

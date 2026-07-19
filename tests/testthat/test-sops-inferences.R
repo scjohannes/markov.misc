@@ -84,6 +84,16 @@ describe("avg_sops() and inferences() pipeline", {
     )
   }
 
+  fit_pipeline_wrapper_model <- function(data) {
+    suppressWarnings(markov.misc::vglm_markov(
+      ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + yprev + age,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id",
+      time_var = "time_lin"
+    ))
+  }
+
   fit_inline_pipeline_model <- function(data) {
     suppressWarnings(
       markov.misc::vglm_markov(
@@ -94,6 +104,15 @@ describe("avg_sops() and inferences() pipeline", {
     )
   }
 
+  fit_inline_pipeline_wrapper_model <- function(data) {
+    suppressWarnings(markov.misc::vglm_markov(
+      ordered(y) ~ rms::rcs(time, 4) * tx + yprev + age,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id"
+    ))
+  }
+
   fit_numeric_yprev_model <- function(data) {
     suppressWarnings(
       markov.misc::vglm_markov(
@@ -102,6 +121,15 @@ describe("avg_sops() and inferences() pipeline", {
         data = data
       )
     )
+  }
+
+  fit_numeric_yprev_wrapper_model <- function(data) {
+    suppressWarnings(markov.misc::vglm_markov(
+      ordered(y) ~ rms::rcs(time, 4) * tx + rms::rcs(yprev, 6),
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id"
+    ))
   }
 
   pipeline_signature <- function(result) {
@@ -472,10 +500,7 @@ describe("avg_sops() and inferences() pipeline", {
       time_var = "time_lin",
       p_var = "yprev"
     )
-    gamma <- markov.misc:::compute_Gamma(
-      stats::coef(model),
-      VGAM::constraints(model)
-    )
+    gamma <- markov.misc:::get_effective_coefs(model)
     fast <- markov.misc:::markov_msm_run(
       components = components,
       Gamma = gamma,
@@ -517,10 +542,7 @@ describe("avg_sops() and inferences() pipeline", {
       y_levels = case$y_levels,
       p_var = "yprev"
     )
-    gamma <- markov.misc:::compute_Gamma(
-      stats::coef(model),
-      VGAM::constraints(model)
-    )
+    gamma <- markov.misc:::get_effective_coefs(model)
     fast <- markov.misc:::markov_msm_run(
       components = components,
       Gamma = gamma,
@@ -555,10 +577,7 @@ describe("avg_sops() and inferences() pipeline", {
       y_levels = case$y_levels,
       p_var = "yprev"
     )
-    gamma <- markov.misc:::compute_Gamma(
-      stats::coef(model),
-      VGAM::constraints(model)
-    )
+    gamma <- markov.misc:::get_effective_coefs(model)
     fast <- markov.misc:::markov_msm_run(
       components = components,
       Gamma = gamma,
@@ -663,7 +682,7 @@ describe("avg_sops() and inferences() pipeline", {
     skip_if_not_installed("rms")
 
     case <- build_brownian_pipeline_case()
-    model <- fit_pipeline_model(case$data)
+    model <- fit_pipeline_wrapper_model(case$data)
 
     avg <- markov.misc::avg_sops(
       model = model,
@@ -677,7 +696,8 @@ describe("avg_sops() and inferences() pipeline", {
       time_covariates = case$time_covariates,
       id_var = "id"
     )
-    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$data))
+    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$baseline))
+    expect_equal(nrow(attr(avg, "refit_data")), nrow(case$data))
 
     withr::local_seed(4402)
     inferred <- markov.misc::inferences(
@@ -710,7 +730,7 @@ describe("avg_sops() and inferences() pipeline", {
     skip_if_not_installed("rms")
 
     case <- build_brownian_pipeline_case()
-    model <- fit_pipeline_model(case$data)
+    model <- fit_pipeline_wrapper_model(case$data)
 
     avg <- markov.misc::avg_sops(
       model = model,
@@ -749,7 +769,7 @@ describe("avg_sops() and inferences() pipeline", {
     skip_if_not_installed("rms")
 
     case <- build_numeric_yprev_case()
-    model <- fit_numeric_yprev_model(case$data)
+    model <- fit_numeric_yprev_wrapper_model(case$data)
 
     avg <- markov.misc::avg_sops(
       model = model,
@@ -780,8 +800,8 @@ describe("avg_sops() and inferences() pipeline", {
     skip_if_not_installed("rms")
 
     case <- build_brownian_pipeline_case()
-    model <- fit_pipeline_model(case$data)
-    robust_model <- markov.misc::robcov_vglm(model, cluster = case$data$id)
+    model <- fit_pipeline_wrapper_model(case$data)
+    robust_model <- model
 
     avg <- markov.misc::avg_sops(
       model = robust_model,
@@ -795,7 +815,8 @@ describe("avg_sops() and inferences() pipeline", {
       time_covariates = case$time_covariates,
       id_var = "id"
     )
-    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$data))
+    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$baseline))
+    expect_equal(nrow(attr(avg, "refit_data")), nrow(case$data))
 
     withr::local_seed(4403)
     inferred <- markov.misc::inferences(
@@ -827,8 +848,8 @@ describe("avg_sops() and inferences() pipeline", {
     skip_if_not_installed("rms")
 
     case <- build_numeric_yprev_case()
-    model <- fit_numeric_yprev_model(case$data)
-    robust_model <- markov.misc::robcov_vglm(model, cluster = case$data$id)
+    model <- fit_numeric_yprev_wrapper_model(case$data)
+    robust_model <- model
 
     avg <- markov.misc::avg_sops(
       model = robust_model,
@@ -927,16 +948,10 @@ describe("avg_sops() and inferences() pipeline", {
     skip_if_not_installed("rms")
 
     case <- build_brownian_pipeline_case()
-    explicit_model <- fit_pipeline_model(case$data)
-    inline_model <- fit_inline_pipeline_model(case$data)
-    explicit_robust <- markov.misc::robcov_vglm(
-      explicit_model,
-      cluster = case$data$id
-    )
-    inline_robust <- markov.misc::robcov_vglm(
-      inline_model,
-      cluster = case$data$id
-    )
+    explicit_model <- fit_pipeline_wrapper_model(case$data)
+    inline_model <- fit_inline_pipeline_wrapper_model(case$data)
+    explicit_robust <- explicit_model
+    inline_robust <- inline_model
 
     explicit_avg <- markov.misc::avg_sops(
       model = explicit_robust,

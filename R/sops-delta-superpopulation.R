@@ -1,6 +1,6 @@
-# Patient-cluster covariance and population delta-method helpers.
+# Patient-cluster covariance and superpopulation delta-method helpers.
 
-delta_population_coefficients <- function(model) {
+delta_superpopulation_coefficients <- function(model) {
   beta <- get_coef(model)
   if (
     !is.numeric(beta) ||
@@ -20,7 +20,7 @@ delta_population_coefficients <- function(model) {
   beta
 }
 
-delta_population_model <- function(model) {
+delta_superpopulation_model <- function(model) {
   if (inherits(model, "robcov_vglm")) {
     fit <- model$vglm_fit
     if (is.null(fit) || !inherits(fit, "vglm")) {
@@ -35,18 +35,18 @@ delta_population_model <- function(model) {
 }
 
 delta_validate_full_po_model <- function(model) {
-  fit <- delta_population_model(model)
+  fit <- delta_superpopulation_model(model)
 
   if (inherits(fit, "blrm")) {
     stop(
-      "Analytical population inference supports only frequentist full ",
+      "Analytical superpopulation inference supports only frequentist full ",
       "proportional-odds orm and vglm models; blrm models are not supported.",
       call. = FALSE
     )
   }
   if (!inherits(fit, c("orm", "vglm"))) {
     stop(
-      "Analytical population inference supports only full proportional-odds ",
+      "Analytical superpopulation inference supports only full proportional-odds ",
       "orm and vglm models.",
       call. = FALSE
     )
@@ -185,7 +185,7 @@ delta_fitting_row_count <- function(model) {
     return(nrow(model$scores))
   }
 
-  fit <- delta_population_model(model)
+  fit <- delta_superpopulation_model(model)
   if (inherits(fit, "vglm")) {
     return(as.integer(stats::nobs(fit, type = "lm")))
   }
@@ -208,14 +208,14 @@ delta_fitting_row_count <- function(model) {
   }
 
   stop(
-    "Analytical population inference supports only full proportional-odds ",
+    "Analytical superpopulation inference supports only full proportional-odds ",
     "orm and vglm models.",
     call. = FALSE
   )
 }
 
 delta_align_explicit_cluster <- function(model, cluster, n_rows) {
-  fit <- delta_population_model(model)
+  fit <- delta_superpopulation_model(model)
   if (inherits(fit, "vglm")) {
     return(align_cluster_vglm(fit, cluster, n_rows))
   }
@@ -263,7 +263,7 @@ delta_validate_cluster <- function(cluster, n_rows) {
   list(cluster = cluster, ids = ids)
 }
 
-# Resolve patient clusters for analytical population inference. Explicit
+# Resolve patient clusters for analytical superpopulation inference. Explicit
 # row-level IDs take precedence; fitting rows are never implicit clusters.
 resolve_delta_cluster <- function(model, cluster = NULL) {
   delta_validate_full_po_model(model)
@@ -291,7 +291,7 @@ resolve_delta_cluster <- function(model, cluster = NULL) {
           call. = FALSE
         )
       }
-      fit <- delta_population_model(model)
+      fit <- delta_superpopulation_model(model)
       data <- markov_align_model_data(data, fit)
       cluster <- data[[id_var]]
       source <- "explicit_formula"
@@ -311,7 +311,8 @@ resolve_delta_cluster <- function(model, cluster = NULL) {
         !is.data.frame(data)
     ) {
       stop(
-        "Analytical population inference requires patient clustering. Supply ",
+        "Analytical superpopulation inference requires patient clustering. ",
+        "Supply ",
         "`cluster`, or fit with `orm_markov(..., id_var = ...)` or ",
         "`vglm_markov(..., id_var = ...)` so row-aligned fitting data and ",
         "patient-ID metadata are stored. Observation rows are not used as ",
@@ -327,7 +328,7 @@ resolve_delta_cluster <- function(model, cluster = NULL) {
         call. = FALSE
       )
     }
-    fit <- delta_population_model(model)
+    fit <- delta_superpopulation_model(model)
     data <- markov_align_model_data(data, fit)
     cluster <- data[[id_var]]
     source <- "stored_id_var"
@@ -402,7 +403,11 @@ delta_orm_backend_aliases <- function(model, coefficient_names) {
 # penalized fits can lose dimnames and inline rms transforms can use model-matrix
 # labels instead of the display labels in coef(). Normalize only matrices that
 # were produced internally from this exact orm fit.
-delta_normalize_orm_backend_matrix <- function(value, model, coefficient_names) {
+delta_normalize_orm_backend_matrix <- function(
+  value,
+  model,
+  coefficient_names
+) {
   if (methods::is(value, "Matrix")) {
     value <- as.matrix(value)
   }
@@ -434,14 +439,14 @@ delta_orm_model_bread <- function(model, coefficient_names) {
   bread <- model$orig.var
   if (is.null(bread)) {
     if (!requireNamespace("rms", quietly = TRUE)) {
-      stop("Package 'rms' is required for orm population inference.")
+      stop("Package 'rms' is required for orm superpopulation inference.")
     }
     robust <- rms::robcov(model)
     bread <- robust$orig.var
   }
   if (is.null(bread)) {
     stop(
-      "Could not obtain the full model-based covariance for orm population ",
+      "Could not obtain the full model-based covariance for orm superpopulation ",
       "inference. Refit with `x = TRUE, y = TRUE`.",
       call. = FALSE
     )
@@ -454,7 +459,7 @@ delta_orm_model_bread <- function(model, coefficient_names) {
   )
 }
 
-delta_reject_weighted_orm_population <- function(model) {
+delta_reject_weighted_orm_superpopulation <- function(model) {
   weights <- model$weights
   if (
     is.null(weights) ||
@@ -465,10 +470,33 @@ delta_reject_weighted_orm_population <- function(model) {
   }
 
   stop(
-    "Population delta inference does not currently support orm fits with ",
+    "Superpopulation delta inference does not currently support orm fits with ",
     "non-unit case weights because the required row score contributions ",
     "must incorporate those weights. Use `target = \"empirical\"` or refit ",
     "without case weights.",
+    call. = FALSE
+  )
+}
+
+delta_reject_penalized_orm_superpopulation <- function(model) {
+  penalty_matrix <- model$penalty.matrix
+  penalty <- model$penalty
+  penalized <-
+    (!is.null(penalty_matrix) &&
+      length(penalty_matrix) > 0L &&
+      any(is.finite(penalty_matrix) & penalty_matrix != 0)) ||
+    (!is.null(penalty) &&
+      length(penalty) > 0L &&
+      any(is.finite(penalty) & penalty != 0))
+  if (!penalized) {
+    return(invisible(NULL))
+  }
+
+  stop(
+    "Superpopulation delta inference does not currently support penalized ",
+    "orm likelihoods because the patient scores and sensitivity have not ",
+    "been shown to incorporate the penalty consistently. Ordinary spline ",
+    "transformations remain supported with `target = \"empirical\"`.",
     call. = FALSE
   )
 }
@@ -477,7 +505,7 @@ delta_reject_weighted_orm_population <- function(model) {
 # and otherwise using the backend's patient-cluster robust convention.
 get_delta_cluster_vcov <- function(model, cluster = NULL, vcov = NULL) {
   delta_validate_full_po_model(model)
-  beta <- delta_population_coefficients(model)
+  beta <- delta_superpopulation_coefficients(model)
 
   if (!is.null(vcov)) {
     covariance <- delta_validate_named_matrix(
@@ -491,7 +519,7 @@ get_delta_cluster_vcov <- function(model, cluster = NULL, vcov = NULL) {
       metadata = list(
         source = "explicit",
         covariance = "user_supplied",
-        backend = class(delta_population_model(model))[[1L]],
+        backend = class(delta_superpopulation_model(model))[[1L]],
         type = NA_character_,
         cadjust = NA,
         adjustment_factor = NA_real_,
@@ -503,7 +531,7 @@ get_delta_cluster_vcov <- function(model, cluster = NULL, vcov = NULL) {
   }
 
   cluster_info <- resolve_delta_cluster(model, cluster = cluster)
-  fit <- delta_population_model(model)
+  fit <- delta_superpopulation_model(model)
 
   if (inherits(fit, "vglm")) {
     stored_cluster_matches <- inherits(model, "robcov_vglm") &&
@@ -641,10 +669,11 @@ delta_validate_scores <- function(scores, coefficient_names, n_rows) {
 # per-participant sensitivity for the stacked influence function.
 get_delta_score_components <- function(model, cluster = NULL) {
   delta_validate_full_po_model(model)
-  beta <- delta_population_coefficients(model)
-  fit <- delta_population_model(model)
+  beta <- delta_superpopulation_coefficients(model)
+  fit <- delta_superpopulation_model(model)
   if (inherits(fit, "orm")) {
-    delta_reject_weighted_orm_population(fit)
+    delta_reject_weighted_orm_superpopulation(fit)
+    delta_reject_penalized_orm_superpopulation(fit)
   }
   cluster_info <- resolve_delta_cluster(model, cluster = cluster)
   n_rows <- cluster_info$metadata$n_rows
@@ -652,12 +681,27 @@ get_delta_score_components <- function(model, cluster = NULL) {
   if (inherits(model, "robcov_vglm")) {
     row_scores <- model$scores
     bread <- model$bread
+    component_metadata <- list(
+      bread_source = paste0("robcov_vglm_", model$bread_type %||% "observed"),
+      backend_hc_type_ignored = model$type %||% NA_character_,
+      backend_cadjust_ignored = model$cadjust %||% NA
+    )
   } else if (inherits(fit, "vglm")) {
     row_scores <- compute_scores_vglm(fit)
     bread <- compute_observed_bread_vglm(fit)$bread
+    component_metadata <- list(
+      bread_source = "vglm_observed_information",
+      backend_hc_type_ignored = NA_character_,
+      backend_cadjust_ignored = NA
+    )
   } else {
     row_scores <- compute_scores_orm(fit)
     bread <- delta_orm_model_bread(fit, names(beta))
+    component_metadata <- list(
+      bread_source = "rms_inverse_total_information",
+      backend_hc_type_ignored = NA_character_,
+      backend_cadjust_ignored = NA
+    )
   }
 
   row_scores <- delta_validate_scores(row_scores, names(beta), n_rows)
@@ -679,7 +723,15 @@ get_delta_score_components <- function(model, cluster = NULL) {
   Ainv <- n * bread
   dimnames(Ainv) <- list(names(beta), names(beta))
 
-  list(ids = cluster_info$ids, scores = scores, Ainv = Ainv, n = n)
+  component_metadata$cluster_source <- cluster_info$metadata$source
+  component_metadata$n_patients <- n
+  list(
+    ids = cluster_info$ids,
+    scores = scores,
+    Ainv = Ainv,
+    n = n,
+    metadata = component_metadata
+  )
 }
 
 delta_validate_profile_matrix <- function(value, label) {
@@ -696,7 +748,7 @@ delta_validate_profile_matrix <- function(value, label) {
 }
 
 # Combine centered profile functionals and fitted-coefficient influence for the
-# same-cohort population target.
+# fitted-cohort superpopulation target.
 delta_stacked_influence <- function(
   individual_values,
   average_jacobian,
@@ -713,7 +765,7 @@ delta_stacked_influence <- function(
 
   if (n < 2L) {
     stop(
-      "Stacked population inference requires at least two profiles.",
+      "Stacked superpopulation inference requires at least two profiles.",
       call. = FALSE
     )
   }
@@ -765,13 +817,30 @@ delta_stacked_influence <- function(
   }
 
   unmatched_scores <- setdiff(score_ids, profile_ids)
+  unmatched_profiles <- setdiff(profile_ids, score_ids)
   if (length(unmatched_scores)) {
     stop(
       "Likelihood-score patients are absent from the target profiles: ",
       paste(utils::head(unmatched_scores, 5L), collapse = ", "),
       if (length(unmatched_scores) > 5L) " ..." else "",
-      ". Same-cohort population inference requires every score patient to ",
+      ". Fitted-cohort superpopulation inference requires every score patient to ",
       "appear exactly once in `profile_ids`.",
+      call. = FALSE
+    )
+  }
+  if (length(unmatched_profiles)) {
+    stop(
+      "Target-profile patients have no usable likelihood transition: ",
+      paste(utils::head(unmatched_profiles, 5L), collapse = ", "),
+      if (length(unmatched_profiles) > 5L) " ..." else "",
+      ". Superpopulation inference includes only fitted patients and does not ",
+      "insert zero patient-score rows.",
+      call. = FALSE
+    )
+  }
+  if (score_components$n != n) {
+    stop(
+      "The starting-profile and patient-score cohorts have different sizes.",
       call. = FALSE
     )
   }
@@ -835,21 +904,14 @@ delta_stacked_influence <- function(
     stop("Patient score contributions contain non-finite values.")
   }
 
-  aligned_scores <- matrix(
-    0,
-    nrow = n,
-    ncol = length(coefficient_names),
-    dimnames = list(profile_ids, coefficient_names)
-  )
-  score_rows <- match(score_ids, profile_ids)
-  aligned_scores[score_rows, ] <- scores[, coefficient_names, drop = FALSE]
-
-  # `score_components$Ainv` is n_score * inverse(total information). Profiles
-  # without likelihood rows still enter the study-cohort estimating equation
-  # with a zero score, so its per-profile sensitivity uses n_profile instead.
-  sensitivity_scale <- n / score_components$n
-  Ainv <- sensitivity_scale * score_Ainv
-  dimnames(Ainv) <- dimnames(score_Ainv)
+  score_order <- match(profile_ids, score_ids)
+  aligned_scores <- scores[
+    score_order,
+    coefficient_names,
+    drop = FALSE
+  ]
+  rownames(aligned_scores) <- profile_ids
+  Ainv <- score_Ainv
 
   estimate <- colMeans(values)
   profile_component <- sweep(values, 2L, estimate, "-")
@@ -875,14 +937,19 @@ delta_stacked_influence <- function(
     scores = aligned_scores,
     ids = profile_ids,
     n = n,
-    metadata = list(
-      target = "population",
-      cohort = "same",
-      covariance_convention = "sample_covariance_of_influence_divided_by_n",
-      finite_sample = "HC1-like",
-      missing_score_profiles = sum(!profile_ids %in% score_ids),
-      n_score_clusters = score_components$n,
-      sensitivity_scale = sensitivity_scale
+    metadata = c(
+      list(
+        source = "stacked_patient_influence",
+        covariance_source = "stacked_patient_influence",
+        target = "superpopulation",
+        cohort = "fitted_patients_with_origin_profiles",
+        covariance_convention = "sample_covariance_of_influence_divided_by_n",
+        finite_sample_method = "patient_level_sample_covariance",
+        finite_sample_factor = n / (n - 1),
+        n_patients = n,
+        n_score_clusters = score_components$n
+      ),
+      score_components$metadata %||% list()
     )
   )
 }

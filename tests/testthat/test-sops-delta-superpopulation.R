@@ -150,6 +150,13 @@ test_that("vglm covariance and score components preserve backend conventions", {
   expect_equal(components$n, length(cluster_ids))
   expect_equal(components$Ainv, length(cluster_ids) * fit$bread)
   expect_false(isTRUE(all.equal(components$Ainv, fit$var)))
+  expect_equal(components$metadata$bread_source, "robcov_vglm_observed")
+  expect_equal(components$metadata$backend_hc_type_ignored, fit$type)
+  expect_identical(
+    components$metadata$backend_cadjust_ignored,
+    fit$cadjust
+  )
+  expect_equal(components$metadata$n_patients, length(cluster_ids))
 })
 
 test_that("raw vglm models compute patient covariance and score components", {
@@ -200,9 +207,13 @@ test_that("orm covariance and score components use inverse total information", {
   expect_equal(components$ids, cluster_ids)
   expect_equal(components$scores, expected_scores)
   expect_equal(components$Ainv, length(cluster_ids) * expected_bread)
+  expect_equal(
+    components$metadata$bread_source,
+    "rms_inverse_total_information"
+  )
 })
 
-test_that("population score machinery rejects partial proportional odds", {
+test_that("superpopulation score machinery rejects partial proportional odds", {
   skip_if_not_installed("VGAM")
   data <- make_test_data(
     n_patients = 35,
@@ -225,11 +236,10 @@ test_that("population score machinery rejects partial proportional odds", {
   )
 })
 
-test_that("stacked influence retains zero-score profiles and the cross term", {
+test_that("stacked influence matches fitted patients and retains the cross term", {
   values <- rbind(
     p1 = c(cell_a = 0.2, cell_b = 0.8),
-    p2 = c(cell_a = 0.5, cell_b = 0.5),
-    p3 = c(cell_a = 0.9, cell_b = 0.1)
+    p2 = c(cell_a = 0.5, cell_b = 0.5)
   )
   jacobian <- rbind(
     cell_a = c(beta_1 = 1, beta_2 = 0.5),
@@ -257,29 +267,87 @@ test_that("stacked influence retains zero-score profiles and the cross term", {
 
   aligned_scores <- rbind(
     p1 = scores["p1", ],
-    p2 = scores["p2", ],
-    p3 = c(beta_1 = 0, beta_2 = 0)
+    p2 = scores["p2", ]
   )
-  profile_Ainv <- nrow(values) / nrow(scores) * Ainv
-  coefficient_influence <- aligned_scores %*% t(profile_Ainv) %*% t(jacobian)
+  coefficient_influence <- aligned_scores %*% t(Ainv) %*% t(jacobian)
   profile_component <- sweep(values, 2L, colMeans(values), "-")
   expected_influence <- profile_component + coefficient_influence
   expected_covariance <- stats::cov(expected_influence) / nrow(values)
+  centered <- sweep(
+    expected_influence,
+    2L,
+    colMeans(expected_influence),
+    "-"
+  )
+  centered_hc0 <- crossprod(centered) / nrow(values)^2
+  raw_uncentered <- crossprod(expected_influence) / nrow(values)^2
+  influence_mean <- colMeans(expected_influence)
 
   expect_equal(result$scores, aligned_scores)
-  expect_equal(result$Ainv, profile_Ainv)
+  expect_equal(result$Ainv, Ainv)
   expect_equal(result$coefficient_influence, coefficient_influence)
   expect_equal(result$influence, expected_influence)
   expect_equal(result$covariance, expected_covariance)
   expect_equal(result$std.error, sqrt(diag(expected_covariance)))
-  expect_equal(result$metadata$missing_score_profiles, 1)
+  expect_equal(
+    result$covariance,
+    crossprod(centered) / (nrow(values) * (nrow(values) - 1L))
+  )
+  expect_equal(
+    result$covariance,
+    centered_hc0 * nrow(values) / (nrow(values) - 1L)
+  )
+  expect_equal(
+    result$covariance,
+    nrow(values) /
+      (nrow(values) - 1L) *
+      raw_uncentered -
+      tcrossprod(influence_mean) / (nrow(values) - 1L)
+  )
+  expect_equal(
+    result$metadata$finite_sample_method,
+    "patient_level_sample_covariance"
+  )
+  expect_equal(result$metadata$finite_sample_factor, 2)
+  expect_equal(result$metadata$n_patients, 2)
   expect_equal(result$metadata$n_score_clusters, 2)
-  expect_equal(result$metadata$sensitivity_scale, 3 / 2)
+  expect_null(result$metadata$missing_score_profiles)
+  expect_null(result$metadata$sensitivity_scale)
 
   additive_covariance <- stats::cov(profile_component) /
     nrow(values) +
     stats::cov(coefficient_influence) / nrow(values)
   expect_gt(max(abs(result$covariance - additive_covariance)), 1e-8)
+})
+
+test_that("stacked influence rejects profile-only patients", {
+  values <- rbind(
+    p1 = c(cell = 0.2),
+    p2 = c(cell = 0.4),
+    p3 = c(cell = 0.6)
+  )
+  jacobian <- matrix(1, nrow = 1L, dimnames = list("cell", "beta"))
+  scores <- matrix(
+    c(0.1, -0.1),
+    ncol = 1L,
+    dimnames = list(c("p1", "p2"), "beta")
+  )
+
+  expect_error(
+    delta_stacked_influence(
+      values,
+      jacobian,
+      rownames(values),
+      list(
+        ids = rownames(scores),
+        scores = scores,
+        Ainv = matrix(1, dimnames = list("beta", "beta")),
+        n = 2L
+      )
+    ),
+    "Target-profile patients have no usable likelihood transition: p3",
+    fixed = TRUE
+  )
 })
 
 test_that("stacked influence rejects score patients absent from profiles", {

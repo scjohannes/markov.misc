@@ -421,8 +421,11 @@ robcov_vglm <- function(
   class(result) <- "robcov_vglm"
   result <- markov_attach_model_data(
     result,
-    markov_model_data(fit),
-    markov_model_id_var(fit)
+    data = markov_model_data(fit),
+    id_var = markov_model_id_var(fit),
+    refit_data = markov_model_refit_data(fit),
+    origin_data = markov_model_metadata_attr(fit, "markov_origin_data"),
+    origin_metadata = markov_model_origin_metadata(fit)
   )
   attr(result, "markov_vglm") <- attr(fit, "markov_vglm", exact = TRUE)
   attr(result, "markov_split_assign") <- attr(

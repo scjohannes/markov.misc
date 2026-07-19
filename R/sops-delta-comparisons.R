@@ -41,11 +41,11 @@ delta_validate_comparison_scope <- function(
   }
 
   target <- delta_validate_target(object, target)
-  if (identical(target, "population") && !is.null(vcov)) {
+  if (identical(target, "superpopulation") && !is.null(vcov)) {
     stop(
-      "`vcov` cannot be supplied with `target = \"population\"`; population ",
-      "inference uses the fitted-model score components and stacked influence ",
-      "function.",
+      "`vcov` cannot be supplied with `target = \"superpopulation\"`; ",
+      "superpopulation inference uses fitted-model score components and the ",
+      "stacked patient influence function.",
       call. = FALSE
     )
   }
@@ -284,7 +284,7 @@ delta_propagate_comparison_state <- function(avg, operator) {
   influence <- source$influence %*% t(operator)
   n <- nrow(influence)
   if (n < 2L) {
-    stop("Population delta inference requires at least two participants.")
+    stop("Superpopulation delta inference requires at least two patients.")
   }
   centered <- sweep(influence, 2L, colMeans(influence), "-")
   variance <- colSums(centered^2) / ((n - 1) * n)

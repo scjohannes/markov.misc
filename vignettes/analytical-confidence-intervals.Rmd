@@ -34,7 +34,7 @@ are appropriate.
 
 The package-aware fitting wrapper stores row-aligned fitting data and patient ID
 metadata. Those IDs define the independent clusters for analytical covariance
-and population influence calculations.
+and superpopulation influence calculations.
 
 ```{r setup}
 library(markov.misc)
@@ -68,7 +68,6 @@ fit <- orm_markov(
   id_var = "id",
   opt_method = "LM",
   scale = TRUE,
-  penalty = 0.1,
   maxit = 100
 )
 
@@ -106,9 +105,9 @@ avg_empirical <- inferences(
 head(avg_empirical)
 ```
 
-For a population target, the same stored fitting cohort represents a sampled
-population. Its profile distribution therefore also contributes uncertainty.
-The implementation constructs one influence row per patient,
+For a superpopulation target, the fitted cohort represents a sample from a
+superpopulation. Its profile distribution therefore also contributes
+uncertainty. The implementation constructs one influence row per patient,
 
 $$
 \phi_i = h_i - \bar h + \bar G A^{-1}s_i,
@@ -117,28 +116,60 @@ $$
 where $s_i$ is the patient-aggregated likelihood score and $A^{-1}$ is inverse
 per-patient sensitivity. It uses `stats::cov(phi) / n`, retaining the
 finite-sample cross-covariance between profile and model-score contributions.
+Because `stats::cov()` divides by $n - 1$, this equals the centered
+patient-level HC0 crossproduct multiplied by $n / (n - 1)$. That correction is
+part of the superpopulation estimator; it is not the fitted backend's row-level
+HC1 or cluster adjustment.
 
-```{r population-target}
-avg_population <- inferences(
+```{r superpopulation-target}
+avg_superpopulation <- inferences(
   avg,
   method = "delta",
-  target = "population",
+  target = "superpopulation",
   conf_type = "auto"
 )
 
-head(avg_population)
+head(avg_superpopulation)
 ```
 
-The population route is a same-cohort calculation. It requires one stored
-baseline profile per patient and exact patient-ID alignment with the fitted
-likelihood scores. It is not an external-target or random-effects population
-analysis.
+The superpopulation route is a fitted-cohort calculation. It requires one
+stored designated starting profile per fitted patient and exact patient-ID
+alignment with the fitted likelihood scores. It is not an external-target or
+random-effects population analysis. VGLM `type` and `cadjust` choices affect the
+empirical coefficient sandwich, but the stacked superpopulation calculation uses
+its own patient sample-covariance convention and reports the ignored backend
+settings in covariance metadata.
+
+### Which patients define the fitted cohort?
+
+The fitting wrappers retain starting-profile information before a missing
+transition response can remove a row from the model frame. The contract is:
+
+- a fitted patient must have exactly one complete profile at the designated
+  `start_time`, containing ID, treatment/covariates, modeled time information,
+  and the known previous state such as `yprev`;
+- the transition response at that row is not required;
+- the patient must contribute at least one usable likelihood transition
+  somewhere in the fitted data;
+- a complete starting profile plus a missing first outcome plus a later usable
+  transition is included;
+- a starting profile with no usable transition anywhere is excluded; and
+- likelihood rows without a complete designated starting profile are an error.
+
+By default, `start_time` is the first scheduled numeric visit or first factor
+visit (using the smallest mapped real time when `time_map` is complete), while
+`origin_time = 0` records the real time of the previous state. For example, a
+row predicting day 1 can carry the day-0 state in `yprev`. Both values can be
+set explicitly in `orm_markov()` or `vglm_markov()`. Later likelihood rows never
+silently replace a missing designated profile. This standardization contract
+assumes the observation process is non-informative; the analytical variance does
+not correct informative missingness.
 
 Individual `sops()` results accept only an omitted target or
-`target = "fixed"`. Empirical and population targets apply only to averaged
-SOPs and average comparisons, which use `target = "empirical"` by default.
-Supplying the target explicitly is helpful whenever the distinction matters
-scientifically.
+`target = "fixed"`. Empirical and superpopulation targets apply only to averaged
+SOPs and average comparisons, which use `target = "empirical"` by default. The
+unreleased `target = "population"` spelling is not accepted. Supplying the target
+explicitly is helpful whenever the distinction matters scientifically.
 
 ## Why Patient Clustering Matters
 
@@ -153,7 +184,7 @@ independent clusters. Analytical inference therefore follows this invariant:
 For an empirical target, a complete user-supplied coefficient covariance can
 replace the fitted covariance after strict dimension, name, finiteness,
 symmetry, and positive-semidefiniteness checks. A custom covariance is not
-accepted for `target = "population"`, because a covariance matrix alone does
+accepted for `target = "superpopulation"`, because a covariance matrix alone does
 not contain the joint score/profile information needed by the stacked influence
 function.
 
@@ -206,7 +237,8 @@ result cell. They retain a factorized analytical representation:
 
 - fixed individual and empirical averaged results store a result-cell Jacobian
   and coefficient covariance;
-- population results store the average Jacobian and patient influence matrix.
+- superpopulation results store the average Jacobian and patient influence
+  matrix.
 
 Use `rows` to materialize only the block needed downstream.
 
@@ -215,11 +247,11 @@ rows <- seq_len(min(6L, nrow(avg_empirical)))
 
 jacobian_block <- get_jacobian(avg_empirical, rows = rows)
 empirical_covariance <- stats::vcov(avg_empirical, rows = rows)
-population_covariance <- stats::vcov(avg_population, rows = rows)
+superpopulation_covariance <- stats::vcov(avg_superpopulation, rows = rows)
 
 dim(jacobian_block)
 diag(empirical_covariance)
-diag(population_covariance)
+diag(superpopulation_covariance)
 ```
 
 Numeric, logical, and stored character row keys are accepted. Analytical
@@ -233,8 +265,8 @@ The current analytical implementation supports:
 - first-order Markov recursion;
 - full proportional odds with a reverse cumulative-logit link;
 - frequentist `orm`, `vglm`, and `robcov_vglm` models;
-- individual SOPs, empirical average SOPs, and same-cohort population average
-  SOPs;
+- individual SOPs, empirical average SOPs, and fitted-cohort superpopulation
+  average SOPs;
 - difference comparisons for `estimand = "sop"` and
   `estimand = "time_in_state"`; and
 - numeric and factor visit designs that can be represented by the first-order
@@ -245,14 +277,15 @@ estimands:
 
 | Request | Current status |
 | --- | --- |
-| Individual `sops()` with an empirical or population target | Unsupported; omit `target` or use `target = "fixed"`. |
+| Individual `sops()` with an empirical or superpopulation target | Unsupported; omit `target` or use `target = "fixed"`. |
 | Ratio comparison | Planned follow-up; analytical comparisons currently support differences only. |
 | `estimand = "time_benefit"` | Planned follow-up because it is nonlinear in paired state distributions. |
 | `by`-stratum analytical inference | Planned follow-up. |
 | Partial/nonproportional odds | Planned follow-up outside the current full-PO derivative scope. |
 | Second-order delta recursion | Planned follow-up; use an existing draw or refit method when applicable. |
 | `blrm` delta inference | Unsupported; use the model's posterior SOP intervals. |
-| Population target with user `newdata` | Unsupported; supplied profiles are fixed. |
+| Superpopulation target with user `newdata` | Unsupported; supplied profiles are fixed. |
+| Superpopulation target with a weighted or penalized ORM fit | Unsupported until the corresponding score/sensitivity contract is established; empirical delta inference remains available. |
 | Random or independent external population | Intentionally unsupported and out of scope. |
 | Simultaneous confidence bands or simplex regions | Out of scope; intervals are componentwise. |
 

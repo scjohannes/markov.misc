@@ -33,10 +33,11 @@ sops(
 For \code{orm} models, the family must be logistic.}
 
 \item{newdata}{Optional. A data frame of prediction profiles. When supplied,
-every row is treated as a separate baseline profile and the internal
+every row is treated as a separate fixed profile and the internal
 \code{rowid} column is regenerated. If \code{NULL}, uses the data stored by
-\code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}} and extracts one
-prediction row per \code{id_var}.}
+\code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}} and requires exactly
+one complete designated starting profile per fitted patient. \code{refit_data}
+is never used as a prediction-profile fallback.}
 
 \item{times}{Required visit-scale time points to estimate. For numeric time
 variables this is usually a numeric vector. For factor-valued visit
@@ -64,8 +65,8 @@ wrapper-fitted models.}
 \item{id_var}{Character ID column used when \code{include_re = TRUE}. For \code{blrm},
 \code{NULL} is inferred from wrapper metadata, then \code{model$clusterInfo$name}
 when available, otherwise \code{"id"}. For frequentist models, \code{id_var} is used
-for stored-data extraction and refit bootstrap metadata, not for ordinary
-user-supplied prediction rows.}
+for stored starting-profile validation and refit bootstrap metadata, not
+for ordinary user-supplied prediction rows.}
 
 \item{time_var}{Name of the time variable in the model.}
 
@@ -121,6 +122,13 @@ variables.
 This function wraps \code{soprob_markov()} and converts its array output to a tidy
 data frame. The output contains one row per patient-time-state combination
 (or stratum-time-state if \code{by} is used).
+
+Automatic prediction from a wrapper-fitted model uses the cohort-wide
+designated \code{start_time} retained before response-driven model-frame omission.
+The transition response is not required on that row, but ID, modeled
+predictors, time information, and previous state must be complete. Each
+included patient must contribute at least one usable fitted transition
+somewhere; later rows are not substituted for a missing starting profile.
 
 For \code{rmsb::blrm()} models, SOPs are computed on sampled posterior draws and
 then summarized. The point estimate is the requested posterior summary of the

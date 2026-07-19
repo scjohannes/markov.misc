@@ -5,7 +5,7 @@
       covariance)
     Condition
       Error:
-      ! `sops()` delta inference supports only `target = "fixed"`. Empirical and population targets apply to averaged SOP objects.
+      ! `sops()` delta inference supports only `target = "fixed"`. Empirical and superpopulation targets apply to averaged SOP objects.
 
 ---
 
@@ -13,16 +13,32 @@
       inferences(fixed, method = "delta", target = "fixed")
     Condition
       Error:
-      ! Analytical population inference requires patient clustering. Supply `cluster`, or fit with `orm_markov(..., id_var = ...)` or `vglm_markov(..., id_var = ...)` so row-aligned fitting data and patient-ID metadata are stored. Observation rows are not used as implicit clusters.
+      ! Analytical superpopulation inference requires patient clustering. Supply `cluster`, or fit with `orm_markov(..., id_var = ...)` or `vglm_markov(..., id_var = ...)` so row-aligned fitting data and patient-ID metadata are stored. Observation rows are not used as implicit clusters.
 
 ---
 
     Code
-      inferences(avg, method = "delta", target = "population", vcov = population_case$
+      inferences(avg, method = "delta", target = "superpopulation", vcov = superpopulation_case$
         model$var)
     Condition
       Error:
-      ! `vcov` cannot be supplied with `target = "population"`; population inference uses the fitted-model score components and stacked influence function.
+      ! `vcov` cannot be supplied with `target = "superpopulation"`; superpopulation inference uses fitted-model score components and the stacked patient influence function.
+
+---
+
+    Code
+      inferences(avg, method = "delta", target = "population")
+    Condition
+      Error:
+      ! Averaged delta inference supports `target = "empirical"` or `target = "superpopulation"`.
+
+---
+
+    Code
+      inferences(supplied, method = "delta", target = "superpopulation")
+    Condition
+      Error:
+      ! `target = "superpopulation"` requires the stored fitted-patient cohort. User-supplied `newdata` is treated as a fixed cohort.
 
 # logit delta intervals distinguish structural boundaries
 

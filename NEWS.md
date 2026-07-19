@@ -4,11 +4,24 @@
   and supported average-comparison results returned by analytical inference.
 - `inferences()` now supports deterministic analytical delta-method intervals
   for fixed individual first-order full proportional-odds ORM/VGLM SOPs,
-  empirical and same-cohort population averages, and supported SOP or
+  empirical and fitted-cohort superpopulation averages, and supported SOP or
   time-in-state differences. `conf_type = "auto"` uses componentwise logit
   intervals for SOP probabilities and Wald intervals for comparisons. The
   analytic recursion runs in native code, and averaged targets retain only the
-  target-specific scenario Jacobians plus any population profile terms.
+  target-specific scenario Jacobians plus any superpopulation profile terms.
+- The public sampled-cohort analytical target is now
+  `target = "superpopulation"`; the unreleased `target = "population"` spelling
+  has no compatibility alias. Superpopulation inference uses
+  `stats::cov(influence) / n`, reports its patient-level finite-sample convention,
+  and rejects weighted or penalized ORM fits until their score/sensitivity
+  contracts are established.
+- `orm_markov()`, `vglm_markov()`, and `blrm_markov()` now retain designated
+  starting profiles before response-driven row omission, separately from fitted
+  likelihood rows and refit data. Automatic SOP prediction requires one complete
+  starting profile per fitted patient; the first transition response may be
+  missing when the patient contributes a usable later transition. Patients with
+  no usable fitted transition are excluded, and `refit_data` is not used as a
+  prediction-profile fallback.
 - `vcov()` methods for analytical SOP and average-comparison results now
   materialize selected covariance blocks from retained coefficient or patient
   influence representations instead of storing a dense all-cell covariance.
@@ -42,6 +55,8 @@
   is used; inference reports the fallback only once per call.
 - `states_to_tte_v2()` now collapses trajectories with a linear indexed run
   scan, and bootstrap samples are materialized from reusable row-index plans.
+- Standard refit bootstrap wrapper fits now replace the source ID with each
+  resampled copy's unique bootstrap patient ID before cluster-robust fitting.
 - `vglm_markov()` now uses an extensible RMS basis registry and ships first-class
   assignment metadata for both `rcs()` and `lsp()` terms.
 - `avg_sops()` now marginalizes counterfactual SOP arrays directly instead of

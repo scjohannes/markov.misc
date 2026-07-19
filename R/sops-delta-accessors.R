@@ -155,8 +155,8 @@ delta_jacobian <- function(analytical) {
 #' Extract an Analytical SOP Jacobian
 #'
 #' Extracts the raw-coefficient Jacobian retained by analytical delta-method
-#' inference. Population-target results return the average Jacobian used in the
-#' stacked influence function.
+#' inference. Superpopulation-target results return the average Jacobian used in
+#' the stacked influence function.
 #'
 #' @param x A SOP or average-comparison object returned by
 #'   `inferences(method = "delta")`.
@@ -185,7 +185,9 @@ delta_vcov <- function(object, rows = NULL) {
   if (identical(analytical$representation, "influence")) {
     n <- nrow(analytical$influence)
     if (n < 2L) {
-      stop("Population analytical covariance requires at least two profiles.")
+      stop(
+        "Superpopulation analytical covariance requires at least two patients."
+      )
     }
     required <- (as.double(n) * m + as.double(m) * m) * 8
     delta_assert_bytes(required, "The requested analytical covariance block")

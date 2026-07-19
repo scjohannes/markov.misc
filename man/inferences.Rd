@@ -45,14 +45,16 @@ to change posterior draws.}
 \item{vcov}{Optional complete, named coefficient covariance matrix. Where
 accepted, it overrides the covariance extracted from the model, including
 analytical fixed-profile and empirical-cohort inference. It cannot be
-supplied with \verb{method = "delta", target = "population"}.}
+supplied with \verb{method = "delta", target = "superpopulation"}.}
 
 \item{cluster}{Optional patient-cluster specification. For analytical
-fixed-profile, empirical-cohort, and population inference, supply a vector
-aligned with the fitting rows or a one-sided formula selecting a stored
-fitting-data column. Otherwise the model's stored \code{id_var} is used; fitting
-rows are never treated as implicit clusters. For score bootstrap with
-\code{orm}, this is the row-aligned cluster vector.}
+fixed-profile, empirical-cohort, and superpopulation inference, supply a
+vector aligned with the fitting rows or a one-sided formula selecting a
+stored fitting-data column. Otherwise the model's stored \code{id_var} is used;
+fitting rows are never treated as implicit clusters. For superpopulation
+inference, the cluster labels must match the stored starting-profile patient
+IDs exactly. For score bootstrap with \code{orm}, this is the row-aligned cluster
+vector.}
 
 \item{workers}{Number of parallel workers. If NULL (default) or 1, uses
 sequential processing. If > 1, uses parallel processing with that many
@@ -133,13 +135,22 @@ model covariance for these two targets.
 \code{target = "fixed"} is the default for \code{sops()} and conditions on its supplied
 prediction profiles. \code{target = "empirical"} is the default for averaged
 results and conditions on the observed standardization profiles. The
-\code{"population"} target is available only for averaged results from the same
-stored fitting cohort. It adds profile-distribution uncertainty and its
-cross-term with coefficient estimation through the patient-level stacked
+\code{"superpopulation"} target is available only for averaged results from the
+stored fitted-patient cohort; the unreleased \code{"population"} spelling is not
+accepted. Superpopulation inference adds profile-distribution uncertainty and
+its cross-term with coefficient estimation through the patient-level stacked
 influence \eqn{\phi_i = g_i - \bar g + J A^{-1}s_i}, with covariance
-estimated as \eqn{\mathrm{cov}(\phi_i) / n}. User-supplied prediction cohorts
-cannot be used for this target, and a custom \code{vcov} is invalid because the
-fitted-model scores and sensitivity are required.
+estimated as \eqn{\mathrm{cov}(\phi_i) / n}. This is the manuscript's
+patient-level sample-covariance correction, not a backend HC1 setting.
+User-supplied prediction cohorts cannot be used for this target, and a custom
+\code{vcov} is invalid because fitted-model scores and sensitivity are required.
+Every included patient must contribute at least one usable likelihood
+transition and have exactly one complete model-stored starting profile. The
+starting profile may have a missing first transition response; its ID,
+predictors, scheduled starting time, and previous state must be observed.
+Weighted and penalized ORM fits are not supported for this target because
+their score/sensitivity contracts have not been established. They remain
+eligible for empirical delta inference when their fitted covariance is valid.
 
 Analytical covariance is patient-cluster robust only when valid patient IDs
 are supplied explicitly or retained as the fitted model's \code{id_var}.
@@ -147,7 +158,7 @@ Observation rows are not an automatic clustering fallback, and multiway or
 otherwise non-patient cluster structures are not currently supported.
 Patient-cluster robustness protects variance estimation against
 within-patient score correlation; it does not remove bias from a misspecified
-transition model or Markov assumption.
+transition model, informative observation process, or Markov assumption.
 \code{blrm} models are not supported by the analytical method.
 }
 

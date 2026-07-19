@@ -187,9 +187,20 @@ test_that("penalized orm previous-state splines support delta inference", {
   expect_lt(max(abs(analytical - numerical)), 1e-7)
   expect_all_true(is.finite(inferred$std.error))
   expect_all_true(inferred$std.error >= 0)
+
+  condition <- tryCatch(
+    inferences(avg, method = "delta", target = "superpopulation"),
+    error = identity
+  )
+  expect_s3_class(condition, "error")
+  expect_match(
+    conditionMessage(condition),
+    "does not currently support penalized orm likelihoods",
+    fixed = TRUE
+  )
 })
 
-test_that("population delta rejects weighted orm score construction", {
+test_that("superpopulation delta rejects weighted orm score construction", {
   case <- local_spline_delta_orm_case()
   data <- case$data
   local_spline_delta_datadist(data)
@@ -210,7 +221,7 @@ test_that("population delta rejects weighted orm score construction", {
   )
 
   condition <- tryCatch(
-    inferences(avg, method = "delta", target = "population"),
+    inferences(avg, method = "delta", target = "superpopulation"),
     error = identity
   )
   expect_s3_class(condition, "error")
