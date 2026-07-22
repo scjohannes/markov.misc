@@ -734,6 +734,8 @@ behaviors:
   frame is supplied.
 - When `id_var` is supplied, it returns `robcov_vglm()` directly so MVN
   inference uses the cluster-robust covariance without another wrapper call.
+  The `type` and `cadjust` arguments select the HC0/HC1 and finite-cluster
+  corrections used by that automatic wrapper.
 
 The exported VGAM wrapper name is intentionally snake_case only:
 `vglm_markov()`. The former dotted name `vglm.markov()` is not retained as a

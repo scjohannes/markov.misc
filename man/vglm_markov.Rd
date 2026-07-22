@@ -9,6 +9,8 @@ vglm_markov(
   family = stop("argument 'family' needs to be assigned"),
   data = list(),
   id_var = NULL,
+  type = c("HC0", "HC1"),
+  cadjust = NULL,
   weights = NULL,
   subset = NULL,
   na.action,
@@ -58,6 +60,13 @@ vglm_markov(
 
 \item{id_var}{Optional character scalar naming the patient or cluster ID
 column in \code{data}. When supplied, \code{\link[=robcov_vglm]{robcov_vglm()}} is applied automatically.}
+
+\item{type}{HC correction passed to \code{\link[=robcov_vglm]{robcov_vglm()}} when \code{id_var} is
+supplied: \code{"HC0"} (the default) or \code{"HC1"}.}
+
+\item{cadjust}{Optional logical cluster correction passed to \code{\link[=robcov_vglm]{robcov_vglm()}}
+when \code{id_var} is supplied. \code{NULL} uses the clustered default, which applies
+the \code{G / (G - 1)} correction.}
 
 \item{weights}{
   an optional vector or matrix of (prior fixed and known) weights

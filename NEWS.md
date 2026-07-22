@@ -1,5 +1,7 @@
 # markov.misc 0.1.0
 
+- `vglm_markov()` now accepts `type` and `cadjust` to control the HC0/HC1 and
+  finite-cluster corrections used by its automatic robust covariance wrapper.
 - `get_jacobian()` now extracts selected raw-coefficient Jacobian rows from SOP
   and supported average-comparison results returned by analytical inference.
 - `inferences()` now supports deterministic analytical delta-method intervals

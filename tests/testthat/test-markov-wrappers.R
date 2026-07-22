@@ -12,6 +12,8 @@ test_that("vglm_markov stores fitting data and returns robust wrapper with id_va
 
   expect_s3_class(fit, "robcov_vglm")
   expect_s4_class(fit$vglm_fit, "vglm")
+  expect_identical(fit$type, "HC0")
+  expect_identical(fit$cadjust, TRUE)
   expect_equal(attr(fit, "markov_id_var"), "id")
   expect_equal(attr(fit$vglm_fit, "markov_id_var"), "id")
   expect_equal(nrow(attr(fit, "markov_data")), nrow(data))
@@ -26,6 +28,30 @@ test_that("vglm_markov stores fitting data and returns robust wrapper with id_va
     attr(fit$vglm_fit, "markov_starting_profile_metadata"),
     metadata
   )
+})
+
+test_that("vglm_markov forwards robust covariance corrections", {
+  skip_if_not_installed("VGAM")
+
+  data <- make_test_data(n_patients = 35, follow_up_time = 6, seed = 1019)
+  fit <- vglm_markov(
+    ordered(y) ~ time_lin + time_nlin_1 + tx + yprev,
+    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+    data = data,
+    id_var = "id",
+    type = "HC1",
+    cadjust = FALSE
+  )
+
+  expect_identical(fit$type, "HC1")
+  expect_identical(fit$cadjust, FALSE)
+  direct <- robcov_vglm(
+    fit$vglm_fit,
+    cluster = data$id,
+    type = "HC1",
+    cadjust = FALSE
+  )
+  expect_equal(fit$var, direct$var)
 })
 
 test_that("Markov wrappers validate numeric first follow-up schedules", {

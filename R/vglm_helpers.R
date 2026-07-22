@@ -33,6 +33,11 @@
 #' @param family A VGAM family object, e.g. `VGAM::cumulative()`.
 #' @param id_var Optional character scalar naming the patient or cluster ID
 #'   column in `data`. When supplied, [robcov_vglm()] is applied automatically.
+#' @param type HC correction passed to [robcov_vglm()] when `id_var` is
+#'   supplied: `"HC0"` (the default) or `"HC1"`.
+#' @param cadjust Optional logical cluster correction passed to [robcov_vglm()]
+#'   when `id_var` is supplied. `NULL` uses the clustered default, which applies
+#'   the `G / (G - 1)` correction.
 #' @param time_var Character scalar naming the modeled time column used to
 #'   identify the designated starting-profile row.
 #' @param first_followup_time First scheduled post-baseline outcome time used to
@@ -113,6 +118,8 @@ vglm_markov <- function(
   family = stop("argument 'family' needs to be assigned"),
   data = list(),
   id_var = NULL,
+  type = c("HC0", "HC1"),
+  cadjust = NULL,
   weights = NULL,
   subset = NULL,
   na.action,
@@ -134,6 +141,7 @@ vglm_markov <- function(
   first_followup_time = NULL,
   ...
 ) {
+  type <- match.arg(type)
   markov_call <- match.call(expand.dots = FALSE)
   markov_reject_legacy_wrapper_args(markov_call$..., "vglm_markov()")
   dataname <- as.character(substitute(data))
@@ -432,7 +440,12 @@ vglm_markov <- function(
   )
 
   if (!is.null(id_var)) {
-    robust <- robcov_vglm(answer, cluster = fit_data[[id_var]])
+    robust <- robcov_vglm(
+      answer,
+      cluster = fit_data[[id_var]],
+      type = type,
+      cadjust = cadjust
+    )
     robust <- markov_attach_model_data(
       robust,
       data = fit_data,
