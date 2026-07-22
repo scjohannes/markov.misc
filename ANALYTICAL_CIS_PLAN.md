@@ -199,7 +199,7 @@ For every concern:
 | ID | Priority | Status | Concern |
 | --- | --- | --- | --- |
 | ACI-01 | High | Resolved | Superpopulation finite-sample normalization and fitted-cohort contract |
-| ACI-02 | High | Open | Superpopulation score orientation and cross-term scaling |
+| ACI-02 | High | Resolved | Superpopulation score orientation and cross-term scaling |
 | ACI-03 | High | Resolved | Penalized ORM superpopulation inference |
 | ACI-04 | High | Resolved | Zero-score profile sensitivity scaling |
 | ACI-05 | High | Open | Stored ORM robust covariance identity and correction metadata |
@@ -261,7 +261,7 @@ For every concern:
 
 ### ACI-02: Superpopulation score orientation and cross-term scaling
 
-- **Status:** Open
+- **Status:** Resolved on 2026-07-22
 - **Priority:** High
 - **Current decision:** Use
   `r_i - mu + G %*% Ainv %*% s_i`, with backend score columns aligned to the raw
@@ -275,7 +275,29 @@ For every concern:
   weights and solve or one-step-update coefficients to verify the direction and
   scale of each patient's coefficient influence. Check ORM and VGLM separately
   without requiring agreement with MVN draws or bootstrap percentiles.
-- **Resolution log:** Pending.
+- **Resolution log:** Independent backend-specific weighted-refit tests now
+  validate the current formula for unpenalized ORM and full-PO VGLM fits. For
+  three high-score patients per backend, every likelihood row belonging to the
+  patient and the corresponding starting-profile averaging weight are perturbed
+  symmetrically. The tests compare the numerical coefficient derivative with
+  `Ainv %*% s_i` and the numerical derivative of the complete weighted SOP
+  functional with the production stacked influence. They also verify that the
+  coefficient-mediated SOP change is materially nonzero relative to the
+  profile-only derivative, so the cross-term is exercised. ORM agreed using
+  ordinary weighted likelihood refits. VGLM required a `1e-2` symmetric weight
+  perturbation and tighter optimizer convergence (`epsilon = 1e-10`) to keep
+  refit noise below the validation tolerance. Both backends agree at relative
+  tolerance `2e-3`, supporting the positive score sign, `n * bread` conversion
+  from inverse total information to inverse per-patient sensitivity, and
+  patient-level aggregation of repeated transition rows. The oracle uses full
+  backend refits and weighted profile averaging rather than the production
+  one-step score/Jacobian formula. No production formula change was required.
+  `air format .`, the focused superpopulation tests, and the complete test suite
+  passed. The factor-time vignette's comparison object was renamed consistently
+  to `cmp_days` after the first check exposed its stale `cmp_days_point` name;
+  the vignette then rendered successfully. A final `devtools::check()` including
+  two complete vignette builds finished with 0 errors, 0 warnings, and the sole
+  environment note that the current time could not be verified.
 
 ### ACI-03: Penalized ORM superpopulation inference
 

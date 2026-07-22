@@ -99,7 +99,7 @@ fit_visit <- orm_markov(
   first_followup_time = "1",
   opt_method = "LM",
   scale = TRUE,
-  penalty = 0.1,
+  # penalty = 0.1,
   maxit = 100
 )
 
@@ -109,8 +109,8 @@ sop_visit <- avg_sops(
   times = names(VISIT_DAYS),
   y_levels = fit_visit$yunique,
   absorb = as.character(ABSORB)
-) |> 
-  inferences(n_draws = 100)
+) |>
+  inferences(method = "delta", target = "superpopulation")
 
 attr(sop_visit, "avg_args")$times
 ```
@@ -148,7 +148,7 @@ plot_sops(
 ## Contrasts
 
 ```{r}
-cmp_days_point <- avg_comparisons(
+cmp_days <- avg_comparisons(
   fit_visit,
   variables = list(tx = c(0, 1)),
   estimand = "time_in_state",
@@ -161,44 +161,9 @@ cmp_days_point <- avg_comparisons(
   target_times = 1:max(VISIT_DAYS),
   baseline_time = 0,
   time_unit = "days"
-)
-
-cmp_days <- cmp_days_point |>
-  inferences(n_draws = 100)
+) |>
+  inferences(method = "delta", target = "superpopulation")
 
 plot_comparisons(cmp_days) +
   labs(y = "Difference in time in state (days)")
 ```
-
-## Analytical Time-In-State Differences
-
-The same comparison can use deterministic delta-method inference. The
-analytical comparison operator applies the stored `time_map`, inserts the shared
-observed-baseline anchor at `baseline_time`, linearly interpolates to
-`target_times`, and uses
-trapezoidal weights before taking treatment minus reference. Because the factor
-visit levels and real-time grid are fixed, these steps are linear after the SOP
-recursion and its Jacobian have been computed.
-
-```{r delta-comparison}
-cmp_days_delta <- cmp_days_point |>
-  inferences(
-    method = "delta",
-    target = "empirical",
-    conf_type = "auto"
-  )
-
-head(cmp_days_delta)
-```
-
-For comparisons, `conf_type = "auto"` selects identity-scale Wald intervals.
-The empirical target conditions on the observed standardization profiles while
-using the patient-cluster robust ORM coefficient covariance. Use
-`target = "superpopulation"` only when the fitted cohort is the sample of
-interest and its profile distribution should enter the patient-level stacked
-influence function. Because the model uses factor time, the wrapper requires
-`first_followup_time = "1"` explicitly. This value only selects and validates
-the stored starting profile; `time_map`, `baseline_time`, and `target_times`
-control the downstream real-time calculation. If `target_times` is omitted,
-time-in-state integrates only the mapped follow-up nodes and excludes the
-baseline-to-first-visit interval.

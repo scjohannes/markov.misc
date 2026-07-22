@@ -39,6 +39,164 @@ local_delta_orm_fit <- local({
   }
 })
 
+delta_weighted_sop_estimate <- function(
+  model,
+  coefficient,
+  prediction_data,
+  profile_weights,
+  variables,
+  times,
+  y_levels,
+  absorb
+) {
+  weighted_model <- set_coef(model, coefficient)
+  probabilities <- soprob_markov(
+    model = weighted_model,
+    newdata = prediction_data,
+    times = times,
+    y_levels = y_levels,
+    absorb = absorb
+  )
+  grid <- do.call(expand.grid, variables)
+  result <- marginalize_sops_array(
+    sops_array = probabilities,
+    grid = grid,
+    times = times,
+    y_levels = y_levels,
+    variables = variables,
+    n_cf = nrow(grid),
+    n_each = length(profile_weights),
+    weights = profile_weights,
+    newdata = prediction_data
+  )
+  result$estimate
+}
+
+delta_weighted_refit_oracle <- function(
+  model,
+  fit_data,
+  profile_data,
+  refit,
+  patient_ids,
+  variables = list(tx = c(0, 1)),
+  times = 1:2,
+  y_levels = 1:6,
+  absorb = 6,
+  step = 1e-2
+) {
+  point <- avg_sops(
+    model,
+    variables = variables,
+    times = times,
+    y_levels = y_levels,
+    absorb = absorb
+  )
+  inferred <- inferences(
+    point,
+    method = "delta",
+    target = "superpopulation"
+  )
+  analytical <- attr(inferred, "analytical")
+  profile_ids <- as.character(profile_data$id)
+  n <- length(profile_ids)
+  prediction_data <- attr(point, "newdata_pred")
+  base_weights <- rep(1, n)
+  components <- get_delta_score_components(model)
+
+  numerical_coefficient <- matrix(
+    NA_real_,
+    nrow = length(patient_ids),
+    ncol = length(stats::coef(model)),
+    dimnames = list(patient_ids, names(stats::coef(model)))
+  )
+  numerical_sop <- matrix(
+    NA_real_,
+    nrow = length(patient_ids),
+    ncol = nrow(point),
+    dimnames = list(patient_ids, NULL)
+  )
+  profile_only_sop <- numerical_sop
+
+  for (patient_id in patient_ids) {
+    fit_patient <- as.character(fit_data$id) == patient_id
+    profile_patient <- profile_ids == patient_id
+    upper_fit_weights <- lower_fit_weights <- rep(1, nrow(fit_data))
+    upper_fit_weights[fit_patient] <- 1 + step
+    lower_fit_weights[fit_patient] <- 1 - step
+    upper_profile_weights <- lower_profile_weights <- base_weights
+    upper_profile_weights[profile_patient] <- 1 + step
+    lower_profile_weights[profile_patient] <- 1 - step
+
+    upper_coefficient <- refit(upper_fit_weights)
+    lower_coefficient <- refit(lower_fit_weights)
+    numerical_coefficient[patient_id, ] <- n *
+      (upper_coefficient - lower_coefficient) /
+      (2 * step)
+
+    upper_sop <- delta_weighted_sop_estimate(
+      model = model,
+      coefficient = upper_coefficient,
+      prediction_data = prediction_data,
+      profile_weights = upper_profile_weights,
+      variables = variables,
+      times = times,
+      y_levels = y_levels,
+      absorb = absorb
+    )
+    lower_sop <- delta_weighted_sop_estimate(
+      model = model,
+      coefficient = lower_coefficient,
+      prediction_data = prediction_data,
+      profile_weights = lower_profile_weights,
+      variables = variables,
+      times = times,
+      y_levels = y_levels,
+      absorb = absorb
+    )
+    numerical_sop[patient_id, ] <- n *
+      (upper_sop - lower_sop) /
+      (2 * step)
+
+    upper_profile_only <- delta_weighted_sop_estimate(
+      model = model,
+      coefficient = stats::coef(model),
+      prediction_data = prediction_data,
+      profile_weights = upper_profile_weights,
+      variables = variables,
+      times = times,
+      y_levels = y_levels,
+      absorb = absorb
+    )
+    lower_profile_only <- delta_weighted_sop_estimate(
+      model = model,
+      coefficient = stats::coef(model),
+      prediction_data = prediction_data,
+      profile_weights = lower_profile_weights,
+      variables = variables,
+      times = times,
+      y_levels = y_levels,
+      absorb = absorb
+    )
+    profile_only_sop[patient_id, ] <- n *
+      (upper_profile_only - lower_profile_only) /
+      (2 * step)
+  }
+
+  score_rows <- match(patient_ids, components$ids)
+  expected_coefficient <- components$scores[score_rows, , drop = FALSE] %*%
+    t(components$Ainv)
+  rownames(expected_coefficient) <- patient_ids
+  influence_rows <- match(patient_ids, analytical$profile_ids)
+
+  list(
+    numerical_coefficient = numerical_coefficient,
+    expected_coefficient = expected_coefficient,
+    numerical_sop = numerical_sop,
+    profile_only_sop = profile_only_sop,
+    expected_sop = analytical$influence[influence_rows, , drop = FALSE]
+  )
+}
+
 test_that("patient clusters resolve explicitly or from stored fitting metadata", {
   fit <- local_delta_vglm_fit()
   fitted_data <- attr(fit, "markov_data")
@@ -211,6 +369,83 @@ test_that("orm covariance and score components use inverse total information", {
     components$metadata$bread_source,
     "rms_inverse_total_information"
   )
+})
+
+test_that("vglm patient-weight refits validate stacked score orientation", {
+  fit <- local_delta_vglm_fit()
+  fit_data <- attr(fit, "markov_data")
+  profile_data <- attr(fit, "markov_starting_profile_data")
+  components <- get_delta_score_components(fit)
+  score_size <- rowSums(abs(components$scores))
+  patient_ids <- components$ids[order(score_size, decreasing = TRUE)[1:3]]
+
+  oracle <- delta_weighted_refit_oracle(
+    model = fit,
+    fit_data = fit_data,
+    profile_data = profile_data,
+    refit = function(weights) {
+      weighted <- VGAM::vglm(
+        ordered(y) ~ time_lin + tx + yprev,
+        family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+        data = fit_data,
+        weights = weights,
+        coefstart = stats::coef(fit),
+        control = VGAM::vglm.control(epsilon = 1e-10, maxit = 100)
+      )
+      stats::coef(weighted)
+    },
+    patient_ids = patient_ids
+  )
+
+  expect_equal(
+    oracle$numerical_coefficient,
+    oracle$expected_coefficient,
+    tolerance = 2e-3
+  )
+  expect_equal(
+    oracle$numerical_sop,
+    oracle$expected_sop,
+    tolerance = 2e-3
+  )
+  expect_gt(max(abs(oracle$numerical_sop - oracle$profile_only_sop)), 1e-3)
+})
+
+test_that("orm patient-weight refits validate stacked score orientation", {
+  fit <- local_delta_orm_fit()
+  fit_data <- attr(fit, "markov_data")
+  profile_data <- attr(fit, "markov_starting_profile_data")
+  components <- get_delta_score_components(fit)
+  score_size <- rowSums(abs(components$scores))
+  patient_ids <- components$ids[order(score_size, decreasing = TRUE)[1:3]]
+
+  oracle <- delta_weighted_refit_oracle(
+    model = fit,
+    fit_data = fit_data,
+    profile_data = profile_data,
+    refit = function(weights) {
+      weighted <- suppressWarnings(rms::orm(
+        ordered(y) ~ time + tx + yprev,
+        data = fit_data,
+        weights = weights,
+        x = TRUE,
+        y = TRUE
+      ))
+      stats::coef(weighted)
+    },
+    patient_ids = patient_ids
+  )
+
+  expect_equal(
+    oracle$numerical_coefficient,
+    oracle$expected_coefficient,
+    tolerance = 2e-3
+  )
+  expect_equal(
+    oracle$numerical_sop,
+    oracle$expected_sop,
+    tolerance = 2e-3
+  )
+  expect_gt(max(abs(oracle$numerical_sop - oracle$profile_only_sop)), 1e-3)
 })
 
 test_that("superpopulation score machinery rejects partial proportional odds", {

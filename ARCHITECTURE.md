@@ -529,6 +529,18 @@ empirical coefficient propagation but are intentionally ignored by this stacked
 superpopulation covariance; their ignored values and the bread source are
 reported in metadata.
 
+The positive score orientation and sensitivity scale are independently checked
+in `tests/testthat/test-sops-delta-superpopulation.R`. The validation perturbs
+all likelihood-row weights and the starting-profile averaging weight for one
+patient, performs symmetric full ORM or VGLM refits, and numerically
+differentiates both the coefficients and the complete weighted SOP functional.
+Multiplying the weight derivative by the cohort size recovers `Ainv %*% s_i`
+and the complete stacked influence, respectively. Because this oracle uses
+backend refits and direct weighted averaging, it does not reuse the production
+one-step score/Jacobian construction. The VGLM oracle uses tighter convergence
+and a larger finite-difference step than the ORM oracle to keep optimizer noise
+below the comparison tolerance.
+
 Weighted ORM fits are rejected for the fitted-cohort superpopulation target
 because the current ORM row-score constructor is unweighted. Penalized ORM fits
 are also rejected because the likelihood-score and penalized-sensitivity
