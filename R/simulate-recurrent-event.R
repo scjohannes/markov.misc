@@ -12,13 +12,12 @@
 #'   `n` is provided or inferred.
 #' @param dist Character. Name of the waiting-time distribution. Currently only
 #'   "Exponential" is supported (default).
-#' @param param Numeric. Parameter vector for the waiting-time distribution.
-#'   The first element is taken as the baseline rate lambda used to
-#'   construct the per-event rates. Only `param[1]` is used by the current
-#'   implementation.
+#' @param param Numeric. Baseline rate parameter for the waiting-time distribution.
+#'   Must have length 1, or length equal to the number of individuals in `id`.
+#'   When a vector is supplied, each individual receives their own baseline rate.
 #' @param b Numeric scalar. Increment added to the rate for every subsequent
 #'   event (autoregressive Poisson / accelerating rates). Rate for event j is
-#'   lambda + b * (j - 1). Default `0` (constant rates).
+#'   lambda_i + b * (j - 1). Default `0` (constant rates).
 #' @param follow_up Numeric scalar. Administrative follow-up time. Event times
 #'   \code{>= follow_up} are censored and not returned. Default `60`.
 #' @param max_events Optional integer. Maximum number of events to generate per
@@ -33,15 +32,15 @@
 #'
 #' @details
 #' Algorithm summary:
-#' 1. Construct a vector of per-event rates of length \code{max_events}:
-#'    \eqn{rate_j = lambda + b * (j - 1)}.
+#' 1. Construct a vector of per-event rates of length \code{max_events} for each
+#'    subject: \eqn{rate_{ij} = lambda_i + b * (j - 1)}.
 #' 2. If \code{max_events} is not supplied, choose the smallest value in
 #'    3:20 for which the probability of experiencing all \code{max_events}
 #'    within \code{follow_up} is < 1e-4. When rates are constant the gamma
 #'    distribution (pgamma) is used; otherwise \code{sdprisk::phypoexp} is used.
-#' 3. Simulate waiting times with \code{rexp(n * max_events, rate = rates)}.
-#'    Rates are recycled to length \code{n * max_events} so that each subject
-#'    receives the block of per-event rates in order.
+#' 3. Simulate waiting times with \code{rexp(n * max_events, rate = rates_rep)}.
+#'    Rates are arranged in subject-major order so that each subject receives
+#'    their own block of per-event rates.
 #' 4. For each subject compute the cumulative sums of waiting times to obtain
 #'    event times, and retain only those event times < \code{follow_up}.
 #'
@@ -68,13 +67,21 @@ recurr_event <- function(
   follow_up = 60,
   max_events = NULL
 ) {
-  # prepare variables
   if (missing(id)) {
     id <- 1L
   }
   n <- length(id)
 
+  if (!identical(dist, "Exponential")) {
+    stop("Only dist = 'Exponential' is supported.")
+  }
+
   lambda_i <- param
+  if (length(lambda_i) == 1) {
+    lambda_i <- rep(lambda_i, n)
+  } else if (length(lambda_i) != n) {
+    stop("Length of param must be one or equal to the number of participants.")
+  }
 
   #______________________________________________________________________________#
   #____Find max_events and corresponding rates___________________________________#
@@ -82,68 +89,57 @@ recurr_event <- function(
   # Find max_events so that the probability of experiencing all events within
   # the study interval is very small (here set to 0.0001, can be changed below)
   if (is.null(max_events)) {
-    for (max_events in 3:20) {
-      rates <- numeric(max_events)
-
-      if (length(param) == 1) {
-        for (j in 1:max_events) {
-          rates[j] <- lambda_i + b * (j - 1)
-        }
-      } else {
-        if (length(param) == max_events) {
-          rates <- param
-        } else {
-          stop("Length of param must be one or equal to max_events.")
-        }
+    lambda_i_min <- min(lambda_i)
+    for (candidate_max_events in 3:20) {
+      candidate_rates <- lambda_i_min + b * (0:(candidate_max_events - 1))
+      if (any(candidate_rates <= 0)) {
+        stop("Rates must be strictly positive. Check param and b.")
       }
 
-      if (length(unique(rates)) == 1) {
+      if (length(unique(candidate_rates)) == 1) {
         p <- stats::pgamma(
           follow_up,
-          shape = length(rates),
-          rate = unique(rates)
+          shape = candidate_max_events,
+          rate = unique(candidate_rates)
         )
       } else {
-        p <- phypoexp(follow_up, rate = rates)
+        p <- phypoexp(follow_up, rate = candidate_rates)
       }
 
       if (p < 0.0001) {
+        max_events <- candidate_max_events
         break()
       }
 
-      if (max_events == 20) {
+      if (candidate_max_events == 20) {
         warning(paste0(
-          "max_events = 20, but propability of experiencing all events within time ",
+          "max_events = 20, but probability of experiencing all events within time ",
           follow_up,
           " is still ",
           p,
           ". To lower this probability, try different follow-up-time or lambda_i or override max_events."
         ))
+        max_events <- candidate_max_events
       }
     }
-  } else {
-    # define rates for waiting time prior to event i
-    rates <- numeric(max_events)
-    for (i in 1:max_events) {
-      rates[i] <- lambda_i + b * (i - 1)
-    }
   }
+
+  rate_mat <- outer(lambda_i, 0:(max_events - 1), function(lam, j) lam + b * j)
+  if (any(rate_mat <= 0)) {
+    stop("Rates must be strictly positive. Check param and b.")
+  }
+  rates_rep <- as.vector(t(rate_mat))
 
   #______________________________________________________________________________#
   #____ Model waiting times between events and store as vector   ________________#
   #______________________________________________________________________________#
-  # Assign patient ID for later dataframe
-  id <- rep(id, each = max_events)
+  id_rep <- rep(id, each = max_events)
 
-  # generate the waiting times between events for each individual
-  rates_rep <- rep(rates, times = n)
   waiting_times_orig <- rexp(n * max_events, rate = rates_rep)
 
-  # vector of cumulative sums of individuals, i.e., time points of state change
-  event_times <- ave(waiting_times_orig, id, FUN = cumsum)
-  names(event_times) <- id
+  event_times <- ave(waiting_times_orig, id_rep, FUN = cumsum)
+  names(event_times) <- id_rep
 
-  #   - censor intervals which exceed the follow-up (administrative censoring)
   censored_event_times <- event_times[event_times < follow_up]
 
   return(cbind(
