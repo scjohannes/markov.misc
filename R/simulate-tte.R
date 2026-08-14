@@ -33,6 +33,8 @@
 #'   rate_j = param + b * (j - 1). Positive b means events become more likely over time
 #'   (Poisson process acceleration); b = 0 means independent events. If a vector is given,
 #'   it must be the same length as the states vector (event-type-specific acceleration).
+#' @param frailty_sd Numeric. Standard deviation of the patient-specific frailty (default: 0.1).
+#' @param frailty_event_param Numeric vector. Link between frailty and event rates for each state (default: c(-0.2, -0.1, 0, 0.1, 0.2, 0.05)).
 #' @param seed Integer. Random seed for reproducibility (default: NULL).
 #'
 #' @return A data frame (tibble) with columns:
@@ -46,7 +48,8 @@
 #' This function implements a latent time-to-event data generating mechanism:
 #' 1. For each patient, state, and treatment arm, waiting times to recurrent events
 #'    are generated from exponential distributions with state-specific rates.
-#' 2. Rates are adjusted by the corresponding hazard ratio (treatment effect).
+#' 2. Rates are adjusted by the corresponding hazard ratio (treatment effect) and patient-specific
+#'    frailty.
 #' 3. Event times are cumulated to determine when state transitions occur.
 #' 4. Events occurring after follow-up are censored (administrative censoring).
 #' 5. Each patient's trajectory is expanded to include all days 1 to follow_up_time,
@@ -62,7 +65,8 @@
 #' baseline <- data.frame(
 #'   id = 1:100,
 #'   tx = rbinom(100, 1, 0.5),
-#'   state = sample(2:5, 100, replace = TRUE)
+#'   state = sample(2:5, 100, replace = TRUE),
+#'   frailty = rnorm(100, 0, 0.1)
 #' )
 #'
 #' trajectories <- sim_trajectories_tte(
@@ -76,11 +80,13 @@
 #' # Generate baseline_data within the function
 #' test_traj <- sim_trajectories_tte(
 #'   baseline_data = NULL,
-#' states = 1:6,
+#'   states = 1:6,
 #'   baseline_states = c(2:5),
 #'   prob = c(0.55, 0.2, 0.15, 0.1),
 #'   n = 10000,
 #'   absorbing_states = 6,
+#'   frailty_sd = 0.1,
+#'   frailty_event_param = c(-0.2, -0.1, 0, 0.1, 0.2, 0.05),
 #'   follow_up_time = 60,
 #'   param = c(0.05, 0.003, 0.001, 0.001, 0.001, 0.0015),
 #'   hazard_ratios = list(c(1.145, 1, 1, 1, 1, 1)),
@@ -111,7 +117,7 @@
 #' @export
 
 sim_trajectories_tte <- function(
-  baseline_data,
+  baseline_data = NULL,
   baseline_states = NULL,
   prob = c(0.55, 0.2, 0.15, 0.1),
   n = 1000,
@@ -121,6 +127,8 @@ sim_trajectories_tte <- function(
   param = c(0.05, 0.0035, 0.0025, 0.002, 0.002, 0.005),
   hazard_ratios = list(c(1, 1, 1, 1, 1, 1)),
   b = 0,
+  frailty_sd = 0.1,
+  frailty_event_param = c(-0.2, -0.1, 0, 0.1, 0.2, 0.05),
   seed = NULL
 ) {
   # Input validation
@@ -138,11 +146,12 @@ sim_trajectories_tte <- function(
         n,
         replace = TRUE,
         prob = prob
-      )
+      ),
+      frailty = rnorm(n, mean = 0, sd = frailty_sd)
     )
   }
 
-  required_cols <- c("id", "tx", "state", "event_time")
+  required_cols <- c("id", "tx", "state", "event_time", "frailty")
   missing_cols <- setdiff(required_cols, names(baseline_data))
   if (length(missing_cols) > 0) {
     stop(
@@ -153,6 +162,13 @@ sim_trajectories_tte <- function(
 
   if (!is.numeric(param) || length(param) != length(states)) {
     stop("param length must equal length(states)")
+  }
+
+  if (
+    !is.numeric(frailty_event_param) ||
+      length(frailty_event_param) != length(states)
+  ) {
+    stop("frailty_event_param length must equal length(states)")
   }
 
   if (!is.list(hazard_ratios)) {
@@ -205,11 +221,21 @@ sim_trajectories_tte <- function(
     )
   }
 
-  params_for_tx <- function(tx) {
+  params_for_tx <- function(tx, frailty) {
     if (tx == 0) {
-      return(param)
+      return(sweep(
+        exp(outer(frailty, frailty_event_param, "*")),
+        2,
+        param,
+        "*"
+      ))
     }
-    param * hazard_ratios[[tx]]
+    sweep(
+      exp(log(hazard_ratios[[tx]]) + outer(frailty, frailty_event_param, "*")),
+      2,
+      param,
+      "*"
+    )
   }
 
   # Expand b vector for each event type
@@ -231,13 +257,14 @@ sim_trajectories_tte <- function(
 
   for (tx_val in tx_levels) {
     ids_tx <- baseline_data$id[baseline_data$tx == tx_val]
-    tx_param <- params_for_tx(tx_val)
+    frailty_tx <- baseline_data$frailty[baseline_data$tx == tx_val]
+    tx_param <- params_for_tx(tx_val, frailty_tx)
 
     for (state_pos in seq_along(states)) {
       i <- states[state_pos]
       state_change <- recurr_event(
         id = ids_tx,
-        param = tx_param[state_pos],
+        param = tx_param[, state_pos],
         b = b[state_pos],
         follow_up = follow_up_time,
         max_events = NULL
@@ -259,7 +286,8 @@ sim_trajectories_tte <- function(
   # Combine event times, add baseline, and order
   state_changes_long <- rbind(
     do.call(rbind, state_changes),
-    baseline_data
+    baseline_data[, c("id", "event_time", "state", "tx")],
+    make.row.names = FALSE
   )
 
   state_changes_long <- state_changes_long[
