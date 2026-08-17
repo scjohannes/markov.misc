@@ -5,7 +5,7 @@
 \title{Simulate Patient Trajectories Using Latent Time-to-Event Model}
 \usage{
 sim_trajectories_tte(
-  baseline_data,
+  baseline_data = NULL,
   baseline_states = NULL,
   prob = c(0.55, 0.2, 0.15, 0.1),
   n = 1000,
@@ -15,6 +15,8 @@ sim_trajectories_tte(
   param = c(0.05, 0.0035, 0.0025, 0.002, 0.002, 0.005),
   hazard_ratios = list(c(1, 1, 1, 1, 1, 1)),
   b = 0,
+  frailty_sd = 0.1,
+  frailty_event_param = c(-0.2, -0.1, 0, 0.1, 0.2, 0.05),
   seed = NULL
 )
 }
@@ -58,6 +60,10 @@ rate_j = param + b * (j - 1). Positive b means events become more likely over ti
 (Poisson process acceleration); b = 0 means independent events. If a vector is given,
 it must be the same length as the states vector (event-type-specific acceleration).}
 
+\item{frailty_sd}{Numeric. Standard deviation of the patient-specific frailty (default: 0.1).}
+
+\item{frailty_event_param}{Numeric vector. Link between frailty and event rates for each state (default: c(-0.2, -0.1, 0, 0.1, 0.2, 0.05)).}
+
 \item{seed}{Integer. Random seed for reproducibility (default: NULL).}
 }
 \value{
@@ -80,7 +86,8 @@ This function implements a latent time-to-event data generating mechanism:
 \enumerate{
 \item For each patient, state, and treatment arm, waiting times to recurrent events
 are generated from exponential distributions with state-specific rates.
-\item Rates are adjusted by the corresponding hazard ratio (treatment effect).
+\item Rates are adjusted by the corresponding hazard ratio (treatment effect) and patient-specific
+frailty.
 \item Event times are cumulated to determine when state transitions occur.
 \item Events occurring after follow-up are censored (administrative censoring).
 \item Each patient's trajectory is expanded to include all days 1 to follow_up_time,
@@ -97,7 +104,8 @@ absorbing event to day 1.
 baseline <- data.frame(
   id = 1:100,
   tx = rbinom(100, 1, 0.5),
-  state = sample(2:5, 100, replace = TRUE)
+  state = sample(2:5, 100, replace = TRUE),
+  frailty = rnorm(100, 0, 0.1)
 )
 
 trajectories <- sim_trajectories_tte(
@@ -111,11 +119,13 @@ trajectories <- sim_trajectories_tte(
 # Generate baseline_data within the function
 test_traj <- sim_trajectories_tte(
   baseline_data = NULL,
-states = 1:6,
+  states = 1:6,
   baseline_states = c(2:5),
   prob = c(0.55, 0.2, 0.15, 0.1),
   n = 10000,
   absorbing_states = 6,
+  frailty_sd = 0.1,
+  frailty_event_param = c(-0.2, -0.1, 0, 0.1, 0.2, 0.05),
   follow_up_time = 60,
   param = c(0.05, 0.003, 0.001, 0.001, 0.001, 0.0015),
   hazard_ratios = list(c(1.145, 1, 1, 1, 1, 1)),

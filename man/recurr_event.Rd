@@ -22,14 +22,13 @@ rates per subject). If missing, identifiers 1:n are generated where
 \item{dist}{Character. Name of the waiting-time distribution. Currently only
 "Exponential" is supported (default).}
 
-\item{param}{Numeric. Parameter vector for the waiting-time distribution.
-The first element is taken as the baseline rate lambda used to
-construct the per-event rates. Only \code{param[1]} is used by the current
-implementation.}
+\item{param}{Numeric. Baseline rate parameter for the waiting-time distribution.
+Must have length 1, or length equal to the number of individuals in \code{id}.
+When a vector is supplied, each individual receives their own baseline rate.}
 
 \item{b}{Numeric scalar. Increment added to the rate for every subsequent
 event (autoregressive Poisson / accelerating rates). Rate for event j is
-lambda + b * (j - 1). Default \code{0} (constant rates).}
+lambda_i + b * (j - 1). Default \code{0} (constant rates).}
 
 \item{follow_up}{Numeric scalar. Administrative follow-up time. Event times
 \code{>= follow_up} are censored and not returned. Default \code{60}.}
@@ -57,15 +56,15 @@ censored (removed).
 \details{
 Algorithm summary:
 \enumerate{
-\item Construct a vector of per-event rates of length \code{max_events}:
-\eqn{rate_j = lambda + b * (j - 1)}.
+\item Construct a vector of per-event rates of length \code{max_events} for each
+subject: \eqn{rate_{ij} = lambda_i + b * (j - 1)}.
 \item If \code{max_events} is not supplied, choose the smallest value in
 3:20 for which the probability of experiencing all \code{max_events}
 within \code{follow_up} is < 1e-4. When rates are constant the gamma
 distribution (pgamma) is used; otherwise \code{sdprisk::phypoexp} is used.
-\item Simulate waiting times with \code{rexp(n * max_events, rate = rates)}.
-Rates are recycled to length \code{n * max_events} so that each subject
-receives the block of per-event rates in order.
+\item Simulate waiting times with \code{rexp(n * max_events, rate = rates_rep)}.
+Rates are arranged in subject-major order so that each subject receives
+their own block of per-event rates.
 \item For each subject compute the cumulative sums of waiting times to obtain
 event times, and retain only those event times < \code{follow_up}.
 }
