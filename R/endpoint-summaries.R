@@ -355,14 +355,18 @@ states_to_hce <- function(
       min(x$stop[x$SR == 1], na.rm = TRUE),
       max(x$stop, na.rm = TRUE)
     )
-    x$death <- as.numeric(any(x$y == absorbing_state, na.rm = TRUE))
+    x$death <- as.numeric(any(x$y %in% absorbing_state, na.rm = TRUE))
     x$TTdeath <- ifelse(
       any(x$death == 1, na.rm = TRUE),
       min(x$stop[x$death == 1], na.rm = TRUE),
       max(x$stop, na.rm = TRUE)
     )
     x$intervals <- x$stop - x$start
-    x$Vfreedays <- sum(x$intervals[x$y < min(ventilator_states)], na.rm = TRUE)
+    # y of an interval is the state at the end of the interval, so we need to check the previous state for ventilator-free days
+    x$Vfreedays <- sum(
+      x$intervals[x$yprev < min(ventilator_states)],
+      na.rm = TRUE
+    )
     x[
       1,
       c(
