@@ -13,6 +13,7 @@ Estimate state occupancy probabilities and treatment contrasts for longitudinal 
 
 Authors:
 \itemize{
+  \item Johannes Schwenke \email{johannes.schwenke@gmail.com} [copyright holder]
   \item Felix Herkner \email{felix.herkner@meduniwien.ac.at} [copyright holder]
 }
 
