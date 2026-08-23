@@ -26,7 +26,8 @@
 #' @export
 states_to_tte <- function(
   data,
-  covariates = c("age", "sofa")
+  covariates = c("age", "sofa"),
+  absorbing_state = 6
 ) {
   # Input validation
   required_cols <- c("id", "time", "y", "tx", "yprev")
@@ -50,7 +51,7 @@ states_to_tte <- function(
     (!is.na(data$state_change) & data$state_change != 0) |
     # ... the last entry of each individual, unless they died
     (data[["time"]] == ave(data[["time"]], data[["id"]], FUN = max) &
-      as.character(data[["y"]]) != "6")
+      as.character(data[["y"]]) != as.character(absorbing_state))
   data <- data[
     keep,
     ,

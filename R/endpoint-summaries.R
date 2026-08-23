@@ -301,3 +301,82 @@ states_to_drs <- function(
 
   return(result)
 }
+
+
+#' Convert Count Format Trajectory Data to Hierarchical Composite Endpoint (HCE) Format
+#'
+#' This function summarizes patient trajectories in count format into a hierarchical composite endpoint (HCE) format. It calculates key outcomes such as death, time to death, ventilator-free days, and sustained recovery for each patient.
+#'
+#' @param count_data A data frame containing trajectory data in count format. Must contain columns: `id`, `tx`, `start`, `stop`, and `y`.
+#' @param absorbing_state Integer. The state representing death (default: 6).
+#' @param recovery_state Integer. The state representing sustained recovery (default: 1).
+#' @param ventilator_states Integer vector. The states representing ventilator use (default: 4:6).
+#'
+#' @return A data frame with columns:
+#'   - id: patient identifier
+#'   - tx: treatment assignment
+#'  - death: binary indicator of death (1 if patient died, 0 otherwise)
+#'   - TTdeath: time to death (minimum stop time if death occurred, otherwise maximum stop time)
+#'   - intervals: total time spent in all states
+#'   - Vfreedays: total ventilator-free days (sum of intervals where patient was not in ventilator states)
+#'   - lead_dur: lead duration (time until next state change)
+#'   - SR: binary indicator of sustained recovery (1 if patient achieved recovery state for at least 3 consecutive time periods, 0 otherwise)
+#'   -TTSR: time to sustained recovery (minimum stop time if sustained recovery occurred, otherwise maximum stop time)
+#'
+#' @details
+#' The function processes the count format trajectory data by splitting it by patient ID, calculating the relevant outcomes for each patient, and returning a summarized data frame. It is particularly useful for analyzing hierarchical composite endpoints in clinical trials or observational studies.
+#' @examples
+#' \dontrun{
+#' # After simulating count format trajectories
+#' count_data <- states_to_tte(sim_trajectories_brownian_gap())
+#' hce_data <- states_to_hce(count_data, absorbing_state = 8, recovery_state = 1:2, ventilator_states = 6:8)
+#' }
+#' @export
+
+states_to_hce <- function(
+  count_data,
+  absorbing_state = 6,
+  recovery_state = 1,
+  ventilator_states = 4:6
+) {
+  # Input validation
+  required_cols <- c("id", "tx", "start", "stop", "y")
+  missing_cols <- setdiff(required_cols, names(count_data))
+  if (length(missing_cols) > 0) {
+    stop("data must contain columns: ", paste(missing_cols, collapse = ", "))
+  }
+
+  split_data <- split(count_data, count_data$id)
+  split_data <- lapply(split_data, FUN = function(x) {
+    x$lead_dur <- c(x$stop[-1] - x$start[-1], 1)
+    x$SR <- as.numeric(any(x$y %in% recovery_state & x$lead_dur >= 3))
+    x$TTSR <- ifelse(
+      any(x$SR == 1, na.rm = TRUE),
+      min(x$stop[x$SR == 1], na.rm = TRUE),
+      max(x$stop, na.rm = TRUE)
+    )
+    x$death <- as.numeric(any(x$y == absorbing_state, na.rm = TRUE))
+    x$TTdeath <- ifelse(
+      any(x$death == 1, na.rm = TRUE),
+      min(x$stop[x$death == 1], na.rm = TRUE),
+      max(x$stop, na.rm = TRUE)
+    )
+    x$intervals <- x$stop - x$start
+    x$Vfreedays <- sum(x$intervals[x$y < min(ventilator_states)], na.rm = TRUE)
+    x[
+      1,
+      c(
+        "id",
+        "tx",
+        "death",
+        "TTdeath",
+        "intervals",
+        "Vfreedays",
+        "lead_dur",
+        "SR",
+        "TTSR"
+      )
+    ]
+  })
+  do.call(rbind, split_data)
+}

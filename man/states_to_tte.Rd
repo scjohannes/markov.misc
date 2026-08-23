@@ -4,7 +4,7 @@
 \alias{states_to_tte}
 \title{Convert State Trajectory Data to Time-to-event data}
 \usage{
-states_to_tte(data, covariates = c("age", "sofa"))
+states_to_tte(data, covariates = c("age", "sofa"), absorbing_state = 6)
 }
 \arguments{
 \item{data}{A data frame containing trajectory data, typically the output from
