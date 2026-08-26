@@ -348,8 +348,17 @@ states_to_hce <- function(
 
   split_data <- split(count_data, count_data$id)
   split_data <- lapply(split_data, FUN = function(x) {
-    x$lead_dur <- c(x$stop[-1] - x$start[-1], 1)
-    x$SR <- as.numeric(any(x$y %in% recovery_state & x$lead_dur >= 3))
+    recovery <- x$y %in% recovery_state
+
+    # Identify consecutive runs of recovery states
+    run <- cumsum(c(TRUE, recovery[-1] != recovery[-nrow(x)]))
+
+    # Total duration of each run
+    run_dur <- ave(x$stop - x$start, run, FUN = sum)
+
+    # Duration only for recovery intervals
+    x$recovery_dur <- ifelse(recovery, run_dur, 0)
+    x$SR <- as.numeric(recovery & x$recovery_dur >= 3)
     x$TTSR <- ifelse(
       any(x$SR == 1, na.rm = TRUE),
       min(x$stop[x$SR == 1], na.rm = TRUE),
