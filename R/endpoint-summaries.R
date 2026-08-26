@@ -358,16 +358,16 @@ states_to_hce <- function(
 
     # Duration only for recovery intervals
     x$recovery_dur <- ifelse(recovery, run_dur, 0)
-    x$SR <- as.numeric(recovery & x$recovery_dur >= 3)
+    x$SR <- as.numeric(any(recovery & x$recovery_dur >= 3))
     x$TTSR <- ifelse(
       any(x$SR == 1, na.rm = TRUE),
-      min(x$stop[x$SR == 1], na.rm = TRUE),
+      min(x$stop[recovery], na.rm = TRUE),
       max(x$stop, na.rm = TRUE)
     )
     x$death <- as.numeric(any(x$y %in% absorbing_state, na.rm = TRUE))
     x$TTdeath <- ifelse(
       any(x$death == 1, na.rm = TRUE),
-      min(x$stop[x$death == 1], na.rm = TRUE),
+      min(x$stop[x$y %in% absorbing_state], na.rm = TRUE),
       max(x$stop, na.rm = TRUE)
     )
     x$intervals <- x$stop - x$start
