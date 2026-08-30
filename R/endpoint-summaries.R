@@ -383,9 +383,7 @@ states_to_hce <- function(
         "tx",
         "death",
         "TTdeath",
-        "intervals",
         "Vfreedays",
-        "lead_dur",
         "SR",
         "TTSR"
       )
