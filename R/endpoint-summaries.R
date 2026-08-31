@@ -337,7 +337,7 @@ states_to_hce <- function(
   count_data,
   absorbing_state = 6,
   recovery_state = 1,
-  ventilator_states = 4:6
+  ventilator_states = 5:6
 ) {
   # Input validation
   required_cols <- c("id", "tx", "start", "stop", "y")
@@ -348,7 +348,7 @@ states_to_hce <- function(
 
   split_data <- split(count_data, count_data$id)
   split_data <- lapply(split_data, FUN = function(x) {
-    recovery <- x$y %in% recovery_state
+    recovery <- x$yprev %in% recovery_state
 
     # Identify consecutive runs of recovery states
     run <- cumsum(c(TRUE, recovery[-1] != recovery[-nrow(x)]))
@@ -356,12 +356,19 @@ states_to_hce <- function(
     # Total duration of each run
     run_dur <- ave(x$stop - x$start, run, FUN = sum)
 
+    # If last interval starts and ends with recovery, add 1
+    if (
+      x$yprev[nrow(x)] %in% recovery_state && x$y[nrow(x)] %in% recovery_state
+    ) {
+      run_dur[length(run_dur)] <- run_dur[length(run_dur)] + 1
+    }
+
     # Duration only for recovery intervals
     x$recovery_dur <- ifelse(recovery, run_dur, 0)
     x$SR <- as.numeric(any(recovery & x$recovery_dur >= 3))
     x$TTSR <- ifelse(
       any(x$SR == 1, na.rm = TRUE),
-      min(x$stop[recovery], na.rm = TRUE),
+      min(x$start[recovery], na.rm = TRUE),
       max(x$stop, na.rm = TRUE)
     )
     x$death <- as.numeric(any(x$y %in% absorbing_state, na.rm = TRUE))
