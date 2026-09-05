@@ -113,35 +113,35 @@ mc
 ```
 
 ```{r}
-et <- plot_transitions(
-  raw_data,
-  id_var = "id",
-  time_var = "time",
-  y_var = "y")
+# et <- plot_transitions(
+#   raw_data,
+#   id_var = "id",
+#   time_var = "time",
+#   y_var = "y")
 
-mt <- plot_transitions(
-  fit_many,
-  id_var = "id",
-  time_var = "time",
-  y_var = "y",
-  times = seq_len(FOLLOW_UP),
-  y_levels = fit_many$yunique,
-  absorb = ABSORB)
+# mt <- plot_transitions(
+#   fit_many,
+#   id_var = "id",
+#   time_var = "time",
+#   y_var = "y",
+#   times = seq_len(FOLLOW_UP),
+#   y_levels = fit_many$yunique,
+#   absorb = ABSORB)
 
-et
-mt
+# et
+# mt
 
-td <- plot_transitions(
-  fit_many,
-  comparison = "difference",
-  variables = list(tx = c(0, 1)),
-  id_var = "id",
-  time_var = "time",
-  y_var = "y",
-  times = seq_len(FOLLOW_UP),
-  y_levels = fit_many$yunique,
-  absorb = ABSORB)
-td
+# td <- plot_transitions(
+#   fit_many,
+#   comparison = "difference",
+#   variables = list(tx = c(0, 1)),
+#   id_var = "id",
+#   time_var = "time",
+#   y_var = "y",
+#   times = seq_len(FOLLOW_UP),
+#   y_levels = fit_many$yunique,
+#   absorb = ABSORB)
+# td
 ```
 
 ```{r}
@@ -186,8 +186,19 @@ line per state.
 plot_sops(
   sop_many,
   geom = "bar",
-  facet_var = "tx",
-  n_draws = 0
+  facet_var = "tx"
+) +
+  scale_x_continuous(breaks = c(1, 7, 14)) +
+  labs(
+    x = "Week",
+    y = "State occupancy probability"
+  )
+
+plot_sops(
+  sop_many,
+  geom = "line",
+  facet_var = "state",
+  linetype_var = "tx"
 ) +
   scale_x_continuous(breaks = c(1, 7, 14)) +
   labs(
@@ -198,42 +209,7 @@ plot_sops(
 
 ## Contrasts
 
-We can calculate contrasts for time in state or weeks benefit.
-
-```{r}
-c <- avg_comparisons(
-  fit_many, 
-  times = seq_len(FOLLOW_UP),
-  variables = list(tx = c(0, 1)), 
-  estimand = "time_in_state",
-  state_sets = list(good = 1:10, average = 11:20, bad = 21:30)
-) |> 
-  inferences(
-    method = "delta",
-    vcov = "conditional"
-  )
-
-plot_comparisons(c)
-```
-
-Analytical delta intervals do not yet support `time_benefit`, so this contrast
-continues to use coefficient draws. Delta support for this estimand is tracked
-as follow-up work.
-
-```{r}
-tb <- avg_comparisons(
-  fit_many, 
-  times = seq_len(FOLLOW_UP),
-  variables = list(tx = c(0, 1)),
-  estimand = "time_benefit"
-) |> 
-  inferences(
-    method = "mvn",
-    n_draws = 50
-  )
-
-plot_comparisons(tb)
-```
+We can show the difference in the SOPs from above over time.
 
 ```{r}
 sc <- avg_comparisons(
@@ -248,4 +224,40 @@ sc <- avg_comparisons(
   )
 
 plot_comparisons(sc, facet_var = "state_set")
+```
+
+We can calculate contrasts for time in state or weeks benefit.
+
+```{r}
+c <- avg_comparisons(
+  fit_many, 
+  times = seq_len(FOLLOW_UP),
+  variables = list(tx = c(0, 1)), 
+  estimand = "time_in_state"
+  # state_sets = list(good = 1:10, average = 11:20, bad = 21:30)
+) |> 
+  inferences(
+    method = "delta",
+    vcov = "conditional"
+  )
+
+plot_comparisons(c)
+```
+
+Analytical delta intervals do not yet support `time_benefit`, so this contrast
+continues to use coefficient draws.
+
+```{r}
+tb <- avg_comparisons(
+  fit_many, 
+  times = seq_len(FOLLOW_UP),
+  variables = list(tx = c(0, 1)),
+  estimand = "time_benefit"
+) |> 
+  inferences(
+    method = "mvn",
+    n_draws = 50
+  )
+
+plot_comparisons(tb)
 ```
