@@ -98,7 +98,7 @@ patient-cluster robust covariance associated with the fit.
 avg_empirical <- inferences(
   avg,
   method = "delta",
-  target = "empirical",
+  vcov = "conditional",
   conf_type = "auto"
 )
 
@@ -125,7 +125,7 @@ HC1 or cluster adjustment.
 avg_superpopulation <- inferences(
   avg,
   method = "delta",
-  target = "superpopulation",
+  vcov = "unconditional",
   conf_type = "auto"
 )
 
@@ -167,11 +167,13 @@ profile. This standardization contract assumes the observation process is
 non-informative; the analytical variance does not correct informative
 missingness.
 
-Individual `sops()` results accept only an omitted target or
-`target = "fixed"`. Empirical and superpopulation targets apply only to averaged
-SOPs and average comparisons, which use `target = "empirical"` by default. The
-unreleased `target = "population"` spelling is not accepted. Supplying the target
-explicitly is helpful whenever the distinction matters scientifically.
+Individual `sops()` results default to `vcov = "conditional"` and cannot use
+`"unconditional"`. Averaged SOPs and comparisons default to `"unconditional"`.
+A supplied coefficient covariance matrix selects conditional inference for any
+of these result types. Omitted `vcov` and `NULL` are equivalent. These string
+choices are available only with `method = "delta"`; `target` has been removed.
+Unsupported unconditional inference errors without falling back, so supplied
+`newdata` requires an explicit conditional choice.
 
 ## Why Patient Clustering Matters
 
@@ -186,7 +188,7 @@ independent clusters. Analytical inference therefore follows this invariant:
 For an empirical target, a complete user-supplied coefficient covariance can
 replace the fitted covariance after strict dimension, name, finiteness,
 symmetry, and positive-semidefiniteness checks. A custom covariance is not
-accepted for `target = "superpopulation"`, because a covariance matrix alone does
+accepted for `vcov = "unconditional"`, because a covariance matrix alone does
 not contain the joint score/profile information needed by the stacked influence
 function.
 
@@ -220,7 +222,7 @@ sop_difference <- avg_comparisons(
 ) |>
   inferences(
     method = "delta",
-    target = "empirical",
+    vcov = "conditional",
     conf_type = "auto"
   )
 
@@ -279,7 +281,7 @@ estimands:
 
 | Request | Current status |
 | --- | --- |
-| Individual `sops()` with an empirical or superpopulation target | Unsupported; omit `target` or use `target = "fixed"`. |
+| Individual `sops()` with `vcov = "unconditional"` | Unsupported; omit `vcov` or use `vcov = "conditional"`. |
 | Ratio comparison | Planned follow-up; analytical comparisons currently support differences only. |
 | `estimand = "time_benefit"` | Planned follow-up because it is nonlinear in paired state distributions. |
 | `by`-stratum analytical inference | Planned follow-up. |

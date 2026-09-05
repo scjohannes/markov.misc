@@ -94,7 +94,7 @@ delta_weighted_refit_oracle <- function(
   inferred <- inferences(
     point,
     method = "delta",
-    target = "superpopulation"
+    vcov = "unconditional"
   )
   analytical <- attr(inferred, "analytical")
   profile_ids <- as.character(profile_data$id)

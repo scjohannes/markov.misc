@@ -43,7 +43,7 @@ delta_validate_comparison_scope <- function(
   target <- delta_validate_target(object, target)
   if (identical(target, "superpopulation") && !is.null(vcov)) {
     stop(
-      "`vcov` cannot be supplied with `target = \"superpopulation\"`; ",
+      "A coefficient covariance matrix cannot be supplied for unconditional inference; ",
       "superpopulation inference uses fitted-model score components and the ",
       "stacked patient influence function.",
       call. = FALSE
@@ -320,15 +320,13 @@ inferences_delta_comparisons <- function(
     avg_args = scope$avg_args,
     conf_level = conf_level
   )
-  avg <- inferences(
-    avg,
-    method = "delta",
+  avg <- inferences_delta_sops(
+    object = avg,
     vcov = vcov,
     cluster = cluster,
     conf_level = conf_level,
     conf_type = "wald",
-    target = scope$target,
-    return_draws = FALSE
+    target = scope$target
   )
   operator <- delta_comparison_operator(
     object = object,

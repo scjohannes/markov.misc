@@ -172,7 +172,7 @@ sop_many <- avg_sops(
   y_levels = fit_many$yunique,
   p_var = "yprev"
 ) |> 
-  inferences(method = "delta", target = "empirical")
+  inferences(method = "delta", vcov = "conditional")
 ```
 
 The analytical delta method propagates the complete fitted ORM covariance
@@ -210,7 +210,7 @@ c <- avg_comparisons(
 ) |> 
   inferences(
     method = "delta",
-    target = "empirical"
+    vcov = "conditional"
   )
 
 plot_comparisons(c)
@@ -244,7 +244,7 @@ sc <- avg_comparisons(
 ) |> 
   inferences(
     method = "delta",
-    target = "empirical"
+    vcov = "conditional"
   )
 
 plot_comparisons(sc, facet_var = "state_set")

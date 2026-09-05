@@ -31,7 +31,7 @@ make_delta_average_fixture <- function() {
   out
 }
 
-test_that("the delta target preserves established positional arguments", {
+test_that("vcov selection preserves established positional arguments", {
   expect_identical(
     names(formals(inferences)),
     c(
@@ -47,8 +47,7 @@ test_that("the delta target preserves established positional arguments", {
       "null",
       "return_draws",
       "update_datadist",
-      "use_coefstart",
-      "target"
+      "use_coefstart"
     )
   )
 })
@@ -549,7 +548,6 @@ test_that("public fixed VGLM Jacobians match coefficient replay", {
   inferred <- inferences(
     point,
     method = "delta",
-    target = "fixed",
     vcov = case$covariance,
     seed = 9191
   )
@@ -589,7 +587,6 @@ test_that("public fixed ORM Jacobians match coefficient replay", {
   inferred <- inferences(
     point,
     method = "delta",
-    target = "fixed",
     vcov = case$covariance
   )
 
@@ -613,7 +610,6 @@ test_that("public empirical ORM averages use complete named covariance", {
   inferred <- inferences(
     avg,
     method = "delta",
-    target = "empirical",
     vcov = case$covariance
   )
 
@@ -638,7 +634,7 @@ test_that("fitted-cohort superpopulation averages expose stacked influence", {
     y_levels = case$y_levels,
     absorb = max(case$y_levels)
   )
-  inferred <- inferences(avg, method = "delta", target = "superpopulation")
+  inferred <- inferences(avg, method = "delta", vcov = "unconditional")
 
   avg_args <- attr(avg, "avg_args")
   newdata <- attr(avg, "newdata_pred")
@@ -756,17 +752,17 @@ test_that("backend HC settings affect empirical but not superpopulation inferenc
     y_levels = case$y_levels,
     absorb = max(case$y_levels)
   )
-  empirical_hc0 <- inferences(point_hc0, method = "delta")
-  empirical_hc1 <- inferences(point_hc1, method = "delta")
+  empirical_hc0 <- inferences(point_hc0, method = "delta", vcov = "conditional")
+  empirical_hc1 <- inferences(point_hc1, method = "delta", vcov = "conditional")
   super_hc0 <- inferences(
     point_hc0,
     method = "delta",
-    target = "superpopulation"
+    vcov = "unconditional"
   )
   super_hc1 <- inferences(
     point_hc1,
     method = "delta",
-    target = "superpopulation"
+    vcov = "unconditional"
   )
 
   expect_gt(max(abs(empirical_hc0$std.error - empirical_hc1$std.error)), 1e-10)
@@ -805,13 +801,12 @@ test_that("public delta scope enforces fixed targets and patient clustering", {
     inferences(
       fixed,
       method = "delta",
-      target = "empirical",
-      vcov = case$covariance
+      vcov = "unconditional"
     ),
     error = TRUE
   )
   expect_snapshot(
-    inferences(fixed, method = "delta", target = "fixed"),
+    inferences(fixed, method = "delta", vcov = "conditional"),
     error = TRUE
   )
 
@@ -827,13 +822,12 @@ test_that("public delta scope enforces fixed targets and patient clustering", {
     inferences(
       avg,
       method = "delta",
-      target = "superpopulation",
-      vcov = superpopulation_case$model$var
+      vcov = c("conditional", "unconditional")
     ),
     error = TRUE
   )
   expect_snapshot(
-    inferences(avg, method = "delta", target = "population"),
+    inferences(avg, method = "delta", vcov = "population"),
     error = TRUE
   )
 
@@ -850,7 +844,7 @@ test_that("public delta scope enforces fixed targets and patient clustering", {
     absorb = max(superpopulation_case$y_levels)
   )
   expect_snapshot(
-    inferences(supplied, method = "delta", target = "superpopulation"),
+    inferences(supplied, method = "delta", vcov = "unconditional"),
     error = TRUE
   )
 })
@@ -876,4 +870,80 @@ test_that("logit delta intervals distinguish structural boundaries", {
   )
   expect_true(all(is.na(nonstructural$conf.low)))
   expect_true(all(is.na(nonstructural$conf.high)))
+})
+
+
+test_that("delta vcov choices preserve calculations and select class defaults", {
+  case <- delta_public_superpopulation_case()
+  args <- list(
+    model = case$model,
+    variables = list(tx = c(0, 1)),
+    times = 1:2,
+    y_levels = case$y_levels,
+    absorb = max(case$y_levels)
+  )
+  objects <- list(
+    do.call(sops, args),
+    do.call(avg_sops, args),
+    do.call(avg_comparisons, c(args, list(estimand = "sop", state_sets = "1")))
+  )
+  for (object in objects) {
+    individual <- inherits(object, "markov_sops")
+    conditional <- inferences(object, method = "delta", vcov = "conditional")
+    matrix_result <- inferences(object, method = "delta", vcov = case$model$var)
+    expect_equal(
+      conditional$std.error,
+      matrix_result$std.error,
+      tolerance = 1e-12
+    )
+    expect_equal(
+      conditional$conf.low,
+      matrix_result$conf.low,
+      tolerance = 1e-12
+    )
+    expect_identical(
+      attr(conditional, "target"),
+      if (individual) "fixed" else "empirical"
+    )
+    default <- inferences(object, method = "delta")
+    explicit <- if (individual) {
+      conditional
+    } else {
+      inferences(object, method = "delta", vcov = "unconditional")
+    }
+    expect_equal(default, explicit)
+    expect_equal(inferences(object, method = "delta", vcov = NULL), explicit)
+    expect_identical(
+      attr(default, "target"),
+      if (individual) "fixed" else "superpopulation"
+    )
+  }
+})
+
+test_that("delta vcov validates strings and does not silently change targets", {
+  object <- make_delta_average_fixture()
+  local_reproducible_output(width = 80)
+  expect_snapshot(inferences(object, method = "delta"), error = TRUE)
+  expect_snapshot(
+    inferences(object, method = "delta", vcov = NA_character_),
+    error = TRUE
+  )
+  expect_snapshot(
+    inferences(object, method = "delta", vcov = character()),
+    error = TRUE
+  )
+  expect_snapshot(
+    inferences(object, method = "delta", vcov = "cond"),
+    error = TRUE
+  )
+  expect_snapshot(
+    inferences(object, method = "delta", target = "empirical"),
+    error = TRUE
+  )
+  for (method in c("mvn", "score_bootstrap", "bootstrap", "fwb")) {
+    expect_snapshot(
+      inferences(object, method = method, vcov = "conditional"),
+      error = TRUE
+    )
+  }
 })

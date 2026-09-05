@@ -17,8 +17,7 @@ inferences(
   null = NULL,
   return_draws = TRUE,
   update_datadist = TRUE,
-  use_coefstart = FALSE,
-  target = NULL
+  use_coefstart = FALSE
 )
 }
 \arguments{
@@ -42,10 +41,15 @@ iterations (for bootstrap). Default is 1000. For \code{blrm} SOP objects this
 argument is ignored; rerun \code{sops()}/\code{avg_sops()} with \code{n_draws} and \code{seed}
 to change posterior draws.}
 
-\item{vcov}{Optional complete, named coefficient covariance matrix. Where
-accepted, it overrides the covariance extracted from the model, including
-analytical fixed-profile and empirical-cohort inference. It cannot be
-supplied with \verb{method = "delta", target = "superpopulation"}.}
+\item{vcov}{For \code{method = "delta"}, \code{"conditional"} treats prediction or
+standardization covariates as fixed; \code{"unconditional"} includes their
+sampling variability and its cross-term with coefficient estimation.
+\code{NULL} (the default) selects unconditional inference for \code{avg_sops()} and
+\code{avg_comparisons()}, and conditional inference for \code{sops()}. Individual
+\code{sops()} results support only conditional inference. A complete, named
+coefficient covariance matrix selects conditional inference and overrides
+the model covariance. Character choices are available only for delta
+inference; other methods retain their existing matrix/\code{NULL} behavior.}
 
 \item{cluster}{Optional patient-cluster specification. For analytical
 fixed-profile, empirical-cohort, and superpopulation inference, supply a
@@ -93,11 +97,6 @@ during bootstrap. Default is TRUE.}
 
 \item{use_coefstart}{Logical. Use original coefficients as starting values
 for bootstrap refitting. Default is FALSE.}
-
-\item{target}{Analytical inference target. \code{NULL} selects fixed-profile
-inference for \code{sops()} and empirical-cohort inference for \code{avg_sops()} and
-\code{avg_comparisons()}. See Details. Ignored by draw-based methods only when
-\code{NULL}.}
 }
 \value{
 The input object with added columns:
@@ -129,21 +128,21 @@ proportional-odds SOP recursion on the model's complete raw-coefficient
 scale. For fixed-profile \code{sops()} results and empirical-cohort \code{avg_sops()}
 or \code{avg_comparisons()} results, covariance is propagated as
 \eqn{J V J^\top}, where \eqn{J} is the estimand Jacobian and \eqn{V} is a
-complete named coefficient covariance. An explicit \code{vcov} overrides the
-model covariance for these two targets.
+complete named coefficient covariance. An explicit covariance matrix passed
+as \code{vcov} overrides the model covariance for conditional inference.
 
-\code{target = "fixed"} is the default for \code{sops()} and conditions on its supplied
-prediction profiles. \code{target = "empirical"} is the default for averaged
-results and conditions on the observed standardization profiles. The
-\code{"superpopulation"} target is available only for averaged results from the
-stored fitted-patient cohort; the unreleased \code{"population"} spelling is not
-accepted. Superpopulation inference adds profile-distribution uncertainty and
-its cross-term with coefficient estimation through the patient-level stacked
-influence \eqn{\phi_i = g_i - \bar g + J A^{-1}s_i}, with covariance
-estimated as \eqn{\mathrm{cov}(\phi_i) / n}. This is the manuscript's
-patient-level sample-covariance correction, not a backend HC1 setting.
-User-supplied prediction cohorts cannot be used for this target, and a custom
-\code{vcov} is invalid because fitted-model scores and sensitivity are required.
+\code{vcov = "conditional"} conditions on the supplied prediction profiles for
+\code{sops()} and on the observed standardization profiles for averaged results.
+\code{vcov = "unconditional"} is the default for averaged results and is available
+only for the stored fitted-patient cohort. It adds profile-distribution
+uncertainty and its cross-term with coefficient estimation through the
+patient-level stacked influence \eqn{\phi_i = g_i - \bar g + J A^{-1}s_i},
+with covariance estimated as \eqn{\mathrm{cov}(\phi_i) / n}. This is the
+manuscript's patient-level sample-covariance correction, not a backend HC1
+setting. User-supplied prediction cohorts require \code{vcov = "conditional"};
+unavailable unconditional inference errors rather than silently falling back.
+A custom covariance matrix always selects conditional inference because
+unconditional inference requires fitted-model scores and sensitivity.
 Every included patient must contribute at least one usable likelihood
 transition and have exactly one complete model-stored starting profile. The
 starting profile may have a missing first transition response; its ID,

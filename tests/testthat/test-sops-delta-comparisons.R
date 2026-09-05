@@ -157,7 +157,6 @@ test_that("joint average SOP Jacobians retain cross-arm covariance", {
   avg <- inferences(
     avg,
     method = "delta",
-    target = "empirical",
     vcov = case$covariance,
     conf_type = "wald"
   )
@@ -173,7 +172,6 @@ test_that("joint average SOP Jacobians retain cross-arm covariance", {
   comparison <- inferences(
     comparison,
     method = "delta",
-    target = "empirical",
     vcov = case$covariance
   )
 
@@ -234,7 +232,6 @@ test_that("factor-time ORM differences match public finite differences", {
   inferred <- inferences(
     point,
     method = "delta",
-    target = "empirical",
     vcov = case$covariance
   )
 
@@ -382,7 +379,7 @@ test_that("factor-time superpopulation differences use the replayed grid", {
   inferred <- inferences(
     point,
     method = "delta",
-    target = "superpopulation"
+    vcov = "unconditional"
   )
 
   expect_identical(attr(inferred, "target"), "superpopulation")
@@ -404,7 +401,7 @@ test_that("superpopulation comparisons retain transformed stacked influence", {
   inferred <- inferences(
     point,
     method = "delta",
-    target = "superpopulation"
+    vcov = "unconditional"
   )
   analytical <- attr(inferred, "analytical")
   rows <- c(1L, nrow(inferred))
@@ -427,8 +424,7 @@ test_that("superpopulation comparisons retain transformed stacked influence", {
     inferences(
       point,
       method = "delta",
-      target = "superpopulation",
-      vcov = case$covariance
+      vcov = "unknown"
     ),
     error = TRUE
   )

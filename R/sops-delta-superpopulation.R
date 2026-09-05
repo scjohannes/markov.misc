@@ -472,7 +472,7 @@ delta_reject_weighted_orm_superpopulation <- function(model) {
   stop(
     "Superpopulation delta inference does not currently support orm fits with ",
     "non-unit case weights because the required row score contributions ",
-    "must incorporate those weights. Use `target = \"empirical\"` or refit ",
+    "must incorporate those weights. Use `vcov = \"conditional\"` or refit ",
     "without case weights.",
     call. = FALSE
   )
@@ -496,7 +496,7 @@ delta_reject_penalized_orm_superpopulation <- function(model) {
     "Superpopulation delta inference does not currently support penalized ",
     "orm likelihoods because the patient scores and sensitivity have not ",
     "been shown to incorporate the penalty consistently. Ordinary spline ",
-    "transformations remain supported with `target = \"empirical\"`.",
+    "transformations remain supported with `vcov = \"conditional\"`.",
     call. = FALSE
   )
 }

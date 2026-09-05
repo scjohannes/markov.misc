@@ -11,7 +11,7 @@ the post-implementation concerns that will be investigated one at a time.
 ## Approved Design
 
 - Add deterministic inference through
-  `inferences(method = "delta", target = ..., conf_type = "auto")` without
+  `inferences(method = "delta", vcov = ..., conf_type = "auto")` without
   changing the existing `method = "mvn"` default.
 - Differentiate the first-order full proportional-odds SOP recursion
   analytically on each backend's complete raw coefficient scale. Central finite
@@ -19,12 +19,13 @@ the post-implementation concerns that will be investigated one at a time.
 - Use patient-cluster robust coefficient covariance for fixed-profile and
   empirical-cohort propagation unless the user supplies a valid complete
   coefficient covariance.
-- For averaged objects, treat `target = "empirical"` as conditional on the
-  observed standardization profiles. Treat `target = "superpopulation"` as a
+- For averaged objects, treat `vcov = "conditional"` as conditional on the
+  observed standardization profiles. Treat `vcov = "unconditional"` as a
   fitted-cohort superpopulation target and use a stacked patient influence
-  function that retains profile/model-score covariance. The unreleased
-  `target = "population"` spelling is unsupported. Individual `sops()` accepts
-  only an omitted target or `target = "fixed"`.
+  function that retains profile/model-score covariance. Averaged results default
+  to unconditional inference. Individual `sops()` defaults to conditional and
+  rejects unconditional inference. A coefficient matrix selects conditional
+  inference; `NULL` selects the class default. Remove the public `target` argument.
 - Store factorized analytical state and materialize selected Jacobian or
   covariance blocks with `get_jacobian()` and `vcov()`.
 - Support linear differences for SOP and time-in-state estimands, including
@@ -37,10 +38,10 @@ the post-implementation concerns that will be investigated one at a time.
 
 | Result | Default / allowed target | Analytical interval |
 | --- | --- | --- |
-| Individual `sops()` | Omitted or `fixed` only | Componentwise logit-delta under `conf_type = "auto"` |
-| `avg_sops()` | `empirical` | Componentwise logit-delta under `conf_type = "auto"` |
-| Supported `avg_comparisons()` | `empirical` | Identity-scale Wald under `conf_type = "auto"` |
-| Stored-cohort averages/comparisons | explicit `superpopulation` | Fitted-cohort stacked influence covariance |
+| Individual `sops()` | `"conditional"` or coefficient matrix | Componentwise logit-delta under `conf_type = "auto"` |
+| `avg_sops()` | `"unconditional"`; conditional or matrix also accepted | Componentwise logit-delta under `conf_type = "auto"` |
+| Supported `avg_comparisons()` | `"unconditional"`; conditional or matrix also accepted | Identity-scale Wald under `conf_type = "auto"` |
+| Stored-cohort averages/comparisons | `"unconditional"` | Fitted-cohort stacked influence covariance |
 
 Patient is always the independent cluster. An explicit row-aligned `cluster`
 vector takes precedence; otherwise stored fitting data and stored `id_var`
@@ -53,7 +54,7 @@ bias, informative missingness, or Markov/proportional-odds misspecification.
 ### Public Entry and Dispatch
 
 - [x] Add `"delta"` to the `inferences()` method choices.
-- [x] Add `target` and `conf_type = "auto"` routing while retaining
+- [x] Select analytical variance through `vcov` and `conf_type = "auto"` while retaining
   `method = "mvn"` as the default.
 - [x] Route SOP objects and average-comparison objects to separate analytical
   handlers.
@@ -216,7 +217,7 @@ For every concern:
 | ACI-16 | Medium | Open | Native C++ maintenance and semantic parity |
 | ACI-17 | Low | Open | Performance benchmark generalizability |
 | ACI-18 | High | Open | Independent superpopulation-inference validation oracle |
-| ACI-19 | Low | Open | Public target terminology and formal defaults |
+| ACI-19 | Low | Resolved | Public target terminology and formal defaults |
 | ACI-20 | Low | Open | Generated native build artifacts in the worktree |
 
 ### ACI-01: Superpopulation finite-sample normalization and fitted-cohort contract
@@ -229,7 +230,7 @@ For every concern:
   `n / (n - 1)`, relative to the centered patient-level HC0 expression. Do not
   call this backend HC1. The unreleased `target = "population"` spelling is
   removed rather than deprecated; the public target is
-  `target = "superpopulation"`.
+  `vcov = "unconditional"`.
 - **Concern:** The covariance normalization must remain distinct from backend
   row-level HC/cadjust conventions. Its patient cohort must also match the
   fitted cohort exactly without introducing profile-only zero-score patients.
@@ -313,7 +314,7 @@ For every concern:
   establish a coherent stacked patient influence function. It would also omit
   uncertainty introduced by selecting or tuning the penalty.
 - **Resolution approach:** Retain an explicit, informative early error for
-  `target = "superpopulation"` with a penalized ORM fit. Preserve empirical
+  `vcov = "unconditional"` with a penalized ORM fit. Preserve empirical
   inference because it propagates the fitted coefficient covariance through
   the SOP Jacobian and does not require reconstructing the superpopulation
   score/sensitivity system.
@@ -668,19 +669,13 @@ For every concern:
 
 ### ACI-19: Public target terminology and formal defaults
 
-- **Status:** Open
-- **Priority:** Low
-- **Current decision:** Use `fixed` for individual `sops()` and
-  `empirical`/`superpopulation` for averaged results. The unreleased
-  `population` spelling has no alias. Use `conf_type = "auto"` as the formal
-  default while preserving percentile behavior for draw methods.
-- **Concern:** Users may naturally describe fixed observed `newdata` as
-  empirical. Code that inspects `formals(inferences)` also observes a changed
-  default even though runtime draw behavior is preserved.
-- **Resolution approach:** Collect representative call patterns, review naming
-  against related marginal-estimand APIs, and decide whether aliases or clearer
-  error messages are warranted. Preserve existing positional argument order.
-- **Resolution log:** Pending.
+- **Status:** Resolved (2026-09-05)
+- **Decision:** Keep `method = "delta"`; replace the public `target` argument
+  with `vcov = "conditional"` or `"unconditional"`. Averaged results default to
+  unconditional, individual results to conditional. Custom coefficient matrices
+  select conditional inference. Internal target metadata labels remain unchanged.
+- **Compatibility:** Remove `target` immediately. Existing positional arguments
+  retain their order. Unsupported unconditional inference errors without fallback.
 
 ### ACI-20: Generated native build artifacts in the worktree
 

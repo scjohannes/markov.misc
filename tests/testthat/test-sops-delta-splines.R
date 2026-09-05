@@ -179,7 +179,7 @@ test_that("penalized orm previous-state splines support delta inference", {
   expect_equal(native$probabilities, oracle$probabilities, tolerance = 1e-12)
   expect_equal(native$jacobian, oracle$jacobian, tolerance = 1e-12)
 
-  inferred <- inferences(avg, method = "delta", target = "empirical")
+  inferred <- inferences(avg, method = "delta", vcov = "conditional")
   numerical <- central_spline_avg_jacobian(avg, fit)
   analytical <- get_jacobian(inferred)
 
@@ -189,7 +189,7 @@ test_that("penalized orm previous-state splines support delta inference", {
   expect_all_true(inferred$std.error >= 0)
 
   condition <- tryCatch(
-    inferences(avg, method = "delta", target = "superpopulation"),
+    inferences(avg, method = "delta", vcov = "unconditional"),
     error = identity
   )
   expect_s3_class(condition, "error")
@@ -221,7 +221,7 @@ test_that("superpopulation delta rejects weighted orm score construction", {
   )
 
   condition <- tryCatch(
-    inferences(avg, method = "delta", target = "superpopulation"),
+    inferences(avg, method = "delta", vcov = "unconditional"),
     error = identity
   )
   expect_s3_class(condition, "error")

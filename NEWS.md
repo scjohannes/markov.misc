@@ -4,6 +4,11 @@
   finite-cluster corrections used by its automatic robust covariance wrapper.
 - `get_jacobian()` now extracts selected raw-coefficient Jacobian rows from SOP
   and supported average-comparison results returned by analytical inference.
+- `inferences(method = "delta")` replaces `target` with `vcov = "conditional"`
+  or `"unconditional"`. Averaged results now default to unconditional inference;
+  individual `sops()` results default to conditional inference. Custom covariance
+  matrices select conditional inference. Supplied prediction cohorts require
+  an explicit conditional choice.
 - `inferences()` now supports deterministic analytical delta-method intervals
   for fixed individual first-order full proportional-odds ORM/VGLM SOPs,
   empirical and fitted-cohort superpopulation averages, and supported SOP or

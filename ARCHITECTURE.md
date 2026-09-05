@@ -439,23 +439,30 @@ not retain a `draws` attribute; they attach a versioned `analytical` state that
 supports covariance and Jacobian access without constructing a full result-cell
 covariance by default.
 
-The target labels distinguish what is held fixed. Empirical and superpopulation
-targets apply only to averaged objects; individual SOPs accept an omitted target
-or `target = "fixed"` only. The unreleased `target = "population"` spelling is
-not accepted.
+The dispatcher resolves `vcov` through `delta_resolve_vcov()` before calling the
+analytical handlers. `NULL` selects the class default; a named coefficient
+covariance matrix selects conditional inference. Character choices are valid
+only for delta inference. The public `target` argument has been removed, while
+internal `fixed`, `empirical`, and `superpopulation` metadata labels remain.
+Comparison inference passes the resolved target and matrix directly to the SOP
+handler so replay cannot accidentally change the selected calculation.
 
-| Object | Default / allowed target | Interpretation |
+| Object | Default `vcov` | Allowed choices |
 | --- | --- | --- |
-| `markov_sops` | omitted or `fixed` only | Coefficient uncertainty for the displayed prediction profiles. No other analytical target is available. |
-| `markov_avg_sops` | `empirical` | Conditional inference for the average over the observed standardization profiles, treating those profiles as fixed. |
-| `markov_avg_comparisons` | `empirical` | The same fixed-profile interpretation after a supported linear comparison operator. |
-| Stored-cohort averages and comparisons | explicit `superpopulation` | Fitted-cohort inference that also treats the sampled profile distribution as random. |
+| `markov_sops` | `"conditional"` | Conditional or a coefficient covariance matrix. |
+| `markov_avg_sops` | `"unconditional"` | Conditional, unconditional, or a coefficient covariance matrix. |
+| `markov_avg_comparisons` | `"unconditional"` | The same choices, propagated through a supported linear comparison operator. |
+
+Conditional inference holds the prediction/standardization profiles fixed.
+Unconditional inference includes profile sampling variability and its cross-term
+with coefficient estimation. Unavailable unconditional inference errors rather
+than silently falling back to conditional inference.
 
 The superpopulation target is deliberately narrower than a generic
 external-target analysis. It requires the stored fitted cohort, one validated
 first-follow-up profile per fitted patient ID, and exact score/profile ID
 alignment. User-supplied `newdata` is a fixed standardization cohort and cannot
-request `target = "superpopulation"`.
+request `vcov = "unconditional"`.
 
 ```mermaid
 flowchart TD
@@ -511,7 +518,7 @@ fits or use `Design$mmcolnames` for spline terms; those two backend-owned forms
 are validated and relabeled to the raw coefficient order. Explicit user
 covariance matrices remain strictly name-matched.
 
-For `target = "superpopulation"`, `R/sops-delta-superpopulation.R` aggregates raw
+For `vcov = "unconditional"`, `R/sops-delta-superpopulation.R` aggregates raw
 transition-row scores by patient and combines them with patient-level profile
 functionals. If `h_i` is the vector of counterfactual SOP cells for patient
 `i`, `G` is the average raw-coefficient Jacobian, `s_i` is the patient score,
@@ -1292,7 +1299,7 @@ interfaces or examples change.
 The public SOP vocabulary uses `model`, `newdata`, `variables`, `by`, `times`,
 `y_levels`, `time_var`, `p_var`, `p2_var`, `gap_var`, `time_covariates`,
 `absorb`, `include_re`, `n_draws`, `seed`, `conf_level`, `conf_type`, and
-`return_draws`; analytical inference additionally uses `target`, `cluster`, and
+`return_draws`; analytical inference additionally uses `vcov`, `cluster`, and
 optional selected `rows` in its accessors. Public post-processing and plotting functions take `x` first;
 observed-state selectors remain `y_var`, and all plot selectors are character
 `*_var` arguments.

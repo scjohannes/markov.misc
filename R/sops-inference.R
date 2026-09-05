@@ -26,10 +26,15 @@
 #'   iterations (for bootstrap). Default is 1000. For `blrm` SOP objects this
 #'   argument is ignored; rerun `sops()`/`avg_sops()` with `n_draws` and `seed`
 #'   to change posterior draws.
-#' @param vcov Optional complete, named coefficient covariance matrix. Where
-#'   accepted, it overrides the covariance extracted from the model, including
-#'   analytical fixed-profile and empirical-cohort inference. It cannot be
-#'   supplied with `method = "delta", target = "superpopulation"`.
+#' @param vcov For `method = "delta"`, `"conditional"` treats prediction or
+#'   standardization covariates as fixed; `"unconditional"` includes their
+#'   sampling variability and its cross-term with coefficient estimation.
+#'   `NULL` (the default) selects unconditional inference for `avg_sops()` and
+#'   `avg_comparisons()`, and conditional inference for `sops()`. Individual
+#'   `sops()` results support only conditional inference. A complete, named
+#'   coefficient covariance matrix selects conditional inference and overrides
+#'   the model covariance. Character choices are available only for delta
+#'   inference; other methods retain their existing matrix/`NULL` behavior.
 #' @param cluster Optional patient-cluster specification. For analytical
 #'   fixed-profile, empirical-cohort, and superpopulation inference, supply a
 #'   vector aligned with the fitting rows or a one-sided formula selecting a
@@ -58,10 +63,6 @@
 #'     \item `"logit"`: Componentwise logit-delta limits for probabilities;
 #'       available only with `method = "delta"` on SOP objects.
 #'   }
-#' @param target Analytical inference target. `NULL` selects fixed-profile
-#'   inference for `sops()` and empirical-cohort inference for `avg_sops()` and
-#'   `avg_comparisons()`. See Details. Ignored by draw-based methods only when
-#'   `NULL`.
 #' @param null Optional single finite numeric null value. Supplying it adds
 #'   Wald `statistic`, `p.value`, and `s.value` columns. A zero null is rejected
 #'   for known ratio comparisons.
@@ -94,21 +95,21 @@
 #' scale. For fixed-profile `sops()` results and empirical-cohort `avg_sops()`
 #' or `avg_comparisons()` results, covariance is propagated as
 #' \eqn{J V J^\top}, where \eqn{J} is the estimand Jacobian and \eqn{V} is a
-#' complete named coefficient covariance. An explicit `vcov` overrides the
-#' model covariance for these two targets.
+#' complete named coefficient covariance. An explicit covariance matrix passed
+#' as `vcov` overrides the model covariance for conditional inference.
 #'
-#' `target = "fixed"` is the default for `sops()` and conditions on its supplied
-#' prediction profiles. `target = "empirical"` is the default for averaged
-#' results and conditions on the observed standardization profiles. The
-#' `"superpopulation"` target is available only for averaged results from the
-#' stored fitted-patient cohort; the unreleased `"population"` spelling is not
-#' accepted. Superpopulation inference adds profile-distribution uncertainty and
-#' its cross-term with coefficient estimation through the patient-level stacked
-#' influence \eqn{\phi_i = g_i - \bar g + J A^{-1}s_i}, with covariance
-#' estimated as \eqn{\mathrm{cov}(\phi_i) / n}. This is the manuscript's
-#' patient-level sample-covariance correction, not a backend HC1 setting.
-#' User-supplied prediction cohorts cannot be used for this target, and a custom
-#' `vcov` is invalid because fitted-model scores and sensitivity are required.
+#' `vcov = "conditional"` conditions on the supplied prediction profiles for
+#' `sops()` and on the observed standardization profiles for averaged results.
+#' `vcov = "unconditional"` is the default for averaged results and is available
+#' only for the stored fitted-patient cohort. It adds profile-distribution
+#' uncertainty and its cross-term with coefficient estimation through the
+#' patient-level stacked influence \eqn{\phi_i = g_i - \bar g + J A^{-1}s_i},
+#' with covariance estimated as \eqn{\mathrm{cov}(\phi_i) / n}. This is the
+#' manuscript's patient-level sample-covariance correction, not a backend HC1
+#' setting. User-supplied prediction cohorts require `vcov = "conditional"`;
+#' unavailable unconditional inference errors rather than silently falling back.
+#' A custom covariance matrix always selects conditional inference because
+#' unconditional inference requires fitted-model scores and sensitivity.
 #' Every included patient must contribute at least one usable likelihood
 #' transition and have exactly one complete model-stored starting profile. The
 #' starting profile may have a missing first transition response; its ID,
@@ -294,8 +295,7 @@ inferences <- function(
   null = NULL,
   return_draws = TRUE,
   update_datadist = TRUE,
-  use_coefstart = FALSE,
-  target = NULL
+  use_coefstart = FALSE
 ) {
   with_sop_fallback_notification_scope({
     with_local_seed(seed, {
@@ -308,7 +308,6 @@ inferences <- function(
         workers = workers,
         conf_level = conf_level,
         conf_type = conf_type,
-        target = target,
         null = null,
         return_draws = return_draws,
         update_datadist = update_datadist,
@@ -327,7 +326,6 @@ inferences_impl <- function(
   workers,
   conf_level,
   conf_type,
-  target,
   null,
   return_draws,
   update_datadist,
@@ -372,8 +370,10 @@ inferences_impl <- function(
     }
   }
 
-  if (!identical(method, "delta") && !is.null(target)) {
-    stop("`target` is only available with `method = \"delta\"`.")
+  if (!identical(method, "delta") && is.character(vcov)) {
+    stop(
+      "Character `vcov` choices are only available with `method = \"delta\"`."
+    )
   }
   if (!identical(method, "delta") && identical(conf_type, "logit")) {
     stop("`conf_type = \"logit\"` is only available with `method = \"delta\"`.")
@@ -388,6 +388,9 @@ inferences_impl <- function(
         call. = FALSE
       )
     }
+    covariance <- delta_resolve_vcov(x, vcov)
+    target <- covariance$target
+    vcov <- covariance$vcov
     result <- if (inherits(x, "markov_avg_comparisons")) {
       inferences_delta_comparisons(
         object = x,

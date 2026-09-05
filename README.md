@@ -78,13 +78,13 @@ averaging target explicitly:
 sop_empirical <- inferences(
   sop,
   method = "delta",
-  target = "empirical"
+  vcov = "conditional"
 )
 
 sop_superpopulation <- inferences(
   sop,
   method = "delta",
-  target = "superpopulation"
+  vcov = "unconditional"
 )
 
 # Materialize only the analytical rows needed downstream.
@@ -118,10 +118,13 @@ Patient-cluster robustness protects the variance against arbitrary within-patien
 score correlation; it does not correct transition-model bias, informative
 observation, or Markov/proportional-odds misspecification.
 
-The empirical and superpopulation targets apply only to averaged SOP or
-comparison objects. For an individual `sops()` result, omit `target` or use
-`target = "fixed"`; no other analytical target is accepted. The old unreleased
-`target = "population"` spelling is not supported.
+For analytical inference, omitted `vcov` (or `NULL`) selects `"unconditional"`
+for averaged SOPs and comparisons, and `"conditional"` for individual `sops()`.
+Individual results support only conditional inference. A custom coefficient
+covariance matrix also selects conditional inference. Supplied `newdata`
+requires an explicit conditional choice; unsupported unconditional inference
+errors without falling back. The `target` argument has been removed.
+
 
 ## Learn More
 

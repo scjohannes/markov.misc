@@ -4,13 +4,51 @@ delta_model_for_plan <- function(model) {
   if (inherits(model, "robcov_vglm")) model$vglm_fit else model
 }
 
+delta_resolve_vcov <- function(object, vcov) {
+  individual <- inherits(object, "markov_sops")
+  choice <- if (is.null(vcov)) {
+    if (individual) "conditional" else "unconditional"
+  } else if (is.character(vcov)) {
+    if (
+      length(vcov) != 1L ||
+        is.na(vcov) ||
+        !vcov %in% c("conditional", "unconditional")
+    ) {
+      stop(
+        '`vcov` must be "conditional", "unconditional", NULL, or a coefficient covariance matrix.',
+        call. = FALSE
+      )
+    }
+    vcov
+  } else {
+    "conditional"
+  }
+  if (individual && identical(choice, "unconditional")) {
+    stop(
+      '`sops()` delta inference supports only `vcov = "conditional"` or a coefficient covariance matrix.',
+      call. = FALSE
+    )
+  }
+  target <- if (identical(choice, "unconditional")) {
+    "superpopulation"
+  } else if (individual) {
+    "fixed"
+  } else {
+    "empirical"
+  }
+  list(
+    target = delta_validate_target(object, target),
+    vcov = if (is.character(vcov)) NULL else vcov
+  )
+}
+
 delta_validate_target <- function(object, target) {
   if (inherits(object, "markov_sops")) {
     target <- target %||% "fixed"
     if (!identical(target, "fixed")) {
       stop(
-        "`sops()` delta inference supports only `target = \"fixed\"`. ",
-        "Empirical and superpopulation targets apply to averaged SOP objects.",
+        "`sops()` delta inference supports only `vcov = \"conditional\"` ",
+        "or a coefficient covariance matrix.",
         call. = FALSE
       )
     }
@@ -20,8 +58,8 @@ delta_validate_target <- function(object, target) {
   target <- target %||% "empirical"
   if (!target %in% c("empirical", "superpopulation")) {
     stop(
-      "Averaged delta inference supports `target = \"empirical\"` or ",
-      "`target = \"superpopulation\"`.",
+      "Averaged delta inference supports `vcov = \"conditional\"`, ",
+      "`vcov = \"unconditional\"`, or a coefficient covariance matrix.",
       call. = FALSE
     )
   }
@@ -30,8 +68,8 @@ delta_validate_target <- function(object, target) {
       isTRUE(attr(object, "newdata_supplied"))
   ) {
     stop(
-      "`target = \"superpopulation\"` requires the stored fitted-patient ",
-      "cohort. User-supplied `newdata` is treated as a fixed cohort.",
+      "`vcov = \"unconditional\"` requires the stored fitted-patient ",
+      "cohort. For user-supplied `newdata`, use `vcov = \"conditional\"`.",
       call. = FALSE
     )
   }
@@ -519,7 +557,7 @@ inferences_delta_sops <- function(
   target <- delta_validate_target(object, target)
   if (identical(target, "superpopulation") && !is.null(vcov)) {
     stop(
-      "`vcov` cannot be supplied with `target = \"superpopulation\"`; ",
+      "A coefficient covariance matrix cannot be supplied for unconditional inference; ",
       "superpopulation inference uses fitted-model score components and the ",
       "stacked patient influence function.",
       call. = FALSE

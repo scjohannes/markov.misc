@@ -1,16 +1,15 @@
 # public delta scope enforces fixed targets and patient clustering
 
     Code
-      inferences(fixed, method = "delta", target = "empirical", vcov = case$
-      covariance)
+      inferences(fixed, method = "delta", vcov = "unconditional")
     Condition
       Error:
-      ! `sops()` delta inference supports only `target = "fixed"`. Empirical and superpopulation targets apply to averaged SOP objects.
+      ! `sops()` delta inference supports only `vcov = "conditional"` or a coefficient covariance matrix.
 
 ---
 
     Code
-      inferences(fixed, method = "delta", target = "fixed")
+      inferences(fixed, method = "delta", vcov = "conditional")
     Condition
       Error:
       ! Analytical superpopulation inference requires patient clustering. Supply `cluster`, or fit with `orm_markov(..., id_var = ...)` or `vglm_markov(..., id_var = ...)` so row-aligned fitting data and patient-ID metadata are stored. Observation rows are not used as implicit clusters.
@@ -18,27 +17,26 @@
 ---
 
     Code
-      inferences(avg, method = "delta", target = "superpopulation", vcov = superpopulation_case$
-        model$var)
+      inferences(avg, method = "delta", vcov = c("conditional", "unconditional"))
     Condition
       Error:
-      ! `vcov` cannot be supplied with `target = "superpopulation"`; superpopulation inference uses fitted-model score components and the stacked patient influence function.
+      ! `vcov` must be "conditional", "unconditional", NULL, or a coefficient covariance matrix.
 
 ---
 
     Code
-      inferences(avg, method = "delta", target = "population")
+      inferences(avg, method = "delta", vcov = "population")
     Condition
       Error:
-      ! Averaged delta inference supports `target = "empirical"` or `target = "superpopulation"`.
+      ! `vcov` must be "conditional", "unconditional", NULL, or a coefficient covariance matrix.
 
 ---
 
     Code
-      inferences(supplied, method = "delta", target = "superpopulation")
+      inferences(supplied, method = "delta", vcov = "unconditional")
     Condition
       Error:
-      ! `target = "superpopulation"` requires the stored fitted-patient cohort. User-supplied `newdata` is treated as a fixed cohort.
+      ! `vcov = "unconditional"` requires the stored fitted-patient cohort. For user-supplied `newdata`, use `vcov = "conditional"`.
 
 # logit delta intervals distinguish structural boundaries
 
@@ -48,3 +46,76 @@
     Condition
       Warning:
       Logit-delta limits are undefined for nonstructural boundary SOP estimates; their confidence limits were set to NA.
+
+# delta vcov validates strings and does not silently change targets
+
+    Code
+      inferences(object, method = "delta")
+    Condition
+      Error:
+      ! `vcov = "unconditional"` requires the stored fitted-patient cohort. For user-supplied `newdata`, use `vcov = "conditional"`.
+
+---
+
+    Code
+      inferences(object, method = "delta", vcov = NA_character_)
+    Condition
+      Error:
+      ! `vcov` must be "conditional", "unconditional", NULL, or a coefficient covariance matrix.
+
+---
+
+    Code
+      inferences(object, method = "delta", vcov = character())
+    Condition
+      Error:
+      ! `vcov` must be "conditional", "unconditional", NULL, or a coefficient covariance matrix.
+
+---
+
+    Code
+      inferences(object, method = "delta", vcov = "cond")
+    Condition
+      Error:
+      ! `vcov` must be "conditional", "unconditional", NULL, or a coefficient covariance matrix.
+
+---
+
+    Code
+      inferences(object, method = "delta", target = "empirical")
+    Condition
+      Error in `inferences()`:
+      ! unused argument (target = "empirical")
+
+---
+
+    Code
+      inferences(object, method = method, vcov = "conditional")
+    Condition
+      Error in `inferences_impl()`:
+      ! Character `vcov` choices are only available with `method = "delta"`.
+
+---
+
+    Code
+      inferences(object, method = method, vcov = "conditional")
+    Condition
+      Error in `inferences_impl()`:
+      ! Character `vcov` choices are only available with `method = "delta"`.
+
+---
+
+    Code
+      inferences(object, method = method, vcov = "conditional")
+    Condition
+      Error in `inferences_impl()`:
+      ! Character `vcov` choices are only available with `method = "delta"`.
+
+---
+
+    Code
+      inferences(object, method = method, vcov = "conditional")
+    Condition
+      Error in `inferences_impl()`:
+      ! Character `vcov` choices are only available with `method = "delta"`.
+

@@ -110,7 +110,7 @@ sop_visit <- avg_sops(
   y_levels = fit_visit$yunique,
   absorb = as.character(ABSORB)
 ) |>
-  inferences(method = "delta", target = "superpopulation")
+  inferences(method = "delta", vcov = "unconditional")
 
 attr(sop_visit, "avg_args")$times
 ```
@@ -162,7 +162,7 @@ cmp_days <- avg_comparisons(
   baseline_time = 0,
   time_unit = "days"
 ) |>
-  inferences(method = "delta", target = "superpopulation")
+  inferences(method = "delta", vcov = "unconditional")
 
 plot_comparisons(cmp_days) +
   labs(y = "Difference in time in state (days)")
