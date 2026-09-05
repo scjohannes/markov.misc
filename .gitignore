@@ -59,3 +59,11 @@ AGENTS.md
 archive/*
 design
 slides/
+
+# Local Brownian benchmark studies and results
+/benchmarks/sop-brownian-orm-*
+/benchmarks/type1-error-brownian-orm*
+
+# Compiled R package build artifacts
+/src/*.o
+/src/*.dll
