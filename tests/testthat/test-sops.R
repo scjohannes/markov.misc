@@ -9,10 +9,12 @@ test_that("soprob_markov matches Hmisc::soprobMarkovOrdm for a proportional-odds
     seed = 1234,
     follow_up_time = follow_up
   )
-  model <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
+  model <- suppressWarnings(
+    vglm_markov(
+      ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data
+    )
   )
 
   expected <- Hmisc::soprobMarkovOrdm(
@@ -56,15 +58,19 @@ test_that("soprob_markov gives the same predictions for inline and precomputed s
     "time_nlin_2"
   )
 
-  inline_model <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
+  inline_model <- suppressWarnings(
+    vglm_markov(
+      ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data
+    )
   )
-  precomputed_model <- VGAM::vglm(
-    ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
+  precomputed_model <- suppressWarnings(
+    vglm_markov(
+      ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data
+    )
   )
 
   baseline <- data[data$time == 1, , drop = FALSE][seq_len(6), , drop = FALSE]
@@ -186,11 +192,13 @@ test_that("soprob_markov handles partial proportional-odds constraints", {
     "time_nlin_1" = cbind(PO_effect = 1),
     "time_nlin_2" = cbind(PO_effect = 1)
   )
-  model <- VGAM::vglm(
-    ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = FALSE ~ time_lin),
-    data = data,
-    constraints = constraints
+  model <- suppressWarnings(
+    vglm_markov(
+      ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = FALSE ~ time_lin),
+      data = data,
+      constraints = constraints
+    )
   )
   model@call$constraints <- constraints
 
@@ -245,14 +253,16 @@ test_that("soprob_markov incorporates treatment interactions into predictions", 
     "time_nlin_2:tx" = cbind(PO_effect = 1),
     "time_lin:yprev" = cbind(PO_effect = 1)
   )
-  model <- VGAM::vglm(
-    ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) *
-      tx +
-      yprev +
-      yprev:time_lin,
-    family = VGAM::cumulative(reverse = TRUE, parallel = FALSE ~ time_lin),
-    data = data,
-    constraints = constraints
+  model <- suppressWarnings(
+    vglm_markov(
+      ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) *
+        tx +
+        yprev +
+        yprev:time_lin,
+      family = VGAM::cumulative(reverse = TRUE, parallel = FALSE ~ time_lin),
+      data = data,
+      constraints = constraints
+    )
   )
   model@call$constraints <- constraints
 
@@ -294,10 +304,12 @@ test_that("soprob_markov carries absorbing-state mass forward", {
     seed = 999,
     follow_up_time = follow_up
   )
-  model <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
+  model <- suppressWarnings(
+    vglm_markov(
+      ordered(y) ~ rms::rcs(time, 4) + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data
+    )
   )
 
   result <- soprob_markov(
@@ -328,10 +340,12 @@ test_that("soprob_markov normalizes transitions when no state is absorbing", {
   ))
   data$yprev <- factor(data$yprev, levels = 1:6)
   baseline <- data[data$time == 1, , drop = FALSE][seq_len(5), , drop = FALSE]
-  model <- VGAM::vglm(
-    ordered(y) ~ time + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
+  model <- suppressWarnings(
+    vglm_markov(
+      ordered(y) ~ time + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data
+    )
   )
 
   result <- soprob_markov(
@@ -361,12 +375,12 @@ test_that("avg_sops() equals manual G-computation over individual SOPs", {
     "time_lin",
     "time_nlin_1"
   )
-  model <- VGAM::vglm(
+  robust_model <- vglm_markov(
     ordered(y) ~ (time_lin + time_nlin_1) * tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
+    data = data,
+    id_var = "id"
   )
-  robust_model <- robcov_vglm(model, cluster = data$id)
   baseline <- data[data$time == 1, , drop = FALSE]
 
   baseline_tx1 <- baseline

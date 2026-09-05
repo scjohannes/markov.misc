@@ -438,6 +438,7 @@ vglm_markov <- function(
     starting_profile_data = stored$starting_profile_data,
     starting_profile_metadata = stored$starting_profile_metadata
   )
+  answer <- markov_set_fit_wrapper(answer, "vglm_markov")
 
   if (!is.null(id_var)) {
     robust <- robcov_vglm(

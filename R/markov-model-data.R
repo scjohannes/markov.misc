@@ -10,9 +10,20 @@
 #'
 #' @inheritParams rms::orm
 #' @param id_var Optional character scalar naming the patient or cluster ID
-#'   column in `data`. When supplied, the returned object is wrapped with
-#'   [rms::robcov()] using this column as the cluster. When omitted, the fit is
-#'   returned without cluster-robust covariance and a warning is issued.
+#'   column in `data`. When supplied, the returned object receives the
+#'   package-owned patient-cluster sandwich covariance using this column.
+#'   When omitted, the fit is returned without cluster-robust covariance and a
+#'   warning is issued.
+#' @param type Character scalar selecting the empirical sandwich correction.
+#'   `"HC0"` applies no observation degrees-of-freedom correction. `"HC1"`
+#'   multiplies the sandwich meat by `(n - 1) / (n - p)`, where `n` is the
+#'   number of positive-weight fitted likelihood rows and `p` is the complete
+#'   raw coefficient count.
+#' @param cadjust Logical. Apply the finite-cluster correction `G / (G - 1)`,
+#'   where `G` is the number of represented patient clusters? `NULL` (the
+#'   default) resolves to `TRUE` when `id_var` is supplied. This correction is
+#'   independent of `type`, so selecting HC1 with `cadjust = TRUE` applies both
+#'   factors.
 #' @param time_var Character scalar naming the modeled time column used to
 #'   identify the designated starting-profile row.
 #' @param first_followup_time First scheduled post-baseline outcome time used to
@@ -30,8 +41,26 @@
 #'   excluded, and a fitted patient without a complete designated profile is an
 #'   error. Later likelihood rows are not substituted for that profile.
 #'
-#' @return A fitted `orm` object. If `id_var` is supplied, the object contains
-#'   the robust covariance computed by [rms::robcov()].
+#'   The ORM sandwich is computed inside `markov.misc` from analytic
+#'   likelihood-row scores on the complete threshold-and-slope coefficient
+#'   scale. Fitted case weights multiply those row scores before they are
+#'   aggregated by patient. Zero-weight rows and clusters represented only by
+#'   zero-weight rows are excluded from correction counts. The fitted model-
+#'   based covariance is used as the bread; a penalized fit requesting
+#'   `var.penalty = "sandwich"` uses its retained `var.from.info.matrix`
+#'   inverse sensitivity. The selected `type` and `cadjust` settings affect
+#'   empirical and
+#'   fixed-profile coefficient inference; fitted-cohort superpopulation
+#'   inference instead uses its own unadjusted score and sensitivity contract.
+#'
+#'   Model-based SOP and diagnostic workflows require models created by
+#'   `orm_markov()`, [vglm_markov()], or [blrm_markov()]. The wrappers record
+#'   the fitted-data and model-provenance contracts needed by those workflows;
+#'   a raw backend fit is not accepted as a substitute.
+#'
+#' @return A fitted `orm` object. If `id_var` is supplied, `$var` contains the
+#'   package-owned robust covariance and the object records its cluster,
+#'   correction, bread, weighting, and covariance-integrity metadata.
 #'
 #' @examples
 #' \dontrun{
@@ -54,11 +83,14 @@ orm_markov <- function(
   data,
   ...,
   id_var = NULL,
+  type = c("HC0", "HC1"),
+  cadjust = NULL,
   time_var = "time",
   first_followup_time = NULL,
   x = TRUE,
   y = TRUE
 ) {
+  type <- match.arg(type)
   if (missing(data) || !is.data.frame(data)) {
     stop("`data` must be supplied as a data frame.")
   }
@@ -123,9 +155,15 @@ orm_markov <- function(
     starting_profile_data = stored$starting_profile_data,
     starting_profile_metadata = stored$starting_profile_metadata
   )
+  fit <- markov_set_fit_wrapper(fit, "orm_markov")
 
   if (!is.null(id_var)) {
-    robust <- rms::robcov(fit, cluster = fit_data[[id_var]])
+    robust <- robcov_orm(
+      fit,
+      cluster = fit_data[[id_var]],
+      type = type,
+      cadjust = cadjust
+    )
     robust <- markov_normalize_rms_call(
       robust,
       fun = quote(rms::orm),
@@ -164,7 +202,11 @@ orm_markov <- function(
 #'   column in `data`. When supplied, SOP calls can reuse the stored full data
 #'   and infer the ID column for baseline extraction and random-effect
 #'   prediction.
-#' @inheritParams orm_markov
+#' @param time_var Character scalar naming the modeled time column used to
+#'   identify the designated starting-profile row.
+#' @param first_followup_time First scheduled post-baseline outcome time used to
+#'   select the starting-profile row. See [orm_markov()] for the numeric and
+#'   categorical time contracts.
 #'
 #' @details The designated-start profile and fitted-patient eligibility contract
 #'   is the same as for [orm_markov()]. In particular, the transition response
@@ -266,7 +308,7 @@ blrm_markov <- function(
     time_var = time_var,
     first_followup_time = first_followup_time
   )
-  markov_attach_model_data(
+  fit <- markov_attach_model_data(
     fit,
     data = fit_data,
     id_var = id_var,
@@ -274,6 +316,7 @@ blrm_markov <- function(
     starting_profile_data = stored$starting_profile_data,
     starting_profile_metadata = stored$starting_profile_metadata
   )
+  markov_set_fit_wrapper(fit, "blrm_markov")
 }
 
 markov_normalize_rms_call <- function(
@@ -396,6 +439,51 @@ markov_attach_model_data <- function(
       starting_profile_metadata
   }
   model
+}
+
+markov_fit_wrappers <- function() {
+  c("orm_markov", "vglm_markov", "blrm_markov")
+}
+
+markov_set_fit_wrapper <- function(model, wrapper) {
+  if (
+    !is.character(wrapper) ||
+      length(wrapper) != 1L ||
+      is.na(wrapper) ||
+      !wrapper %in% markov_fit_wrappers()
+  ) {
+    stop("Internal Markov fitting-wrapper provenance is invalid.")
+  }
+  attr(model, "markov_fit_wrapper") <- wrapper
+  model
+}
+
+markov_model_fit_wrapper <- function(model) {
+  wrapper <- attr(model, "markov_fit_wrapper", exact = TRUE)
+  if (inherits(model, "robcov_vglm") && !is.null(model$vglm_fit)) {
+    inner <- attr(model$vglm_fit, "markov_fit_wrapper", exact = TRUE)
+    if (!is.null(wrapper) && !is.null(inner) && !identical(wrapper, inner)) {
+      return(NULL)
+    }
+    wrapper <- wrapper %||% inner
+  }
+  if (
+    !is.character(wrapper) ||
+      length(wrapper) != 1L ||
+      is.na(wrapper) ||
+      !wrapper %in% markov_fit_wrappers()
+  ) {
+    return(NULL)
+  }
+  wrapper
+}
+
+markov_inherit_fit_wrapper <- function(model, source) {
+  wrapper <- markov_model_fit_wrapper(source)
+  if (is.null(wrapper)) {
+    return(model)
+  }
+  markov_set_fit_wrapper(model, wrapper)
 }
 
 markov_model_data <- function(model) {

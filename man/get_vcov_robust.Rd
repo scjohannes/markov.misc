@@ -15,8 +15,10 @@ get_vcov_robust(
 )
 }
 \arguments{
-\item{model}{A fitted model object (e.g., \code{vglm}, \code{orm}, \code{lrm}) or a
-\code{robcov_vglm} object (which already contains robust vcov).}
+\item{model}{A fitted \code{vglm}, \code{orm}, or \code{lrm} object, or a \code{robcov_vglm}
+object that already contains robust covariance. Model-based SOP workflows
+separately require provenance from the corresponding \verb{*_markov()} fitting
+wrapper.}
 
 \item{cluster}{Optional. Specifies how to compute cluster-robust standard
 errors:
@@ -38,10 +40,12 @@ models.}
 
 \item{bread}{Bread used for a raw \code{vglm} model: \code{"observed"} or \code{"vglm"}.}
 
-\item{type}{HC correction used for a raw \code{vglm} model: \code{"HC0"} or \code{"HC1"}.}
+\item{type}{HC correction used when computing an ORM or VGLM sandwich:
+\code{"HC0"} or \code{"HC1"}.}
 
-\item{cadjust}{Optional logical cluster correction used for a raw \code{vglm}
-model. By default it is applied when \code{cluster} is supplied.}
+\item{cadjust}{Optional logical finite-cluster correction used when computing
+an ORM or VGLM sandwich. By default it is applied when \code{cluster} is
+supplied.}
 }
 \value{
 A variance-covariance matrix.
@@ -59,9 +63,11 @@ If the model is already a \code{robcov_vglm} object (from calling
 \code{robcov_vglm()}), the stored robust vcov is returned directly.
 
 \strong{2. No clustering requested:}
-If \code{cluster = NULL}, returns the robust (sandwich) vcov. For \code{vglm} models,
-this is computed via \code{\link[=robcov_vglm]{robcov_vglm()}}; for \code{orm} models, it uses
-\code{rms::robcov()}.
+If \code{cluster = NULL}, returns the robust sandwich covariance. VGLM models use
+\code{\link[=robcov_vglm]{robcov_vglm()}}, while ORM models use the package-internal analytic-score
+sandwich. A stored package-owned ORM covariance is reused only when its
+provenance and covariance identity remain valid and no correction override
+is requested.
 
 \strong{3. Cluster formula:}
 If \code{cluster} is a formula like \code{~id}, the function first tries to extract
@@ -73,6 +79,12 @@ has the correct length for computing robust standard errors.
 score contributions, which have length equal to the number of observations
 used to fit the model. The cluster variable must therefore match this length,
 NOT the length of any new prediction data.
+
+ORM and VGLM HC1 and finite-cluster corrections use the same definitions.
+\code{type = "HC1"} applies \code{(n - 1) / (n - p)} and \code{cadjust = TRUE}
+independently applies \code{G / (G - 1)}. An explicit cluster or correction
+request recomputes the ORM covariance; otherwise a valid covariance stored by
+\code{\link[=orm_markov]{orm_markov()}} is returned unchanged.
 }
 \examples{
 \dontrun{
@@ -96,5 +108,5 @@ V3 <- get_vcov_robust(fit_robust)  # Same as fit_robust$var
 
 }
 \seealso{
-\code{\link[=robcov_vglm]{robcov_vglm()}}, \code{\link[rms:robcov]{rms::robcov()}}, \code{\link[=set_coef]{set_coef()}}
+\code{\link[=orm_markov]{orm_markov()}}, \code{\link[=robcov_vglm]{robcov_vglm()}}, \code{\link[=set_coef]{set_coef()}}
 }

@@ -76,7 +76,7 @@ describe("avg_sops() and inferences() pipeline", {
 
   fit_pipeline_model <- function(data) {
     suppressWarnings(
-      VGAM::vglm(
+      markov.misc::vglm_markov(
         ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + yprev + age,
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
         data = data
@@ -1206,7 +1206,7 @@ describe("avg_sops() and inferences() pipeline", {
     )
 
     explicit_fit <- suppressWarnings(
-      VGAM::vglm(
+      markov.misc::vglm_markov(
         ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + age + yprev,
         family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
         data = data,

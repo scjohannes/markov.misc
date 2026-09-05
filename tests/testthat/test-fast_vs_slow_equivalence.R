@@ -32,7 +32,7 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
     data = data
   )
 
-  fit.a <- VGAM::vglm(
+  fit.a <- suppressWarnings(vglm_markov(
     y ~
       (time_lin +
         time_nlin_1) *
@@ -41,7 +41,7 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
       age,
     family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
     data = data
-  )
+  ))
 
   # Test single patient (first patient)
   a <- Hmisc::soprobMarkovOrdm(
@@ -101,7 +101,7 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
     data = data
   )
 
-  fit.a <- VGAM::vglm(
+  fit.a <- suppressWarnings(vglm_markov(
     y ~
       time_lin +
       time_nlin_1 +
@@ -110,7 +110,7 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - single p
       age,
     family = VGAM::cumulative(reverse = TRUE, parallel = FALSE ~ tx),
     data = data
-  )
+  ))
 
   # Test single patient (first patient)
   a <- Hmisc::soprobMarkovOrdm(
@@ -169,7 +169,7 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - all pati
     data = data
   )
 
-  fit.a <- VGAM::vglm(
+  fit.a <- suppressWarnings(vglm_markov(
     y ~
       time_lin +
       time_nlin_1 +
@@ -178,7 +178,7 @@ test_that("soprobMarkovOrdm and soprob_markov yield identical results - all pati
       age,
     family = VGAM::cumulative(reverse = TRUE, parallel = FALSE ~ tx),
     data = data
-  )
+  ))
 
   # Test ALL patients
   # Get results from soprobMarkovOrdm (one patient at a time)
@@ -261,7 +261,7 @@ test_that("Fast path yields same results as slow path for constrained PPO", {
     "tx:age" = cbind(PO_effect = 1)
   )
 
-  fit2 <- VGAM::vglm(
+  fit2 <- suppressWarnings(vglm_markov(
     y ~ time_lin +
       time_nlin_1 +
       tx +
@@ -274,7 +274,7 @@ test_that("Fast path yields same results as slow path for constrained PPO", {
     family = VGAM::cumulative(reverse = TRUE, parallel = FALSE ~ tx + time_lin),
     data = data,
     constraints = cons
-  )
+  ))
 
   # Setup comparison
   newdata <- data[data$time == 1, ] # Baseline rows
@@ -340,7 +340,7 @@ test_that("Fast path yields same results as slow path for PPO", {
     dplyr::distinct() |>
     as.data.frame()
 
-  fit <- VGAM::vglm(
+  fit <- suppressWarnings(vglm_markov(
     y ~ time_lin +
       time_nlin_1 +
       tx +
@@ -355,7 +355,7 @@ test_that("Fast path yields same results as slow path for PPO", {
       parallel = FALSE ~ tx + time_lin
     ),
     data = data
-  )
+  ))
 
   # Setup comparison
   newdata <- data[data$time == 1, ] # Baseline rows

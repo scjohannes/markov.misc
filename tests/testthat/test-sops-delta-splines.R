@@ -129,6 +129,9 @@ test_that("backend orm spline covariance labels preserve coefficient order", {
   unnamed_fit <- fit
   unnamed_fit$var <- expected
   unnamed_fit$orig.var <- expected
+  unnamed_metadata <- attr(unnamed_fit, "markov_robust_covariance")
+  unnamed_metadata$covariance_identity <- expected
+  attr(unnamed_fit, "markov_robust_covariance") <- unnamed_metadata
   unnamed <- get_delta_cluster_vcov(unnamed_fit)
   expect_identical(rownames(unnamed$vcov), coefficient_names)
   expect_identical(colnames(unnamed$vcov), coefficient_names)
@@ -143,6 +146,9 @@ test_that("backend orm spline covariance labels preserve coefficient order", {
   aliased_fit$orig.var <- expected
   dimnames(aliased_fit$var) <- list(rms_names, rms_names)
   dimnames(aliased_fit$orig.var) <- list(rms_names, rms_names)
+  aliased_metadata <- attr(aliased_fit, "markov_robust_covariance")
+  aliased_metadata$covariance_identity <- aliased_fit$var
+  attr(aliased_fit, "markov_robust_covariance") <- aliased_metadata
   aliased <- get_delta_cluster_vcov(aliased_fit)
   expect_identical(rownames(aliased$vcov), coefficient_names)
   expect_identical(colnames(aliased$vcov), coefficient_names)

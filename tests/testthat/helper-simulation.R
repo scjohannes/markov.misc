@@ -51,21 +51,16 @@ make_time_covariates <- function(data, time_col = "time", ...) {
 #'
 #' @return A fitted vglm or robcov_vglm object
 make_test_model <- function(data, robust = FALSE, cluster = NULL) {
-  # fit model
-  m <- VGAM::vglm(
-    ordered(y) ~ time_lin + time_nlin_1 + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
-
-  if (robust) {
-    if (is.null(cluster)) {
-      cluster <- data$id
-    }
-    return(robcov_vglm(m, cluster = cluster))
+  if (robust && !is.null(cluster) && !identical(cluster, data$id)) {
+    stop("`cluster` must match `data$id` for wrapper-based test models.")
   }
 
-  m
+  suppressWarnings(vglm_markov(
+    ordered(y) ~ time_lin + time_nlin_1 + tx + yprev,
+    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+    data = data,
+    id_var = if (robust) "id" else NULL
+  ))
 }
 
 make_score_bootstrap_case <- function(

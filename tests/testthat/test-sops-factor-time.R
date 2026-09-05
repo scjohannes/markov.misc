@@ -157,10 +157,13 @@ test_that("factor visit time works through SOP APIs and the fast path", {
   skip_if_not_installed("VGAM")
 
   data <- make_factor_visit_case()
-  fit <- VGAM::vglm(
-    y ~ time + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
+  fit <- suppressWarnings(
+    vglm_markov(
+      y ~ time + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      first_followup_time = "1"
+    )
   )
   baseline <- data[!duplicated(data$id), , drop = FALSE]
 
@@ -215,10 +218,13 @@ test_that("factor visit gap requires explicit numeric time_covariates", {
   skip_if_not_installed("VGAM")
 
   data <- make_factor_visit_case(n_patients = 40)
-  fit <- VGAM::vglm(
-    y ~ time + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
+  fit <- suppressWarnings(
+    vglm_markov(
+      y ~ time + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      first_followup_time = "1"
+    )
   )
   baseline <- data[!duplicated(data$id), , drop = FALSE]
 

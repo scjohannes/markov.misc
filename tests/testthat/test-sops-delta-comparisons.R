@@ -479,11 +479,11 @@ test_that("analytical comparisons reject partial proportional odds", {
   skip_if_not_installed("VGAM")
   case <- delta_comparison_factor_case()
   local_reproducible_output(width = 80)
-  partial_model <- VGAM::vglm(
+  partial_model <- suppressWarnings(vglm_markov(
     y ~ time + tx + yprev,
     family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
     data = case$data
-  )
+  ))
   baseline <- case$data[!duplicated(case$data$id), , drop = FALSE]
   partial <- avg_comparisons(
     partial_model,

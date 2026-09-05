@@ -1,5 +1,13 @@
 # markov.misc 0.1.0
 
+- Model-based SOP and diagnostic workflows now require fits created by
+  `orm_markov()`, `vglm_markov()`, or `blrm_markov()`. This wrapper provenance
+  guarantees the stored fitting-data contracts needed for prediction and
+  inference; internal bootstrap refits retain it automatically.
+- `orm_markov()` now computes its cluster-robust covariance with a package-owned
+  analytic-score sandwich instead of `rms::robcov()`. Its new `type` and
+  `cadjust` controls match `vglm_markov()`, support weighted empirical
+  covariance, and record correction, cluster, bread, and integrity metadata.
 - `vglm_markov()` now accepts `type` and `cadjust` to control the HC0/HC1 and
   finite-cluster corrections used by its automatic robust covariance wrapper.
 - `get_jacobian()` now extracts selected raw-coefficient Jacobian rows from SOP

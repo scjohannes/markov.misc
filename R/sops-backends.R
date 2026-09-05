@@ -17,6 +17,29 @@ validate_markov_model <- function(object) {
     object
   }
 
+  expected_wrapper <- if (inherits(model_chk, "blrm")) {
+    "blrm_markov"
+  } else if (inherits(model_chk, "vglm")) {
+    "vglm_markov"
+  } else if (inherits(model_chk, "orm")) {
+    "orm_markov"
+  } else {
+    NULL
+  }
+  if (
+    !is.null(expected_wrapper) &&
+      !identical(markov_model_fit_wrapper(object), expected_wrapper)
+  ) {
+    stop(
+      "Model-based Markov workflows require fits created by `",
+      expected_wrapper,
+      "()`. Refit this model with `",
+      expected_wrapper,
+      "()`.",
+      call. = FALSE
+    )
+  }
+
   if (model_uses_offset(model_chk)) {
     stop_unsupported_offset()
   }

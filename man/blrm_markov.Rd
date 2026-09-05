@@ -37,10 +37,8 @@ prediction.}
 identify the designated starting-profile row.}
 
 \item{first_followup_time}{First scheduled post-baseline outcome time used to
-select the starting-profile row. For numeric time, \code{NULL} uses 1. Numeric
-schedules may not contain values below 1, and an explicit value must be the
-earliest observed time. Factor and character time require an explicit
-matching value.}
+select the starting-profile row. See \code{\link[=orm_markov]{orm_markov()}} for the numeric and
+categorical time contracts.}
 
 \item{x}{set to \code{FALSE} to not store the design matrix in the fit.  \code{x=TRUE} is needed if running \code{blrmStats} for example.}
 

@@ -90,12 +90,12 @@ delta_public_orm_case <- local({
         follow_up_time = 7,
         seed = 8102
       )
-      model <- rms::orm(
+      model <- suppressWarnings(orm_markov(
         y ~ time + tx + yprev,
         data = data,
         x = TRUE,
         y = TRUE
-      )
+      ))
       baseline <- data[!duplicated(data$id), , drop = FALSE][
         1:8,
         ,

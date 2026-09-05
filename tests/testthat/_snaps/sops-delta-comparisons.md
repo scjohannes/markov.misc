@@ -53,3 +53,4 @@
     Condition
       Error:
       ! Analytical delta inference currently requires a full proportional-odds model; partial proportional odds are not yet supported.
+

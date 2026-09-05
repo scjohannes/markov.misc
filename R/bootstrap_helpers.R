@@ -643,7 +643,7 @@ bootstrap_refit_model <- function(model) {
         "The supplied robcov_vglm object does not contain the original vglm fit."
       )
     }
-    return(model$vglm_fit)
+    return(markov_inherit_fit_wrapper(model$vglm_fit, model))
   }
 
   model
@@ -759,8 +759,8 @@ update_bootstrap_model <- function(
 ) {
   has_fit_weights <- !is.null(fit_weights)
 
-  if (has_fit_weights && !is.null(coefstart)) {
-    return(suppress_orm_bootstrap_weight_warning(
+  updated <- if (has_fit_weights && !is.null(coefstart)) {
+    suppress_orm_bootstrap_weight_warning(
       model,
       stats::update(
         model,
@@ -768,33 +768,33 @@ update_bootstrap_model <- function(
         weights = .markov_misc_fit_weight,
         coefstart = coefstart
       )
-    ))
-  }
-  if (has_fit_weights) {
-    return(suppress_orm_bootstrap_weight_warning(
+    )
+  } else if (has_fit_weights) {
+    suppress_orm_bootstrap_weight_warning(
       model,
       stats::update(
         model,
         data = boot_data,
         weights = .markov_misc_fit_weight
       )
-    ))
-  }
-  if (!is.null(coefstart)) {
-    return(suppress_orm_bootstrap_weight_warning(
+    )
+  } else if (!is.null(coefstart)) {
+    suppress_orm_bootstrap_weight_warning(
       model,
       stats::update(
         model,
         data = boot_data,
         coefstart = coefstart
       )
-    ))
+    )
+  } else {
+    suppress_orm_bootstrap_weight_warning(
+      model,
+      stats::update(model, data = boot_data)
+    )
   }
 
-  suppress_orm_bootstrap_weight_warning(
-    model,
-    stats::update(model, data = boot_data)
-  )
+  markov_inherit_fit_wrapper(updated, model)
 }
 
 suppress_orm_bootstrap_weight_warning <- function(model, expr) {

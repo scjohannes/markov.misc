@@ -23,12 +23,12 @@ test_that("orm fast path supports categorical previous state", {
   data <- add_test_age(data)
   local_orm_datadist(data)
 
-  fit <- rms::orm(
+  fit <- suppressWarnings(orm_markov(
     y ~ rms::rcs(time, 3) * tx + yprev + age,
     data = data,
     x = TRUE,
     y = TRUE
-  )
+  ))
   baseline <- data[!duplicated(data$id), ][1:12, , drop = FALSE]
 
   direct <- markov.misc:::predict_orm_response_markov(fit, baseline)
@@ -67,12 +67,12 @@ test_that("orm fast path validates state support and initial probabilities", {
   data <- make_test_data(n_patients = 45, follow_up_time = 6, seed = 6111)
   data <- add_test_age(data)
   local_orm_datadist(data)
-  fit <- rms::orm(
+  fit <- suppressWarnings(orm_markov(
     y ~ time + tx + yprev + age,
     data = data,
     x = TRUE,
     y = TRUE
-  )
+  ))
   baseline <- data[!duplicated(data$id), ][1:3, , drop = FALSE]
 
   expect_snapshot(
@@ -103,12 +103,12 @@ test_that("execution-plan budgets bound all retained first-order designs", {
   data <- make_test_data(n_patients = 40, follow_up_time = 6, seed = 6112)
   data <- add_test_age(data)
   local_orm_datadist(data)
-  fit <- rms::orm(
+  fit <- suppressWarnings(orm_markov(
     y ~ time + tx + yprev + age,
     data = data,
     x = TRUE,
     y = TRUE
-  )
+  ))
   baseline <- data[!duplicated(data$id), ][1:4, , drop = FALSE]
   args <- list(
     model = fit,
@@ -400,12 +400,12 @@ test_that("orm supports refit bootstrap inference", {
   data <- add_test_age(data)
   local_orm_datadist(data)
 
-  fit <- rms::orm(
+  fit <- suppressWarnings(orm_markov(
     y ~ rms::rcs(time, 3) * tx + yprev + age,
     data = data,
     x = TRUE,
     y = TRUE
-  )
+  ))
 
   avg <- markov.misc::avg_sops(
     fit,

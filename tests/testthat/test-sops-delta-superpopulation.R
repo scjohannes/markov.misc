@@ -345,11 +345,12 @@ test_that("orm covariance and score components use inverse total information", {
 
   expect_equal(covariance$vcov, fit$var)
   expect_equal(covariance$metadata$type, "HC0")
-  expect_false(covariance$metadata$cadjust)
+  expect_true(covariance$metadata$cadjust)
+  expect_equal(covariance$metadata$source, "stored_markov_robcov_orm")
 
   recomputed <- get_delta_cluster_vcov(fit, cluster = fitted_data$id)
   expect_equal(recomputed$vcov, fit$var, tolerance = 1e-10)
-  expect_equal(recomputed$metadata$source, "computed_rms_robcov")
+  expect_equal(recomputed$metadata$source, "computed_markov_robcov_orm")
 
   components <- get_delta_score_components(fit)
   row_scores <- compute_scores_orm(fit)
@@ -369,6 +370,22 @@ test_that("orm covariance and score components use inverse total information", {
     components$metadata$bread_source,
     "rms_inverse_total_information"
   )
+})
+
+test_that("orm delta covariance recomputes after stored covariance mutation", {
+  fit <- local_delta_orm_fit()
+  fitted_data <- attr(fit, "markov_data")
+  stored <- get_delta_cluster_vcov(fit)
+
+  mutated <- fit
+  mutated$var[1L, 1L] <- mutated$var[1L, 1L] + 1
+  recomputed <- get_delta_cluster_vcov(mutated)
+  explicit <- get_delta_cluster_vcov(fit, cluster = fitted_data$id)
+
+  expect_equal(recomputed$metadata$source, "computed_markov_robcov_orm")
+  expect_equal(recomputed$vcov, stored$vcov, tolerance = 1e-12)
+  expect_equal(explicit$metadata$source, "computed_markov_robcov_orm")
+  expect_equal(explicit$vcov, stored$vcov, tolerance = 1e-12)
 })
 
 test_that("vglm patient-weight refits validate stacked score orientation", {
@@ -455,13 +472,14 @@ test_that("superpopulation score machinery rejects partial proportional odds", {
     follow_up_time = 6,
     seed = 2403
   )
-  fit <- VGAM::vglm(
+  fit <- vglm_markov(
     ordered(y) ~ time_lin + tx + yprev,
     family = VGAM::cumulative(
       reverse = TRUE,
       parallel = FALSE ~ tx
     ),
-    data = data
+    data = data,
+    id_var = "id"
   )
 
   expect_error(

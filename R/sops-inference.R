@@ -216,7 +216,7 @@
 #' ) |>
 #'   inferences(method = "score_bootstrap", n_draws = 1000)
 #'
-#' # orm_markov() uses rms::robcov() for full robust covariance matrices.
+#' # orm_markov() stores the package-owned full robust covariance matrix.
 #' dd <- rms::datadist(data)
 #' options(datadist = "dd")
 #' fit_orm <- orm_markov(y ~ time + tx + yprev, data = data, id_var = "id")

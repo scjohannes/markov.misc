@@ -9,6 +9,8 @@ orm_markov(
   data,
   ...,
   id_var = NULL,
+  type = c("HC0", "HC1"),
+  cadjust = NULL,
   time_var = "time",
   first_followup_time = NULL,
   x = TRUE,
@@ -34,9 +36,22 @@ data frame to use. Default is the current frame.
 		\code{Quantile}.  One of the most important arguments is \code{family}.}
 
 \item{id_var}{Optional character scalar naming the patient or cluster ID
-column in \code{data}. When supplied, the returned object is wrapped with
-\code{\link[rms:robcov]{rms::robcov()}} using this column as the cluster. When omitted, the fit is
-returned without cluster-robust covariance and a warning is issued.}
+column in \code{data}. When supplied, the returned object receives the
+package-owned patient-cluster sandwich covariance using this column.
+When omitted, the fit is returned without cluster-robust covariance and a
+warning is issued.}
+
+\item{type}{Character scalar selecting the empirical sandwich correction.
+\code{"HC0"} applies no observation degrees-of-freedom correction. \code{"HC1"}
+multiplies the sandwich meat by \code{(n - 1) / (n - p)}, where \code{n} is the
+number of positive-weight fitted likelihood rows and \code{p} is the complete
+raw coefficient count.}
+
+\item{cadjust}{Logical. Apply the finite-cluster correction \code{G / (G - 1)},
+where \code{G} is the number of represented patient clusters? \code{NULL} (the
+default) resolves to \code{TRUE} when \code{id_var} is supplied. This correction is
+independent of \code{type}, so selecting HC1 with \code{cadjust = TRUE} applies both
+factors.}
 
 \item{time_var}{Character scalar naming the modeled time column used to
 identify the designated starting-profile row.}
@@ -59,8 +74,9 @@ under the name \code{y}.
 }
 }
 \value{
-A fitted \code{orm} object. If \code{id_var} is supplied, the object contains
-the robust covariance computed by \code{\link[rms:robcov]{rms::robcov()}}.
+A fitted \code{orm} object. If \code{id_var} is supplied, \verb{$var} contains the
+package-owned robust covariance and the object records its cluster,
+correction, bread, weighting, and covariance-integrity metadata.
 }
 \description{
 \code{orm_markov()} is a thin package-aware wrapper around \code{\link[rms:orm]{rms::orm()}} for
@@ -78,6 +94,23 @@ missing. A patient is included only when at least one usable likelihood
 transition is fitted somewhere. Patients with no fitted transition are
 excluded, and a fitted patient without a complete designated profile is an
 error. Later likelihood rows are not substituted for that profile.
+
+The ORM sandwich is computed inside \code{markov.misc} from analytic
+likelihood-row scores on the complete threshold-and-slope coefficient
+scale. Fitted case weights multiply those row scores before they are
+aggregated by patient. Zero-weight rows and clusters represented only by
+zero-weight rows are excluded from correction counts. The fitted model-
+based covariance is used as the bread; a penalized fit requesting
+\code{var.penalty = "sandwich"} uses its retained \code{var.from.info.matrix}
+inverse sensitivity. The selected \code{type} and \code{cadjust} settings affect
+empirical and
+fixed-profile coefficient inference; fitted-cohort superpopulation
+inference instead uses its own unadjusted score and sensitivity contract.
+
+Model-based SOP and diagnostic workflows require models created by
+\code{orm_markov()}, \code{\link[=vglm_markov]{vglm_markov()}}, or \code{\link[=blrm_markov]{blrm_markov()}}. The wrappers record
+the fitted-data and model-provenance contracts needed by those workflows;
+a raw backend fit is not accepted as a substitute.
 }
 \examples{
 \dontrun{

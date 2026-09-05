@@ -25,7 +25,8 @@ make_fake_blrm <- function(draws = NULL, gamma_draws = NULL, pppo = 0L) {
       clusterInfo = list(name = "id", cluster = c("a", "b")),
       gamma_draws = gamma_draws
     ),
-    class = c("blrm", "orm")
+    class = c("blrm", "orm"),
+    markov_fit_wrapper = "blrm_markov"
   )
 }
 
@@ -40,6 +41,17 @@ fake_blrm_design <- function(model, newdata, second = FALSE) {
   colnames(out) <- "tx"
   out
 }
+
+test_that("Markov workflows reject raw blrm fits", {
+  model <- make_fake_blrm()
+  attr(model, "markov_fit_wrapper") <- NULL
+
+  expect_error(
+    markov.misc:::validate_markov_model(model),
+    "require fits created by `blrm_markov()`",
+    fixed = TRUE
+  )
+})
 
 test_that("soprob_markov handles second-order recursion and absorbing states", {
   model <- structure(list(), class = "vglm")
@@ -239,12 +251,12 @@ test_that("compiled second-order ORM plans match the reference recursion", {
   })
   data$yprev <- factor(data$yprev, levels = 1:3)
   data$ypprev <- factor(data$ypprev, levels = 1:3)
-  model <- rms::orm(
+  model <- suppressWarnings(orm_markov(
     y ~ tx + time + yprev + ypprev,
     data = data[data$time > 2L, ],
     x = TRUE,
     y = TRUE
-  )
+  ))
   baseline <- data[data$time == 1L, ]
   withr::local_options(markov.misc.execution_plan_max_bytes = 1)
   condition <- tryCatch(

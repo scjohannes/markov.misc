@@ -667,7 +667,8 @@ test_that("soprob_markov() validates model classes and propagates Bayesian draws
       ylevels = 1:2,
       yname = "y"
     ),
-    class = "blrm"
+    class = "blrm",
+    markov_fit_wrapper = "blrm_markov"
   )
 
   with_mocked_bindings(

@@ -41,6 +41,8 @@ fit <- orm_markov(
   y ~ rms::rcs(time, 4) + tx + yprev,
   data = markov_data,
   id_var = "id",
+  type = "HC0",
+  cadjust = TRUE,
   opt_method = "LM",
   scale = TRUE
 )
@@ -104,6 +106,24 @@ response is allowed when ID, predictors, and `yprev` are complete and the
 patient contributes another usable likelihood transition. The same automatic
 profiles support `sops()`, `avg_sops()`, and `avg_comparisons()` when `newdata`
 is omitted.
+
+Both frequentist wrappers expose the same empirical sandwich correction
+controls. `type = "HC0"` applies no row degrees-of-freedom correction, whereas
+`type = "HC1"` multiplies by `(n - 1) / (n - p)`. For weighted ORM fits, `n`
+and `G` count only positive-weight represented rows and clusters. Independently,
+`cadjust = TRUE` multiplies by `G / (G - 1)`; its `NULL` default resolves to
+`TRUE` when patient clustering is requested. `orm_markov()` computes this
+sandwich inside `markov.misc` from analytic ORM row scores and the full
+model-based bread, including fitted case weights. Penalized ORM fits using
+`var.penalty = "sandwich"` use the retained `var.from.info.matrix` inverse
+sensitivity as bread. These settings affect fixed and empirical coefficient
+covariance. Superpopulation inference instead uses
+unadjusted patient scores and model-based sensitivity in its stacked influence
+function, so it intentionally ignores backend HC1 and cluster adjustments.
+
+Use `orm_markov()`, `vglm_markov()`, or `blrm_markov()` for package model-based
+SOP and diagnostic workflows. Raw `rms`, `VGAM`, or `rmsb` fits do not carry the
+wrapper provenance and stored-data contracts those workflows now require.
 
 Real-time summaries are configured downstream rather than in the fitting
 wrapper. `baseline_time = 0` places the observed `yprev` distribution at

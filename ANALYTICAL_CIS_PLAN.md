@@ -203,7 +203,7 @@ For every concern:
 | ACI-02 | High | Resolved | Superpopulation score orientation and cross-term scaling |
 | ACI-03 | High | Resolved | Penalized ORM superpopulation inference |
 | ACI-04 | High | Resolved | Zero-score profile sensitivity scaling |
-| ACI-05 | High | Open | Stored ORM robust covariance identity and correction metadata |
+| ACI-05 | High | Resolved | Stored ORM robust covariance identity and correction metadata |
 | ACI-06 | Medium | Open | Unnamed penalized-ORM covariance relabeling |
 | ACI-07 | Medium | Open | VGLM raw-to-effective constraint mapping |
 | ACI-08 | Medium | Open | Structural boundary classification |
@@ -346,19 +346,46 @@ For every concern:
 
 ### ACI-05: Stored ORM robust covariance identity and corrections
 
-- **Status:** Open
+- **Status:** Resolved on 2026-07-22
 - **Priority:** High
-- **Current decision:** An ORM object containing both `var` and `orig.var` is
-  treated as carrying a stored `rms::robcov()` sandwich. It is reported as HC0
-  without cluster adjustment and reused when no explicit cluster is supplied.
-- **Concern:** This is reliable for `orm_markov()` fits but does not independently
-  prove that an arbitrary external ORM object's stored covariance uses the same
-  patient IDs or finite-sample convention resolved for analytical inference.
-- **Resolution approach:** Audit `rms::robcov()` source and stored metadata across
-  supported `rms` versions. Add provenance and cluster-identity checks where
-  possible; otherwise restrict automatic reuse to package-created fits and
-  recompute or require explicit input for external fits.
-- **Resolution log:** Pending.
+- **Current decision:** `orm_markov()` uses the package-internal `robcov_orm()`
+  implementation, with the same independent HC1 `(n - 1) / (n - p)` and
+  finite-cluster `G / (G - 1)` controls as VGLM. ORM row scores are analytic,
+  case-weighted, and aggregated by patient; correction counts exclude zero-
+  weight rows and clusters represented only by them. Penalized fits requesting
+  sandwich penalty variance use the retained `var.from.info.matrix` inverse
+  sensitivity as bread. Stored covariance is reused only
+  when package provenance, covariance identity, and any requested cluster
+  identity agree. Model-based SOP and diagnostic workflows accept only models
+  created by `orm_markov()`, `vglm_markov()`, or `blrm_markov()`.
+- **Concern:** Package ownership removes dependence on undocumented
+  `rms::robcov()` object semantics, but correctness still depends on exact raw
+  coefficient alignment, model-based bread recovery, case-weight handling,
+  cluster alignment after omission, and preservation of wrapper provenance
+  through internal refits.
+- **Resolution approach:** Validate the analytic ORM scores and a hand-assembled
+  clustered HC0 sandwich independently; verify exact HC1/cadjust ratios,
+  weighting, cluster edge cases, covariance mutation detection, and explicit-
+  cluster recomputation. Exercise the provenance gate across SOP and diagnostic
+  entry points and verify bootstrap/FWB refits inherit provenance without
+  unnecessarily computing robust covariance.
+- **Resolution log:** Implementation began on 2026-07-22. Production ORM
+  covariance now uses package-owned score, bread, sandwich-assembly, correction,
+  and integrity metadata paths; VGLM shares the scalar correction helpers.
+  Covariance consumers recompute ORM sandwiches without calling
+  `rms::robcov()`, and internal refits propagate wrapper provenance. User-facing
+  and architecture documentation has been updated. Independent review caught
+  and resolved three material edge cases: the double-sandwich risk for penalized
+  `var.penalty = "sandwich"` fits, the semantics of explicit HC/cadjust
+  overrides when a stored covariance exists, and exclusion of zero-weight rows
+  and zero-weight-only clusters from correction counts. Validation included
+  targeted `air` formatting, `devtools::document()`, and focused ORM covariance,
+  wrapper-provenance, bootstrap, and spline tests. The complete
+  `devtools::test()` suite passed with one expected installed-package `callr`
+  skip. The analytical-confidence-intervals, factor-time-orm-sops,
+  full-po-sops, and many-levels-previous-state-spline vignettes rendered
+  successfully. `devtools::check()` completed with 0 errors, 0 warnings, and 1
+  environment-only note that the current time could not be verified.
 
 ### ACI-06: Unnamed penalized-ORM covariance relabeling
 

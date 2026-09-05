@@ -14,5 +14,5 @@
       y_levels = fit$yunique)
     Condition
       Error:
-      ! Model prediction returned missing transition probabilities during the first SOP time point. This often happens when the SOP recursion asks for transitions from a state level that is not represented in the fitted transition model. If that level is absorbing, pass it via `absorb`; otherwise check that `data`, `y_levels`, and fitted factor levels agree.
+      ! Model prediction requires transitions from state level(s) not represented in the fitted transition data: 6. If a level is absorbing, pass it via `absorb`.
 

@@ -399,10 +399,10 @@ delta_orm_backend_aliases <- function(model, coefficient_names) {
   )
 }
 
-# rms::robcov() constructs covariance matrices in coefficient order, but
-# penalized fits can lose dimnames and inline rms transforms can use model-matrix
-# labels instead of the display labels in coef(). Normalize only matrices that
-# were produced internally from this exact orm fit.
+# ORM covariance matrices are constructed in coefficient order, but penalized
+# fits can lose dimnames and inline rms transforms can use model-matrix labels
+# instead of the display labels in coef(). Normalize only matrices produced
+# internally from this exact orm fit.
 delta_normalize_orm_backend_matrix <- function(
   value,
   model,
@@ -436,24 +436,8 @@ delta_normalize_orm_backend_matrix <- function(
 }
 
 delta_orm_model_bread <- function(model, coefficient_names) {
-  bread <- model$orig.var
-  if (is.null(bread)) {
-    if (!requireNamespace("rms", quietly = TRUE)) {
-      stop("Package 'rms' is required for orm superpopulation inference.")
-    }
-    robust <- rms::robcov(model)
-    bread <- robust$orig.var
-  }
-  if (is.null(bread)) {
-    stop(
-      "Could not obtain the full model-based covariance for orm superpopulation ",
-      "inference. Refit with `x = TRUE, y = TRUE`.",
-      call. = FALSE
-    )
-  }
-
   delta_normalize_orm_backend_matrix(
-    bread,
+    orm_model_bread(model)$bread,
     model,
     coefficient_names
   )
@@ -578,25 +562,18 @@ get_delta_cluster_vcov <- function(model, cluster = NULL, vcov = NULL) {
       if (use_stored) "stored_robcov_vglm" else "computed_robcov_vglm"
     )
   } else {
+    stored_metadata <- orm_robust_metadata(model)
     use_stored <- is.null(cluster) &&
-      !is.null(model$orig.var) &&
-      !is.null(model$var)
+      orm_stored_covariance_valid(model, cluster_info$cluster)
     robust <- if (use_stored) {
       model
     } else {
-      if (!requireNamespace("rms", quietly = TRUE)) {
-        stop("Package 'rms' is required for orm robust covariance inference.")
-      }
-      # rms::robcov() starts from stats::vcov(fit). For an already robust orm
-      # fit that accessor returns the sandwich covariance, so restore the full
-      # inverse-information covariance before applying an explicit clustering.
-      covariance_fit <- fit
-      if (!is.null(covariance_fit$orig.var)) {
-        covariance_fit$var <- covariance_fit$orig.var
-        covariance_fit$orig.var <- NULL
-        covariance_fit$clusterInfo <- NULL
-      }
-      rms::robcov(covariance_fit, cluster = cluster_info$cluster)
+      robcov_orm(
+        fit,
+        cluster = cluster_info$cluster,
+        type = stored_metadata$type %||% "HC0",
+        cadjust = stored_metadata$cadjust %||% TRUE
+      )
     }
     backend_covariance <- delta_normalize_orm_backend_matrix(
       robust$var,
@@ -610,14 +587,18 @@ get_delta_cluster_vcov <- function(model, cluster = NULL, vcov = NULL) {
       positive_semidefinite = TRUE
     )
     metadata <- list(
-      source = if (use_stored) "stored_rms_robcov" else "computed_rms_robcov",
+      source = if (use_stored) {
+        "stored_markov_robcov_orm"
+      } else {
+        "computed_markov_robcov_orm"
+      },
       covariance = "patient_cluster_robust",
       backend = "orm",
-      type = "HC0",
-      cadjust = FALSE,
-      adjustment_factor = 1,
-      bread_type = "rms_model",
-      n_clusters = length(cluster_info$ids)
+      type = orm_robust_metadata(robust)$type,
+      cadjust = orm_robust_metadata(robust)$cadjust,
+      adjustment_factor = orm_robust_metadata(robust)$adjustment_factor,
+      bread_type = orm_robust_metadata(robust)$bread_convention,
+      n_clusters = orm_robust_metadata(robust)$n_clusters
     )
   }
 

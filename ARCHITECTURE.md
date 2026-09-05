@@ -35,7 +35,8 @@ flowchart LR
 
   subgraph "Model preparation"
     PREP["prepare_markov_data()<br/>R/markov-data.R"]
-    FIT["User-fitted ordinal model<br/>orm_markov / blrm_markov / vglm_markov / backend fits"]
+    FIT["Package-aware ordinal model<br/>orm_markov / blrm_markov / vglm_markov"]
+    ORM_ROB["robcov_orm()<br/>R/robcov_orm.R"]
     VGLM_FIT["vglm_markov()<br/>R/vglm_helpers.R"]
     ROB["robcov_vglm()<br/>R/robcov_vglm.R"]
   end
@@ -73,6 +74,7 @@ flowchart LR
   SIM --> ENDPOINT_IN
   PREP --> FIT
   VGLM_FIT --> FIT
+  FIT --> ORM_ROB
   FIT --> ROB
   FIT --> API
   ROB --> API
@@ -108,7 +110,7 @@ The package is organized by workflow stage rather than by model class.
 | Shared utilities | `R/utils.R`, `R/globals.R` | Lightweight base-R helpers, Arrow expression helpers, offset detection, NSE global registrations. |
 | Data contracts | `R/markov-data.R`, `R/data.R` | Convert raw trajectories to Markov modeling data, preserve factor/numeric previous-state semantics, document built-in datasets. |
 | Simulation | `R/simulate-markov.R`, `R/simulate-brownian.R`, `R/simulate-brownian-gap.R`, `R/simulate-deterministic.R`, `R/simulate-recurrent-event.R`, `R/simulate-tte.R`, `R/lp_violet.R` | Generate synthetic longitudinal ordinal trajectories from several data-generating mechanisms. |
-| Model fitting helpers | `R/vglm_helpers.R`, `R/vgam_helpers.R`, `R/robcov_vglm.R`, `R/mvn_helpers.R` | Fit package-aware VGAM Markov models, compute effective coefficients, compute robust covariance, mutate coefficients for simulation draws. |
+| Model fitting helpers | `R/markov-model-data.R`, `R/vglm_helpers.R`, `R/vgam_helpers.R`, `R/robcov_orm.R`, `R/robcov_vglm.R`, `R/mvn_helpers.R` | Fit package-aware Markov models, retain wrapper provenance, compute effective coefficients and package-owned robust covariance, and mutate coefficients for simulation draws. |
 | SOP API | `R/sops-api.R` | Public user entrypoints for individual and marginal SOPs. |
 | SOP engine | `R/sops-engine.R`, `R/sops-backends.R`, `R/sops-fast-path.R`, `R/sops-result-helpers.R` | Validate models, predict transition probabilities, run first- and second-order Markov recursions, reshape arrays to tidy objects. |
 | SOP inference | `R/sops-inference.R`, `R/sops-delta-core.R`, `R/sops-delta-superpopulation.R`, `R/sops-delta-inference.R`, `R/sops-delta-accessors.R`, `R/sops-delta-comparisons.R`, `R/sops-inference-draws.R`, `R/sops-draws.R`, `R/sops-score-bootstrap.R`, `R/sops-bootstrap-inference.R`, `R/sops-comparisons-inference.R` | Compute deterministic first-order delta intervals or uncertainty intervals from MVN coefficient draws, posterior draws, score bootstrap draws, ordinary refit bootstrap samples, or fractional weighted refits. |
@@ -273,24 +275,30 @@ baseline, start-stop, competing-risk, and true time-in-state summaries.
 
 ### 2. Fit a Transition Model
 
-`markov.misc` does not own most fitting routines. The user fits an ordinal model
-with `rms`, `rmsb`, or `VGAM`, then passes it into SOP functions.
+`markov.misc` delegates estimation to `rms`, `rmsb`, or `VGAM`, but model-based
+SOP and diagnostic workflows require the corresponding package-aware wrapper.
+The wrapper records provenance and data contracts that a raw backend fit cannot
+reconstruct reliably.
 
 Supported model families:
 
 | Family | Typical fit | Notes |
 | --- | --- | --- |
-| `orm_markov()` | `orm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rms path. Stores separate likelihood-row, pre-NA refit, and first-follow-up profile data, fits with `x = TRUE, y = TRUE`, rejects offsets, normalizes the stored `rms::orm()` call for weighted refits, and applies `rms::robcov()` automatically when `id_var` is supplied. |
-| `rms::orm` | `orm(y ~ tx + time + yprev, x = TRUE, y = TRUE)` | Full proportional odds. Can be wrapped by `rms::robcov()`, but plain fits do not store unmodeled ID columns for automatic SOP refits. |
+| `orm_markov()` | `orm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Required rms path for model workflows. Stores separate likelihood-row, pre-NA refit, and first-follow-up profile data, fits with `x = TRUE, y = TRUE`, rejects offsets, normalizes the stored `rms::orm()` call for weighted refits, and applies the package-owned ORM sandwich automatically when `id_var` is supplied. |
+| `rms::orm` | `orm(y ~ tx + time + yprev, x = TRUE, y = TRUE)` | Raw full proportional-odds fit. Standalone backend utilities may consume it, but model-based SOP and diagnostic workflows reject it because it lacks wrapper provenance and stored-data contracts. |
 | `blrm_markov()` | `blrm_markov(y ~ tx + time + yprev, data = data, id_var = "id")` | Recommended rmsb path. Stores separate likelihood-row, pre-NA refit, and first-follow-up profile data for automatic SOP prediction and random-effect ID resolution. Posterior draws remain the uncertainty source. |
-| `rmsb::blrm` | Bayesian ordinal regression | Posterior draws drive SOP uncertainty directly. Supports selected random-effect handling through `cluster()`, but plain fits do not store unmodeled ID columns for automatic SOP data resolution. |
-| `VGAM::vglm` | `vglm(..., family = cumulative(reverse = TRUE, ...))` | Must be a cumulative model with `reverse = TRUE`. Offsets are unsupported. |
+| `rmsb::blrm` | Bayesian ordinal regression | Raw backend fit. Posterior draws remain its uncertainty source, but model workflows require `blrm_markov()` provenance and stored data. |
+| `VGAM::vglm` | `vglm(..., family = cumulative(reverse = TRUE, ...))` | Raw backend fit. Standalone utilities may consume cumulative reverse-logit models, but model workflows require `vglm_markov()`. |
 | `vglm_markov()` | `vglm_markov(..., data = data, id_var = "id")` | Recommended VGAM path. Stores separate likelihood-row, pre-NA refit, and first-follow-up profile data, supports inline `rms::rcs()` terms and partial proportional odds constraints, and returns `robcov_vglm` automatically when `id_var` is supplied. |
 | `robcov_vglm` | `robcov_vglm(vglm_fit, cluster = id)` | Stores a robust sandwich covariance while preserving the underlying `vglm` fit for prediction. |
 
 The model validation boundary is `validate_markov_model()` in
-`R/sops-backends.R`. It rejects unsupported offsets and guards the VGAM
-cumulative-family assumptions before recursive SOP prediction starts.
+`R/sops-backends.R`. It first requires `markov_fit_wrapper` provenance matching
+the backend, then rejects unsupported offsets and guards the VGAM cumulative-
+family assumptions before recursive SOP prediction starts. This gate is shared
+by SOP prediction, `soprob_markov()`, and model-based transition, correlation,
+variogram, and linear-predictor diagnostics. Internal bootstrap and FWB refits
+inherit the source model's provenance through `markov_inherit_fit_wrapper()`.
 
 ### 3. Predict State Occupancy Probabilities
 
@@ -396,7 +404,8 @@ The inference methods are intentionally separate:
 - Bayesian `blrm` outputs already represent posterior prediction draws. The
   package summarizes those draws rather than simulating new coefficients.
 - MVN simulation draws coefficients from `coef(model)` and a covariance matrix
-  from `stats::vcov()`, `rms::robcov()`, or `robcov_vglm()`. Any non-null user
+  from `stats::vcov()` or the package-owned ORM/VGLM robust paths. Any non-null
+  user
   `vcov` is validated directly; Matrix-package covariance objects are coerced to
   base matrices before dimension/name validation and simulation.
 - Score bootstrap uses row-level model scores and cluster multipliers to make
@@ -511,10 +520,10 @@ through a complete raw-coefficient covariance. A user-supplied covariance takes
 precedence and must be finite, symmetric, positive semidefinite, and uniquely
 named on both axes with the full raw coefficient set. Without a supplied
 covariance, the package reuses or computes patient-cluster robust covariance.
-VGLM propagation preserves the wrapper's selected bread, HC type, cluster
-adjustment, and adjustment factor; `rms::robcov()` supplies the ORM HC0
-convention. Internally generated ORM matrices may lose dimnames for penalized
-fits or use `Design$mmcolnames` for spline terms; those two backend-owned forms
+ORM and VGLM propagation preserves the wrapper's selected bread, HC type,
+cluster adjustment, and adjustment factor. Internally generated ORM matrices
+may lose dimnames for penalized fits or use `Design$mmcolnames` for spline
+terms; those two backend-owned forms
 are validated and relabeled to the raw coefficient order. Explicit user
 covariance matrices remain strictly name-matched.
 
@@ -549,7 +558,9 @@ and a larger finite-difference step than the ORM oracle to keep optimizer noise
 below the comparison tolerance.
 
 Weighted ORM fits are rejected for the fitted-cohort superpopulation target
-because the current ORM row-score constructor is unweighted. Penalized ORM fits
+because the stacked score/sensitivity contract for weighted estimating
+equations has not been established. The package-owned empirical sandwich does
+apply fitted case weights to analytic ORM row scores. Penalized ORM fits
 are also rejected because the likelihood-score and penalized-sensitivity
 contract has not been established. Their empirical target remains available
 because it propagates the fitted backend covariance without constructing the
@@ -730,7 +741,31 @@ probability of each next state?
 3. Converts cumulative logits to category probabilities.
 
 For inference, `set_coef.orm()` mutates a copy of the model coefficients, and
-`get_vcov_robust()` can use `rms::robcov()` output.
+`get_vcov_robust()` reuses or recomputes the package-owned ORM sandwich.
+
+`robcov_orm()` in `R/robcov_orm.R` works on the complete named raw threshold-
+and-slope scale. It obtains the model-based covariance from a valid `orig.var`
+or `stats::vcov(..., intercepts = "all")`; penalized fits requesting
+`var.penalty = "sandwich"` instead use their retained
+`var.from.info.matrix` inverse sensitivity. It multiplies analytic row scores
+by fitted case weights, aggregates them by patient, and forms the sandwich as
+the crossproduct of bread-transformed cluster scores. Zero-weight rows are
+excluded, as are clusters represented only by zero-weight rows. It shares
+correction helpers with `robcov_vglm()`: HC1 contributes
+`(n - 1) / (n - p)` and `cadjust = TRUE` independently contributes
+`G / (G - 1)`; ORM `n` and `G` are the positive-weight represented row and
+cluster counts.
+
+The returned ORM object retains its class and stores the model bread in
+`orig.var`, the robust covariance in `var`, compatible cluster information, and
+`markov_robust_covariance` metadata. That metadata records implementation and
+backend provenance, the aligned cluster vector, correction choices and factor,
+total and represented row counts, parameter and cluster counts, bread
+convention, weighted-score status, and a covariance identity. Consumers reuse
+the stored covariance only while metadata,
+cluster identity, and the current `var` agree; otherwise an explicit cluster
+causes recomputation. Production ORM SOP inference has no dependency on
+`rms::robcov()`.
 
 ### `vglm` and `vglm_markov`
 
@@ -823,6 +858,8 @@ existing callers, while new code uses `cadjust` explicitly. The final covariance
 is formed as the crossproduct of bread-transformed observation or cluster scores;
 this is algebraically the sandwich and preserves positive semidefiniteness for
 ill-conditioned fits more reliably than chained matrix multiplication.
+The scalar correction and sandwich assembly are shared with `robcov_orm()` so
+the two frequentist wrappers implement identical HC1/cadjust definitions.
 
 ### `blrm` and `blrm_markov`
 
@@ -906,6 +943,9 @@ exponential weights instead of duplicated ID lookups.
   bootstrap weights and pass them into `stats::update()`.
 - Return the fitted model, releveled data, updated state support, and missing
   states.
+- Copy the source model's `markov_fit_wrapper` provenance to raw backend refits
+  so downstream model validation retains the wrapper-only contract without
+  forcing robust-covariance calculation during every bootstrap fit.
 
 SOP bootstrap inference has two public targets:
 
@@ -1342,7 +1382,8 @@ patchwork object when `combine = TRUE` and a named ggplot list otherwise.
 | `R/markov-model-data.R` | `orm_markov()`, `blrm_markov()`, `markov_model_data()`, `markov_model_id_var()`, prediction-row helpers | Wrapper metadata and automatic stored-data resolution for SOP workflows. |
 | `R/vglm_helpers.R` | `vglm_markov()`, `add_rms_formula_helpers()`, `split_rcs_assign()` | Package-aware VGAM fitting wrapper. |
 | `R/vgam_helpers.R` | `get_effective_coefs()` and class-specific helpers | Converts raw model coefficients and constraints to threshold-specific coefficient matrices. |
-| `R/robcov_vglm.R` | `robcov_vglm()`, `compute_scores_vglm()`, `compare_se_orm_vglm()` | Robust covariance and VGAM score support. |
+| `R/robcov_orm.R` | `robcov_orm()`, ORM bread and covariance-integrity helpers, shared sandwich correction/assembly helpers | Package-owned analytic-score ORM sandwich and common HC1/cadjust conventions. |
+| `R/robcov_vglm.R` | `robcov_vglm()`, `compute_scores_vglm()`, `compare_se_orm_vglm()` | Robust covariance and VGAM score support using shared sandwich corrections. |
 | `R/mvn_helpers.R` | `set_coef()`, `get_vcov_robust()`, `validate_coef_vcov()`, `get_coef()` | Coefficient mutation and covariance extraction for inference. |
 | `R/sops-api.R` | `sops()`, `sops_blrm()`, `avg_sops()`, `avg_sops_blrm()` | Main public SOP API. |
 | `R/sops-engine.R` | `soprob_markov_reference()`, `soprob_markov_second_order_run()` | Core first- and second-order reference recursion for SOP arrays. |
