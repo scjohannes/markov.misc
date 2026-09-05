@@ -210,7 +210,7 @@ For every concern:
 | ACI-09 | Medium | Resolved | First-follow-up profiles and real-time integration conventions |
 | ACI-10 | Medium | Open | Memory accounting versus actual process memory |
 | ACI-11 | Medium | Open | Grouped native execution row-layout contract |
-| ACI-12 | Medium | Open | Superpopulation `get_jacobian()` semantics |
+| ACI-12 | Medium | Resolved | Superpopulation `get_jacobian()` semantics |
 | ACI-13 | Medium | Open | `vcov()` dispatch for non-delta result objects |
 | ACI-14 | Medium | Resolved | Dense comparison and covariance materialization |
 | ACI-15 | Medium | Open | Numerical validation tolerances and portability |
@@ -589,9 +589,10 @@ For every concern:
 
 ### ACI-12: Superpopulation `get_jacobian()` semantics
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-05)
 - **Priority:** Medium
-- **Current decision:** For a superpopulation target, `get_jacobian()` returns `G`,
+- **Current decision:** `get_jacobian()` is an unexported inspection helper.
+  For a superpopulation target, it returns `G`,
   the average derivative with respect to model coefficients. Profile-distribution
   variation remains available only through the stored influence representation
   and `vcov()`.
@@ -601,7 +602,18 @@ For every concern:
   contract with stronger naming/documentation and metadata, add a separate
   influence accessor, or reject `get_jacobian()` for superpopulation targets if
   the partial interpretation is too easy to misuse.
-- **Resolution log:** Pending.
+- **Resolution log:** Adopted the user's internal-only contract rather than
+  extending the public API. Removed the export, public help topic, README
+  example, and public help links. Kept the vignette example as
+  `markov.misc:::get_jacobian()` with an explicit internal-inspection note and
+  explanation that coefficient derivatives alone do not describe unconditional
+  uncertainty. `inferences()` already uses analytical state directly and does
+  not call this accessor; public `vcov()` behavior and internal tests remain
+  unchanged. Updated architecture documentation and regenerated roxygen files.
+  `air format .`, focused delta comparison/inference tests (146 assertions,
+  including the namespace-export regression), and rendering the analytical-CI
+  vignette passed with the repository's R environment settings and the installed
+  Quarto Pandoc path.
 
 ### ACI-13: `vcov()` dispatch for non-delta results
 
@@ -871,3 +883,7 @@ issues.
   covariance limit. Resolved ACI-14 after full tests passed with the expected
   installed-package skip and package checking passed with 0 errors, 0 warnings,
   and the sole network-time verification note, including both vignette builds.
+- Marked ACI-12 **Active**, then **Resolved** under the user-approved
+  internal-only accessor contract. Removed the `get_jacobian()` export and
+  public help, retained explicit `:::` inspection in the vignette, and verified
+  the namespace boundary, focused delta tests, and analytical-CI vignette render.

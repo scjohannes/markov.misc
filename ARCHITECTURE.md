@@ -52,7 +52,7 @@ flowchart LR
   subgraph "Uncertainty"
     INF["inferences()<br/>R/sops-inference.R"]
     DELTA["Analytical delta method<br/>R/sops-delta-*.R"]
-    DELTA_ACCESS["get_jacobian() / vcov()<br/>low-rank analytical state"]
+    DELTA_ACCESS["Internal get_jacobian() / public vcov()<br/>low-rank analytical state"]
     MVN["MVN coefficient draws<br/>R/mvn_helpers.R"]
     SCORE["Score bootstrap<br/>R/sops-score-bootstrap.R"]
     SIM_DRAWS["Shared simulation draws<br/>R/sops-inference-draws.R"]
@@ -512,7 +512,7 @@ flowchart TD
   IF --> INFL["Store average J and patient influence matrix"]
   COEF --> OP["Optional supported comparison operator L"]
   INFL --> OP
-  OP --> RESULT["Intervals plus get_jacobian() / selected vcov()"]
+  OP --> RESULT["Intervals plus internal get_jacobian() / selected vcov()"]
 ```
 
 #### Analytic Recursion
@@ -613,11 +613,15 @@ The `analytical` attribute uses one of two representations:
 
 Both representations store stable result-row keys, coefficient names,
 covariance metadata, the target, interval type, version, and byte accounting.
-`get_jacobian(x, rows = ...)` and `stats::vcov(x, rows = ...)` accept numeric,
+The unexported inspection helper `get_jacobian(x, rows = ...)` and public
+`stats::vcov(x, rows = ...)` accept numeric,
 logical, or stored character row keys. The option
 `markov.misc.delta_max_bytes`, defaulting to 256 MiB, guards analytic workspace,
 stored analytical state, and requested covariance/Jacobian materialization. An
 oversized request raises the typed `markov_misc_delta_too_large` condition.
+`inferences()` uses the analytical state directly, without calling
+`get_jacobian()`. The helper returns only coefficient derivatives, including
+for unconditional results; full uncertainty is exposed through `vcov()`.
 An explicit `vcov(x)` request still returns a dense square matrix, requiring
 quadratic output storage; use `rows` to request a smaller block. Routine
 standard errors do not materialize this matrix.

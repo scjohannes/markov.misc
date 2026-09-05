@@ -318,7 +318,7 @@ quantile(treatment_effect$effect, c(0.025, 0.5, 0.975))
 
 }
 \seealso{
-\code{\link[=avg_sops]{avg_sops()}}, \code{\link[=sops]{sops()}}, \code{\link[=get_draws]{get_draws()}}, \code{\link[=get_jacobian]{get_jacobian()}},
+\code{\link[=avg_sops]{avg_sops()}}, \code{\link[=sops]{sops()}}, \code{\link[=get_draws]{get_draws()}},
 \code{\link[=robcov_vglm]{robcov_vglm()}}, \code{\link[=set_coef]{set_coef()}}
 
 \code{\link[=get_draws]{get_draws()}} to extract individual draws from any inference method

@@ -8,7 +8,7 @@
 #'
 #' The limit is checked for the SOP Jacobian and recursion workspace, retained
 #' low-rank analytical state, standard-error workspaces, and covariance or
-#' Jacobian blocks requested through [stats::vcov()] or [get_jacobian()]. Sizes
+#' Jacobian blocks requested through [stats::vcov()] or internal accessors. Sizes
 #' are measured in bytes. The checks estimate the principal numeric allocations
 #' and are not a guarantee of total process memory use.
 #'
@@ -17,7 +17,7 @@
 #' option after a temporary override.
 #'
 #' @name markov.misc.delta_max_bytes
-#' @seealso [inferences()], [get_jacobian()], [stats::vcov()]
+#' @seealso [inferences()], [stats::vcov()]
 #' @examples
 #' old_options <- options(
 #'   markov.misc.delta_max_bytes = 512 * 1024^2 # 512 MiB
@@ -152,20 +152,8 @@ delta_jacobian <- function(analytical) {
   jacobian
 }
 
-#' Extract an Analytical SOP Jacobian
-#'
-#' Extracts the raw-coefficient Jacobian retained by analytical delta-method
-#' inference. Superpopulation-target results return the average Jacobian used in
-#' the stacked influence function.
-#'
-#' @param x A SOP or average-comparison object returned by
-#'   `inferences(method = "delta")`.
-#' @param rows Optional numeric or logical row selection, or analytical row-key
-#'   values. `NULL` returns every result row.
-#'
-#' @return A numeric matrix with one row per selected result cell and one column
-#'   per fitted model coefficient.
-#' @export
+# Internal inspection helper: the superpopulation Jacobian contains only the
+# coefficient derivative, not the complete patient influence representation.
 get_jacobian <- function(x, rows = NULL) {
   analytical <- delta_analytical(x)
   index <- delta_resolve_rows(analytical, rows)
@@ -220,7 +208,8 @@ delta_vcov <- function(object, rows = NULL) {
 #' are computed without materializing the full covariance matrix.
 #'
 #' @param object A delta-inferred `markov_sops` object.
-#' @param rows Optional result-row selection. See [get_jacobian()].
+#' @param rows Optional numeric or logical row selection, or analytical row-key
+#'   values. `NULL` returns every result row.
 #' @param ... Reserved for the `stats::vcov()` generic.
 #'
 #' @return A symmetric covariance matrix for the selected result cells.

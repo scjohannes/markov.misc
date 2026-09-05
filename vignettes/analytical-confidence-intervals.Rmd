@@ -266,11 +266,14 @@ result cell. They retain a factorized analytical representation:
   matrix.
 
 Use `rows` to materialize only the block needed downstream.
+The Jacobian inspection below uses an unexported helper for illustration. It
+contains only coefficient derivatives; use `inferences()` and `vcov()` for
+uncertainty calculations, including the complete unconditional covariance.
 
 ```{r accessors}
 rows <- seq_len(min(6L, nrow(avg_empirical)))
 
-jacobian_block <- get_jacobian(avg_empirical, rows = rows)
+jacobian_block <- markov.misc:::get_jacobian(avg_empirical, rows = rows)
 empirical_covariance <- stats::vcov(avg_empirical, rows = rows)
 superpopulation_covariance <- stats::vcov(avg_superpopulation, rows = rows)
 

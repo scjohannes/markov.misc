@@ -10,8 +10,8 @@
   covariance, and record correction, cluster, bread, and integrity metadata.
 - `vglm_markov()` now accepts `type` and `cadjust` to control the HC0/HC1 and
   finite-cluster corrections used by its automatic robust covariance wrapper.
-- `get_jacobian()` now extracts selected raw-coefficient Jacobian rows from SOP
-  and supported average-comparison results returned by analytical inference.
+- `get_jacobian()` is now an unexported inspection helper. Use `inferences()`
+  and `vcov()` for public analytical inference and covariance extraction.
 - `inferences(method = "delta")` replaces `target` with `vcov = "conditional"`
   or `"unconditional"`. Averaged results now default to unconditional inference;
   individual `sops()` results default to conditional inference. Custom covariance

@@ -183,7 +183,7 @@
 #' This design ensures consistency: the same vcov is used for both point
 #' estimates and inference, regardless of how `inferences()` is called.
 #'
-#' @seealso [avg_sops()], [sops()], [get_draws()], [get_jacobian()],
+#' @seealso [avg_sops()], [sops()], [get_draws()],
 #'   [robcov_vglm()], [set_coef()]
 #'
 #' @examples

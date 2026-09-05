@@ -89,8 +89,7 @@ sop_superpopulation <- inferences(
   vcov = "unconditional"
 )
 
-# Materialize only the analytical rows needed downstream.
-J <- get_jacobian(sop_empirical, rows = 1:8)
+# Materialize only the covariance block needed downstream.
 V <- stats::vcov(sop_superpopulation, rows = 1:8)
 ```
 

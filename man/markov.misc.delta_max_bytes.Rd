@@ -11,7 +11,7 @@ analytical delta-method SOP inference. The default is \code{256 * 1024^2} bytes
 \details{
 The limit is checked for the SOP Jacobian and recursion workspace, retained
 low-rank analytical state, standard-error workspaces, and covariance or
-Jacobian blocks requested through \code{\link[stats:vcov]{stats::vcov()}} or \code{\link[=get_jacobian]{get_jacobian()}}. Sizes
+Jacobian blocks requested through \code{\link[stats:vcov]{stats::vcov()}} or internal accessors. Sizes
 are measured in bytes. The checks estimate the principal numeric allocations
 and are not a guarantee of total process memory use.
 
@@ -26,5 +26,5 @@ old_options <- options(
 options(old_options)
 }
 \seealso{
-\code{\link[=inferences]{inferences()}}, \code{\link[=get_jacobian]{get_jacobian()}}, \code{\link[stats:vcov]{stats::vcov()}}
+\code{\link[=inferences]{inferences()}}, \code{\link[stats:vcov]{stats::vcov()}}
 }

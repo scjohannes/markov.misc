@@ -15,7 +15,8 @@
 \arguments{
 \item{object}{A delta-inferred \code{markov_sops} object.}
 
-\item{rows}{Optional result-row selection. See \code{\link[=get_jacobian]{get_jacobian()}}.}
+\item{rows}{Optional numeric or logical row selection, or analytical row-key
+values. \code{NULL} returns every result row.}
 
 \item{...}{Reserved for the \code{stats::vcov()} generic.}
 }

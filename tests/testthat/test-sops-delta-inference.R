@@ -31,6 +31,11 @@ make_delta_average_fixture <- function() {
   out
 }
 
+test_that("Jacobian inspection remains internal", {
+  expect_equal("get_jacobian" %in% getNamespaceExports("markov.misc"), FALSE)
+  expect_type(getFromNamespace("get_jacobian", "markov.misc"), "closure")
+})
+
 test_that("vcov selection preserves established positional arguments", {
   expect_identical(
     names(formals(inferences)),
