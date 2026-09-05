@@ -256,7 +256,10 @@ test_that("factor-time ORM differences match public finite differences", {
     attr(point, "avg_args")
   )
   expect_lt(
-    max(abs(drop(operator %*% avg$estimate) - point$estimate)),
+    max(abs(
+      drop(delta_apply_comparison_operator(operator, avg$estimate)) -
+        point$estimate
+    )),
     1e-12
   )
 
@@ -502,5 +505,125 @@ test_that("analytical comparisons reject partial proportional odds", {
       vcov = stats::vcov(partial_model)
     ),
     error = TRUE
+  )
+})
+
+test_that("compact comparison propagation matches dense products in both orientations", {
+  operator <- list(
+    list(index = c(1L, 3L), weight = c(-0.25, 0.75)),
+    list(index = integer(), weight = numeric()),
+    list(index = 2L, weight = -1)
+  )
+  dense <- rbind(c(-0.25, 0, 0.75), c(0, 0, 0), c(0, -1, 0))
+  values <- matrix(seq_len(15) / 7, nrow = 3)
+  expect_equal(
+    delta_apply_comparison_operator(operator, values),
+    dense %*% values
+  )
+  expect_equal(
+    delta_apply_comparison_operator(operator, t(values), transpose = TRUE),
+    t(values) %*% t(dense)
+  )
+  expect_equal(
+    delta_apply_comparison_operator(operator, values[, 1]),
+    dense %*% values[, 1]
+  )
+  withr::local_options(markov.misc.delta_max_bytes = 1)
+  condition <- tryCatch(
+    delta_apply_comparison_operator(operator, values),
+    error = identity
+  )
+  expect_s3_class(condition, "markov_misc_delta_too_large")
+})
+
+test_that("large SOP comparison grids avoid the dense operator allocation", {
+  avg <- expand.grid(time = seq_len(1100), state = as.character(1:4), tx = 0:1)
+  avg$estimate <- rep(
+    c(0.1, 0.2, 0.3, 0.4, 0.15, 0.15, 0.25, 0.45),
+    each = 1100
+  )
+  attr(avg, "y_levels") <- as.character(1:4)
+  object <- expand.grid(time = seq_len(1100), state_set = as.character(1:4))
+  object$comparison_level <- 1
+  object$reference_level <- 0
+  object$estimate <- rep(c(0.05, -0.05, -0.05, 0.05), each = 1100)
+  args <- list(
+    estimand = "sop",
+    state_sets = as.list(stats::setNames(as.character(1:4), 1:4))
+  )
+  avg_args <- list(variables = list(tx = 0:1))
+  withr::local_options(markov.misc.delta_max_bytes = 2 * 1024^2)
+  operator <- delta_comparison_operator(object, avg, args, avg_args)
+  expect_equal(
+    drop(delta_apply_comparison_operator(operator, avg$estimate)),
+    object$estimate
+  )
+  expect_gt(as.double(nrow(object)) * nrow(avg) * 8, 256 * 1024^2)
+  expect_equal(
+    sum(vapply(operator, \(row) length(row$index), integer(1))),
+    2L * nrow(object)
+  )
+
+  class(object) <- c("markov_avg_comparisons", "data.frame")
+  jacobian <- cbind(seq_len(nrow(object)) / nrow(object), 1)
+  attr(object, "analytical") <- list(
+    representation = "coefficient",
+    jacobian = jacobian,
+    coefficient_vcov = diag(2),
+    row_key = as.character(seq_len(nrow(object)))
+  )
+  rows <- c(5L, 1L, 5L)
+  expect_equal(
+    unname(stats::vcov(object, rows = rows)),
+    tcrossprod(jacobian[rows, ])
+  )
+  condition <- tryCatch(stats::vcov(object), error = identity)
+  expect_s3_class(condition, "markov_misc_delta_too_large")
+  influence <- matrix(seq_len(5L * nrow(object)) / 100, nrow = 5)
+  attr(object, "analytical") <- list(
+    representation = "influence",
+    influence = influence,
+    row_key = as.character(seq_len(nrow(object)))
+  )
+  expect_equal(
+    unname(stats::vcov(object, rows = rows)),
+    stats::cov(influence[, rows]) / 5
+  )
+  condition <- tryCatch(stats::vcov(object), error = identity)
+  expect_s3_class(condition, "markov_misc_delta_too_large")
+})
+
+test_that("real-time weights collapse duplicate visits and handle a single node", {
+  avg <- data.frame(time = c("late", "early", "duplicate"))
+  args <- list(
+    time_map = c(late = 7, early = 3, duplicate = 3),
+    baseline_time = 0,
+    target_times = c(0, 1, 3, 5, 7)
+  )
+  weights <- delta_real_time_visit_weights(avg, args)
+  basis <- vapply(
+    seq_len(3),
+    function(j) {
+      values <- numeric(3)
+      values[j] <- 1
+      stats::approx(
+        c(0, 7, 3, 3),
+        c(0, values),
+        xout = args$target_times,
+        ties = mean
+      )$y
+    },
+    numeric(length(args$target_times))
+  )
+  expected <- drop(delta_trapezoid_weights(args$target_times) %*% basis)
+  expect_equal(unname(weights), expected, tolerance = 1e-12)
+  args$target_times <- 5
+  expect_equal(unname(delta_real_time_visit_weights(avg, args)), numeric(3))
+  expect_equal(
+    delta_real_time_visit_weights(
+      data.frame(time = "v1"),
+      list(time_map = c(v1 = 3), baseline_time = NULL)
+    ),
+    c(v1 = 0)
   )
 })

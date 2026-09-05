@@ -104,26 +104,6 @@ delta_trapezoid_weights <- function(times) {
   )
 }
 
-delta_interpolation_operator <- function(source_times, target_times) {
-  n_source <- length(source_times)
-  if (n_source == 0L) {
-    return(matrix(0, nrow = length(target_times), ncol = 0L))
-  }
-  if (n_source == 1L) {
-    out <- matrix(0, nrow = length(target_times), ncol = 1L)
-    out[target_times == source_times, 1L] <- 1
-    return(out)
-  }
-
-  plan <- compile_linear_interpolation_plan(source_times, target_times)
-  if (is.null(plan)) {
-    stop("Could not compile the analytical real-time interpolation operator.")
-  }
-  out <- t(apply_linear_interpolation_plan(diag(n_source), plan))
-  out[is.na(out)] <- 0
-  out
-}
-
 delta_real_time_visit_weights <- function(avg, args) {
   time_map <- standardize_time_map(args$time_map)
   source_labels <- unique(as.character(avg$time))
@@ -160,16 +140,21 @@ delta_real_time_visit_weights <- function(avg, args) {
     match(augmented_times, node_times),
     nbins = length(node_times)
   )
-  collapse <- matrix(
-    0,
-    nrow = length(node_times),
-    ncol = length(source_real)
+  delta_assert_bytes(
+    (length(node_times) + 8 * as.double(length(target_times))) * 8,
+    "Analytical real-time integration weights"
   )
-  collapse[cbind(node_index, seq_along(source_real))] <- 1 / counts[node_index]
-
-  interpolate <- delta_interpolation_operator(node_times, target_times)
   target_weights <- delta_trapezoid_weights(target_times)
-  visit_weights <- drop(target_weights %*% interpolate %*% collapse)
+  node_weights <- numeric(length(node_times))
+  if (length(node_times) > 1L) {
+    plan <- compile_linear_interpolation_plan(node_times, target_times)
+    weights <- rowsum(
+      c(target_weights * (1 - plan$weight), target_weights * plan$weight),
+      c(plan$left, plan$right)
+    )
+    node_weights[as.integer(rownames(weights))] <- weights[, 1L]
+  }
+  visit_weights <- node_weights[node_index] / counts[node_index]
   stats::setNames(visit_weights, source_labels)
 }
 
@@ -217,14 +202,16 @@ delta_comparison_operator <- function(object, avg, args, avg_args) {
   n_result <- nrow(object)
   n_source <- nrow(source)
   delta_assert_bytes(
-    as.double(n_result) * n_source * 8,
+    as.double(n_source) * 64 + as.double(n_result) * 16,
     "The analytical comparison operator"
   )
-  operator <- matrix(0, nrow = n_result, ncol = n_source)
+  operator <- vector("list", n_result)
+  stored_bytes <- as.double(n_result) * 16
   source_level <- as.character(source[[varname]])
   source_state <- as.character(source$state)
   source_time <- as.character(source$time)
 
+  # ponytail: scan source cells per result; index groups if setup time dominates.
   for (i in seq_len(n_result)) {
     states <- as.character(state_sets[[state_index[i]]])
     level_sign <-
@@ -239,10 +226,17 @@ delta_comparison_operator <- function(object, avg, args, avg_args) {
     if (anyNA(time_weight)) {
       stop("Comparison times do not align with the replayed average SOPs.")
     }
-    operator[i, ] <- level_sign * state_weight * time_weight
+    weight <- level_sign * state_weight * time_weight
+    index <- which(weight != 0)
+    stored_bytes <- stored_bytes + length(index) * 12
+    delta_assert_bytes(
+      stored_bytes + as.double(n_source) * 64,
+      "The analytical comparison operator"
+    )
+    operator[[i]] <- list(index = index, weight = weight[index])
   }
 
-  propagated <- drop(operator %*% source$estimate)
+  propagated <- drop(delta_apply_comparison_operator(operator, source$estimate))
   if (
     any(!is.finite(propagated)) ||
       any(abs(propagated - object$estimate) >= 1e-12)
@@ -256,10 +250,41 @@ delta_comparison_operator <- function(object, avg, args, avg_args) {
   operator
 }
 
+delta_apply_comparison_operator <- function(
+  operator,
+  values,
+  transpose = FALSE
+) {
+  values <- as.matrix(values)
+  width <- if (transpose) nrow(values) else ncol(values)
+  largest <- max(c(0L, vapply(operator, \(row) length(row$index), integer(1))))
+  delta_assert_bytes(
+    (as.double(length(operator)) + largest + 1) * width * 8,
+    "Analytical comparison propagation"
+  )
+  out <- if (transpose) {
+    matrix(0, nrow = width, ncol = length(operator))
+  } else {
+    matrix(0, nrow = length(operator), ncol = width)
+  }
+  for (i in seq_along(operator)) {
+    row <- operator[[i]]
+    if (length(row$index) == 0L) {
+      next
+    }
+    if (transpose) {
+      out[, i] <- values[, row$index, drop = FALSE] %*% row$weight
+    } else {
+      out[i, ] <- row$weight %*% values[row$index, , drop = FALSE]
+    }
+  }
+  out
+}
+
 delta_propagate_comparison_state <- function(avg, operator) {
   source <- delta_analytical(avg)
   if (identical(source$representation, "coefficient")) {
-    jacobian <- operator %*% source$jacobian
+    jacobian <- delta_apply_comparison_operator(operator, source$jacobian)
     colnames(jacobian) <- colnames(source$jacobian)
     variance <- delta_jacobian_variance(jacobian, source$coefficient_vcov)
     return(list(
@@ -277,14 +302,21 @@ delta_propagate_comparison_state <- function(avg, operator) {
   if (!identical(source$representation, "influence")) {
     stop("Unknown analytical representation on replayed average SOPs.")
   }
-  influence <- source$influence %*% t(operator)
+  influence <- delta_apply_comparison_operator(
+    operator,
+    source$influence,
+    transpose = TRUE
+  )
   n <- nrow(influence)
   if (n < 2L) {
     stop("Superpopulation delta inference requires at least two patients.")
   }
   centered <- sweep(influence, 2L, colMeans(influence), "-")
   variance <- colSums(centered^2) / ((n - 1) * n)
-  average_jacobian <- operator %*% source$average_jacobian
+  average_jacobian <- delta_apply_comparison_operator(
+    operator,
+    source$average_jacobian
+  )
   colnames(average_jacobian) <- colnames(source$average_jacobian)
   list(
     std.error = sqrt(variance),

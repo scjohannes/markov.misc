@@ -212,7 +212,7 @@ For every concern:
 | ACI-11 | Medium | Open | Grouped native execution row-layout contract |
 | ACI-12 | Medium | Open | Superpopulation `get_jacobian()` semantics |
 | ACI-13 | Medium | Open | `vcov()` dispatch for non-delta result objects |
-| ACI-14 | Medium | Open | Dense comparison and covariance materialization |
+| ACI-14 | Medium | Resolved | Dense comparison and covariance materialization |
 | ACI-15 | Medium | Open | Numerical validation tolerances and portability |
 | ACI-16 | Medium | Open | Native C++ maintenance and semantic parity |
 | ACI-17 | Low | Open | Performance benchmark generalizability |
@@ -620,17 +620,65 @@ For every concern:
 
 ### ACI-14: Dense comparison and covariance materialization
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-05)
 - **Priority:** Medium
-- **Current decision:** Analytical comparisons build a dense
-  result-by-SOP-cell operator. `vcov(result, rows = NULL)` materializes the full
-  selected-result covariance subject to the memory guard.
+- **Current decision:** Store nonzero source indices and weights per comparison
+  and apply them directly to Jacobian rows or patient-influence columns.
+  Accumulate real-time interpolation/integration weights with the existing
+  interpolation plan and base `rowsum()`. `vcov(result, rows = NULL)` still
+  explicitly requests a full dense covariance subject to the memory guard;
+  selected `rows` avoid the full output allocation.
 - **Concern:** Large state/time/comparison grids may hit the guard or allocate
   avoidably large matrices even though the operators are sparse and structured.
 - **Resolution approach:** Benchmark realistic large grids and evaluate sparse
   matrices, direct index/weight propagation, chunked covariance blocks, or
   requiring explicit `rows` above a threshold. Preserve identical output.
-- **Resolution log:** Pending.
+- **Research and alternatives (2026-09-05):** Confirmed installed
+  `marginaleffects` 1.0.0 and `rms` 8.1.1. The installed marginaleffects
+  `NEWS.md` documents O(np) `~meandev`/`~meanotherdev` transformations instead
+  of dense n-by-n contrasts. Its internal `hypothesis_formula_pullback()`
+  applies group means/sums directly to Jacobians; it is not an exported general
+  SOP comparison engine. The online NEWS page was behind the installed release,
+  so the installed changelog and namespace were used as the version-specific
+  evidence. The [rms release notes](https://hbiostat.org/r/rms/) and installed
+  `infoMxop()` confirm sparse information matrices and on-demand inverse
+  operations, which address coefficient-level calculations rather than our
+  result-by-SOP operator. Neither dependency automatically fixes this package's
+  allocation. Adopted the same matrix-free principle using base R and existing
+  interpolation infrastructure. A Matrix sparse operator would also remove
+  zeros, but is unnecessary for these weighted selections and would promote an
+  optional dependency to a runtime requirement. Chunking a requested full
+  covariance cannot eliminate its quadratic output size; retained the existing
+  row-selection API instead of adding another accessor or changing defaults.
+- **Benchmark evidence:** `benchmarks/benchmark-delta-comparisons.R` checks
+  dense-product agreement at tolerance `1e-12` and compares 20/100/250 visits,
+  four states, three treatment scenarios, SOP and real-time time-in-state
+  contrasts, 12 coefficient columns, and 100 patient-influence rows. For the
+  250-visit SOP case (2,000 results, 3,000 source cells), operator object size
+  fell from 45.78 MiB to 0.916 MiB. Median propagation times over three runs
+  were 0.07 versus 0.01 seconds for Jacobians and 0.49 versus 0.01 seconds for
+  influences on this Windows machine. These exclude fitting, recursion, and
+  operator compilation, and are not peak-process-memory measurements. Small
+  timings often fall below the timer's resolution. Comparison compilation still
+  scans source cells per result; this change removes quadratic operator storage,
+  not that setup-time cost.
+- **Resolution log:** Implemented and validated. Regression coverage includes both propagation orientations,
+  zero-weight rows, single-column inputs, duplicate mapped visits, baseline
+  anchoring, a single integration node, and guarded output allocation. A
+  4,400-result / 8,800-source grid now compiles and replays under a 2 MiB
+  numeric-allocation limit although its old dense operator requires 295.41 MiB.
+  Large full covariance requests still fail the guard while selected blocks
+  work for both coefficient and influence representations.
+  `air format .`, `devtools::document()`, the focused comparison/inference
+  tests, the complete `devtools::test(reporter = "summary")` suite, and the
+  benchmark passed. The full suite had only the expected installed-package
+  worker-invariance skip. `devtools::check(args = "--no-tests")` (tests already
+  run separately) passed with 0 errors, 0 warnings, and one environment note
+  because current network time could not be verified. Both vignette builds
+  and examples passed. The first build attempt could not locate Pandoc;
+  supplying the existing `C:/Program Files/Quarto/bin/tools` through
+  `RSTUDIO_PANDOC` resolved that environment issue. R commands used the
+  repository's required `MAKEFLAGS` and `LC_ALL=C` settings.
 
 ### ACI-15: Numerical validation tolerances and portability
 
@@ -813,3 +861,13 @@ issues.
   baseline-state distributions computed from each draw's weights or resampled
   cohort. Direct time-in-state summaries reduce the corrected draws and report
   the resulting AUC uncertainty.
+
+### 2026-09-05
+
+- Marked ACI-14 **Active** and investigated the installed marginaleffects 1.0.0
+  and rms 8.1.1 implementations. Replaced dense comparison/interpolation
+  operators with direct index/weight propagation, added regression coverage
+  and a reproducible benchmark, and documented the retained explicit full
+  covariance limit. Resolved ACI-14 after full tests passed with the expected
+  installed-package skip and package checking passed with 0 errors, 0 warnings,
+  and the sole network-time verification note, including both vignette builds.

@@ -214,6 +214,10 @@ delta_vcov <- function(object, rows = NULL) {
 #'
 #' Materializes a selected covariance block from the low-rank analytical state
 #' retained by `inferences(method = "delta")`.
+#' With `rows = NULL`, the full dense covariance matrix is requested and its
+#' storage grows quadratically with the number of result cells. Use `rows` to
+#' extract smaller blocks within the analytical memory limit. Standard errors
+#' are computed without materializing the full covariance matrix.
 #'
 #' @param object A delta-inferred `markov_sops` object.
 #' @param rows Optional result-row selection. See [get_jacobian()].

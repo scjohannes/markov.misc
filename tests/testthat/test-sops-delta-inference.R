@@ -227,7 +227,10 @@ test_that("analytical comparison operators reproduce existing reductions", {
     comparison = "difference"
   )
   sop_operator <- delta_comparison_operator(sop, avg, sop_args, avg_args)
-  expect_equal(drop(sop_operator %*% avg$estimate), sop$estimate)
+  expect_equal(
+    drop(delta_apply_comparison_operator(sop_operator, avg$estimate)),
+    sop$estimate
+  )
 
   real_time <- avg_comparison_from_avg_sops(
     avg,
@@ -255,7 +258,7 @@ test_that("analytical comparison operators reproduce existing reductions", {
     avg_args
   )
   expect_equal(
-    drop(real_time_operator %*% avg$estimate),
+    drop(delta_apply_comparison_operator(real_time_operator, avg$estimate)),
     real_time$estimate,
     tolerance = 1e-12
   )

@@ -25,4 +25,8 @@ A symmetric covariance matrix for the selected result cells.
 \description{
 Materializes a selected covariance block from the low-rank analytical state
 retained by \code{inferences(method = "delta")}.
+With \code{rows = NULL}, the full dense covariance matrix is requested and its
+storage grows quadratically with the number of result cells. Use \code{rows} to
+extract smaller blocks within the analytical memory limit. Standard errors
+are computed without materializing the full covariance matrix.
 }

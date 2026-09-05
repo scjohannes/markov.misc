@@ -618,16 +618,27 @@ logical, or stored character row keys. The option
 `markov.misc.delta_max_bytes`, defaulting to 256 MiB, guards analytic workspace,
 stored analytical state, and requested covariance/Jacobian materialization. An
 oversized request raises the typed `markov_misc_delta_too_large` condition.
+An explicit `vcov(x)` request still returns a dense square matrix, requiring
+quadratic output storage; use `rows` to request a smaller block. Routine
+standard errors do not materialize this matrix.
 
 #### Comparison Operators and Scope
 
 `R/sops-delta-comparisons.R` represents supported average comparisons as a
-linear operator `L` over average SOP cells. The operator encodes comparison
+linear operator `L` over average SOP cells, stored as nonzero source indices
+and weights per result rather than a dense result-by-source matrix.
+`delta_apply_comparison_operator()` applies these weighted selections directly
+to estimates, Jacobian rows, or influence columns, with guarded output and
+single-result workspaces. The operator encodes comparison
 level minus reference level, state-set selection, visit selection or summation,
 and, for real-time time-in-state differences, the stored visit-to-time mapping,
 shared observed-baseline anchor, linear interpolation, and trapezoidal
-integration weights. It must reproduce the stored point estimates before it is
-used. Propagation is then `L J` for coefficient-form state or `influence L'` for
+integration weights. Real-time weights reuse `compile_linear_interpolation_plan()`
+and accumulate trapezoidal contributions at adjacent source nodes with `rowsum()`;
+duplicate mapped visits share node weights. No identity, interpolation, or
+duplicate-collapse matrices are constructed. The operator must reproduce the
+stored point estimates before it is used. Propagation is then `L J` for
+coefficient-form state or `influence L'` for
 influence-form state. This is why fixed factor-time designs remain linear after
 the SOP recursion itself has been differentiated.
 

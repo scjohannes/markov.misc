@@ -17,6 +17,11 @@
   individual `sops()` results default to conditional inference. Custom covariance
   matrices select conditional inference. Supplied prediction cohorts require
   an explicit conditional choice.
+- `inferences(method = "delta")` now propagates average comparisons using only
+  nonzero source indices and weights, avoiding dense comparison and real-time
+  interpolation matrices. Large comparison grids require substantially less
+  working memory. Full `vcov()` output remains subject to the memory limit;
+  use `rows` to extract smaller covariance blocks.
 - `inferences()` now supports deterministic analytical delta-method intervals
   for fixed individual first-order full proportional-odds ORM/VGLM SOPs,
   empirical and fitted-cohort superpopulation averages, and supported SOP or
