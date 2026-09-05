@@ -236,6 +236,32 @@ data-generating mechanism:
   predictors produce proportional-odds transitions, while threshold-length
   linear predictors produce partial proportional odds transitions when the
   implied cumulative probabilities remain ordered.
+- `sim_actt1_markov()` and `sim_actt2_markov()` are fixed-parameter trial
+  wrappers around the general Markov simulator. Both use the same internal
+  six-knot restricted cubic day basis, retain shared slope signs, reverse only
+  the reported threshold order for the simulator's cumulative-probability
+  convention, and treat state `8` as absorbing. The ACTT-1 wrapper normalizes
+  its four reported baseline-state counts, uses posterior mean coefficients,
+  deliberately omits fitted treatment, age, and sex terms, and retains the
+  constrained partial proportional-odds time deviation. Its linear predictor
+  returns one value per reversed threshold, adding `-0.0188 * day * cutoff` for
+  cutoffs `8` through `2`; this prevents repeated state-8 absorption from
+  overstating mortality. Because the fitted ACTT-1 knots were unavailable, it
+  explicitly assumes the ACTT-2 knot locations. Both wrappers expose the same
+  user-specified day-1 treatment effect, optionally attenuated with a
+  nonnegative exponential decay rate over follow-up.
+- `sim_actt2_markov_60day()` is a separately calibrated full proportional-odds
+  wrapper. A seed-fixed 100,000-patient Brownian-gap cohort supplies its
+  baseline distribution and 5,590,720 non-absorbed transitions; the fitted
+  model is `y ~ tx + yprev + rms::rcs(time, 7)`. The source drift-start count is
+  Poisson with mean `6.026099`, the fitted seven-knot time basis is retained as
+  metadata on the linear-predictor coefficients, and state `8` remains
+  absorbing. Treatment uses `0 = placebo/control`, `1 = active`; negative
+  coefficients are protective because larger states are worse. This wrapper is
+  explicitly a full-PO compression rather than a process-equivalent Brownian
+  simulator: deterministic recursion gives 15.55% day-60 mortality versus
+  9.58% in the source cohort, with a maximum state-by-day occupancy difference
+  of 25.18 percentage points. Follow-up after day 60 is extrapolation.
 - `sim_trajectories_brownian()` uses a latent continuous severity random walk
   thresholded into ordinal states.
 - `sim_trajectories_brownian_gap()` separates daily latent severity evolution
@@ -1372,7 +1398,7 @@ patchwork object when `combine = TRUE` and a named ggplot list otherwise.
 | --- | --- | --- |
 | `R/utils.R` | `%||%`, `bind_rows_fill()`, `left_join_preserve_order()`, `matrix_to_long()`, `named_list_to_wide()`, `pivot_state_columns_long()`, Arrow helpers, offset helpers | Shared low-level helpers. Keep generic but scoped; these are not intended as full tidyverse replacements. |
 | `R/markov-data.R` | `prepare_markov_data()`, `relevel_factors_consecutive()` | Converts trajectories to modeling data and handles missing bootstrap states. |
-| `R/simulate-markov.R` | `sim_trajectories_markov()` | Proportional-odds transition simulator. |
+| `R/simulate-markov.R` | `sim_trajectories_markov()`, `sim_actt1_markov()`, `sim_actt2_markov()`, `sim_actt2_markov_60day()` | General proportional-odds transition simulator and fixed-parameter ACTT trial wrappers, including the fitted 60-day Brownian-gap approximation. |
 | `R/simulate-brownian.R` | `sim_trajectories_brownian()` | Latent Brownian severity simulator. |
 | `R/simulate-brownian-gap.R` | `sim_trajectories_brownian_gap()`, `sim_actt2_brownian()` | Brownian simulator with refresh gaps and ACTT-2 defaults. |
 | `R/simulate-deterministic.R` | `sim_trajectories_deterministic()` | Line-of-destiny deterministic simulator. |

@@ -58,6 +58,23 @@
   irregular or duplicate grids.
 - `interpolate_sops()` now preserves `NA` outside each estimate or draw series'
   own observed time support instead of extrapolating from endpoint values.
+- `sim_actt1_markov()` now generates simplified ACTT-1 eight-state trajectories
+  from posterior mean proportional-odds coefficients, the observed baseline
+  state counts, an assumed ACTT-2 day-spline basis, and a state-8 absorbing rule.
+  Age and sex effects are intentionally omitted. The fitted threshold-specific
+  time deviation is retained to reproduce approximately 10% mortality by day 28.
+- `sim_actt2_markov()` now generates ACTT-2-like eight-state trajectories from
+  the supplied proportional-odds coefficients, fixed restricted cubic day
+  spline, baseline-state distribution, and state-8 absorbing rule.
+- `sim_actt2_markov_60day()` provides a 60-day full proportional-odds Markov
+  approximation fitted to 5,590,720 transitions from a deterministic-seed
+  100,000-patient `sim_trajectories_brownian_gap()` cohort. The source uses
+  `drift_start = rpois(n, 6.026099)` and the supplied 60-day calibration
+  parameters. Documentation records the approximation gap: day-60 mortality is
+  15.55% under the fitted Markov recursion versus 9.58% in the source cohort.
+- `sim_actt1_markov()` and `sim_actt2_markov()` accept a day-1
+  `treatment_effect` and a nonnegative `treatment_effect_decay` rate for an
+  optional exponentially diminishing treatment effect.
 - `sim_trajectories_brownian()` and the default `sim_trajectories_markov()` path
   now use fused serial categorical sampling and direct long-output construction.
 - `soprob_markov()` now streams visit designs into fused PO or general-logit
