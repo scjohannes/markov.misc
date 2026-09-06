@@ -175,11 +175,15 @@ orm_model_bread <- function(fit) {
       }
     )
   }
-  eigenvalues <- eigen(
-    (bread + t(bread)) / 2,
-    symmetric = TRUE,
-    only.values = TRUE
-  )$values
+  eigenvalues <- if (all(diag(bread) > 0)) {
+    eigen(
+      stats::cov2cor(bread / 2 + t(bread) / 2),
+      symmetric = TRUE,
+      only.values = TRUE
+    )$values
+  } else {
+    0
+  }
   tolerance <- max(1, max(abs(eigenvalues))) * length(coefficients) * 1e-10
   if (min(eigenvalues) <= tolerance) {
     stop(

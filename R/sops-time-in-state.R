@@ -93,6 +93,7 @@ time_in_state_tidy_inference <- function(x, target_states, real_time) {
     return(result)
   }
 
+  draws <- draws[draws$time %in% x$time, , drop = FALSE]
   draw_result <- time_in_state_tidy(
     draws,
     target_states,

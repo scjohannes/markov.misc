@@ -6,12 +6,18 @@
   checks allow small numerical differences relative to the estimate, and
   derivative checks accommodate covariates expressed in large units.
 
+- `inferences()` now clears old baseline draws when rerun, so switching from
+  bootstrap to MVN inference keeps the baseline fixed during interpolation.
+
 - `inferences(method = "delta")` now uses `"unconditional"` consistently in
   result metadata and error messages for variance that includes patient sampling.
   Internal helper and test filenames use the same terminology.
 
 - `orm_markov()` and analytical inference now accept explicit `penalty = 0`
   without failing on rms's stored penalty list.
+- `orm_markov()` now checks covariance positive definiteness independently of
+  coefficient units, allowing valid fits when covariates are rescaled (for
+  example, converting time from days to minutes).
 - Model-based SOP and diagnostic workflows now require fits created by
   `orm_markov()`, `vglm_markov()`, or `blrm_markov()`. This wrapper provenance
   guarantees the stored fitting-data contracts needed for prediction and
@@ -114,6 +120,9 @@
   scan, and bootstrap samples are materialized from reusable row-index plans.
 - Standard refit bootstrap wrapper fits now replace the source ID with each
   resampled copy's unique bootstrap patient ID before cluster-robust fitting.
+- `time_in_state()` now restricts stored draws to `target_times` for already
+  interpolated SOPs, keeping confidence intervals and standard errors aligned
+  with the requested time range.
 - `vglm_markov()` now uses an extensible RMS basis registry and ships first-class
   assignment metadata for both `rcs()` and `lsp()` terms.
 - `avg_sops()` now marginalizes counterfactual SOP arrays directly instead of

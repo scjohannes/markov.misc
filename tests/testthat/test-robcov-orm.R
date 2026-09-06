@@ -63,6 +63,51 @@ test_that("orm HC0 covariance equals a directly assembled cluster sandwich", {
   )
 })
 
+test_that("orm robust covariance is preserved when time units change", {
+  case <- local_robcov_orm_case()
+  days <- orm_markov(
+    ordered(y) ~ time + tx + yprev,
+    data = case$data,
+    id_var = "id"
+  )
+  data <- case$data
+  data$minutes <- data$time * 1440
+  minutes <- orm_markov(
+    ordered(y) ~ minutes + tx + yprev,
+    data = data,
+    id_var = "id"
+  )
+  units <- ifelse(names(stats::coef(minutes)) == "minutes", 1440, 1)
+
+  expect_equal(
+    unname(minutes$orig.var * outer(units, units)),
+    unname(days$orig.var),
+    tolerance = 1e-7
+  )
+  expect_equal(
+    unname(minutes$var * outer(units, units)),
+    unname(days$var),
+    tolerance = 1e-7
+  )
+})
+
+test_that("orm bread validation rejects nonpositive and singular matrices", {
+  fit <- local_robcov_orm_case()$fit
+  coefficient_names <- names(stats::coef(fit))
+  fit$orig.var <- diag(length(coefficient_names))
+  dimnames(fit$orig.var) <- list(coefficient_names, coefficient_names)
+
+  fit$orig.var[1L, 1L] <- 0
+  expect_snapshot(error = TRUE, orm_model_bread(fit))
+  fit$orig.var[1L, 1L] <- -1
+  expect_snapshot(error = TRUE, orm_model_bread(fit))
+  fit$orig.var[1L, 1L] <- 1
+  fit$orig.var[1L, 2L] <- fit$orig.var[2L, 1L] <- 1
+  expect_snapshot(error = TRUE, orm_model_bread(fit))
+  fit$orig.var[1L, 2L] <- fit$orig.var[2L, 1L] <- 2
+  expect_snapshot(error = TRUE, orm_model_bread(fit))
+})
+
 test_that("orm HC1 and cluster corrections are exact scalar adjustments", {
   case <- local_robcov_orm_case()
   fit <- case$fit

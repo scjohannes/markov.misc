@@ -383,6 +383,10 @@ inferences_impl <- function(
     stop("`conf_type = \"logit\"` is only available with `method = \"delta\"`.")
   }
 
+  if (!inherits(attr(x, "model"), "blrm")) {
+    attr(x, "baseline_anchor_draws") <- NULL
+  }
+
   if (identical(method, "delta")) {
     if (inherits(attr(x, "model"), "blrm")) {
       stop(

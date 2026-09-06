@@ -867,6 +867,82 @@ describe("avg_sops() and inferences() pipeline", {
     )
   })
 
+  test_that("rerunning inference replaces baseline draws", {
+    skip_if_not_installed("rms")
+    skip_if_not_installed("mvtnorm")
+
+    data <- suppressWarnings(make_test_data(
+      n_patients = 28,
+      follow_up_time = 5,
+      seed = 2811
+    ))
+    model <- orm_markov(
+      ordered(y) ~ time + tx + yprev,
+      data = data,
+      id_var = "id"
+    )
+    avg <- avg_sops(model, variables = "tx", times = 1:3, absorb = "6")
+    previous <- inferences(
+      avg,
+      method = "score_bootstrap",
+      cluster = data$id,
+      n_draws = 4,
+      seed = 1
+    )
+    expect_s3_class(attr(previous, "baseline_anchor_draws"), "data.frame")
+
+    for (n_draws in c(4, 6)) {
+      fresh <- inferences(avg, method = "mvn", n_draws = n_draws, seed = 2)
+      rerun <- inferences(previous, method = "mvn", n_draws = n_draws, seed = 2)
+      expect_null(attr(rerun, "baseline_anchor_draws"))
+      interpolated <- interpolate_sops(
+        rerun,
+        time_map = c("1" = 1, "2" = 2, "3" = 3),
+        target_times = 0:3
+      )
+      expected <- interpolate_sops(
+        fresh,
+        time_map = c("1" = 1, "2" = 2, "3" = 3),
+        target_times = 0:3
+      )
+      expect_equal(interpolated$std.error, expected$std.error)
+      expect_equal(interpolated$conf.low, expected$conf.low)
+      expect_equal(interpolated$conf.high, expected$conf.high)
+      expect_equal(
+        interpolated$std.error[interpolated$time == 0],
+        rep(0, sum(interpolated$time == 0))
+      )
+      expect_equal(
+        sort(unique(get_draws(interpolated)$draw_id)),
+        seq_len(n_draws)
+      )
+    }
+
+    replacement <- inferences(
+      previous,
+      method = "score_bootstrap",
+      cluster = data$id,
+      n_draws = 2,
+      seed = 3
+    )
+    expect_equal(
+      sort(unique(attr(replacement, "baseline_anchor_draws")$draw_id)),
+      1:2
+    )
+    for (method in c("mvn", "score_bootstrap", "delta")) {
+      omitted <- inferences(
+        previous,
+        method = method,
+        cluster = data$id,
+        n_draws = 2,
+        seed = 3,
+        return_draws = FALSE
+      )
+      expect_null(attr(omitted, "draws"))
+      expect_null(attr(omitted, "baseline_anchor_draws"))
+    }
+  })
+
   test_that("numeric previous-state spline supports score-bootstrap fast path", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")

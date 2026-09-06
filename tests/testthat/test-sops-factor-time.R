@@ -835,6 +835,26 @@ test_that("interpolate_sops guardrails are clear", {
   )
 })
 
+test_that("time_in_state restricts stored draws to the requested time range", {
+  x <- add_interpolation_draws(make_interpolation_case())
+  interpolated <- interpolate_sops(
+    x,
+    time_map = c(v1 = 3, v2 = 7),
+    target_times = 0:7
+  )
+
+  result <- time_in_state(interpolated, target_states = "1", target_times = 3:5)
+  result <- result[order(result$tx), , drop = FALSE]
+  draws <- attr(result, "draws")
+  draws <- draws[order(draws$tx, draws$draw_id), , drop = FALSE]
+
+  expect_equal(result$total_time, c(1.4, 1.3))
+  expect_equal(draws$total_time, c(1.2, 1.4, 1.6, 1.1, 1.3, 1.5))
+  expect_equal(result$conf.low, c(1.24, 1.14))
+  expect_equal(result$conf.high, c(1.56, 1.46))
+  expect_equal(result$std.error, c(0.2, 0.2))
+})
+
 test_that("time_in_state uses trapezoidal AUC on mapped real time", {
   x <- make_interpolation_case()
 

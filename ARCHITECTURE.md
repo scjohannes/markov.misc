@@ -447,6 +447,11 @@ The inference methods are intentionally separate:
   row-expanded weights, and uses the same patient weights for marginal and
   subgroup SOP averaging.
 
+Each new frequentist `inferences()` run clears inherited
+`baseline_anchor_draws` before dispatch. Methods that generate new baseline
+anchors retain them only alongside the corresponding draws, so changing
+methods or draw counts cannot reuse anchors from an earlier inference run.
+
 For refit bootstrap inference with user-supplied prediction profiles, the
 transition model is refit on `refit_data` or wrapper-stored longitudinal data,
 while SOPs are replayed on the fixed `newdata_pred` profiles from the original
@@ -849,6 +854,9 @@ or `stats::vcov(..., intercepts = "all")`; penalized fits requesting
 `var.from.info.matrix` inverse sensitivity. Penalty detection flattens rms's
 numeric/list settings in both bread selection and the unconditional guard;
 explicit zero penalties therefore follow the unpenalized path.
+`orm_model_bread()` checks positive definiteness on the corresponding
+correlation matrix, so the check does not depend on coefficient units or
+overall covariance scale. The original covariance is retained for calculations.
 It multiplies analytic row scores
 by fitted case weights, aggregates them by patient, and forms the sandwich as
 the crossproduct of bread-transformed cluster scores. Zero-weight rows are
@@ -1151,6 +1159,9 @@ probabilities by summing visit-scale probabilities or using trapezoidal AUC on
 real-time grids. It applies the same reduction to stored simulation, bootstrap,
 and posterior draws and recomputes draw-based confidence intervals and standard
 errors; interpolation has already propagated any draw-specific baseline anchors.
+The shared `time_in_state_tidy_inference()` helper restricts stored draws to
+the point estimates' time grid before reduction, so selecting `target_times`
+on already interpolated SOPs uses the same times for estimates and uncertainty.
 With no explicit `target_times`, `interpolate_sops()` returns the baseline and
 mapped follow-up nodes, whereas `time_in_state()` selects only the mapped
 follow-up nodes before interpolation so its default AUC excludes the baseline
