@@ -216,7 +216,11 @@ get_effective_coef_map <- function(model) {
     )
   }
 
-  gamma <- get_effective_coefs(backend, beta = coef)
+  gamma <- if (inherits(backend, "vglm")) {
+    t(stats::coef(backend, matrix = TRUE))
+  } else {
+    get_effective_coefs(backend, beta = coef)
+  }
   mapped_gamma <- matrix(
     drop(map %*% coef),
     nrow = M,

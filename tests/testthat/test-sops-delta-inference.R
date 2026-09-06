@@ -858,15 +858,6 @@ test_that("public delta scope enforces fixed targets and patient clustering", {
 })
 
 test_that("logit delta intervals distinguish structural boundaries", {
-  structural <- delta_interval_bounds(
-    estimate = c(0, 1),
-    standard_error = c(0, 0),
-    conf_level = 0.95,
-    conf_type = "logit"
-  )
-  expect_identical(structural$conf.low, c(0, 1))
-  expect_identical(structural$conf.high, c(0, 1))
-
   local_reproducible_output(width = 80)
   expect_snapshot(
     nonstructural <- delta_interval_bounds(

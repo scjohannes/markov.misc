@@ -353,13 +353,10 @@ delta_interval_bounds <- function(
     upper[interior] <- stats::plogis(center + critical * logit_se)
   }
 
-  zero_se <- standard_error <= sqrt(.Machine$double.eps)
-  structural_zero <- estimate == 0 & zero_se
-  structural_one <- estimate == 1 & zero_se
-  lower[structural_zero] <- upper[structural_zero] <- 0
-  lower[structural_one] <- upper[structural_one] <- 1
-
-  undefined <- !interior & !structural_zero & !structural_one
+  # The recursion starts with fitted ordinal probabilities and supplies no
+  # structural-boundary metadata for the resulting occupancy probabilities.
+  # Saturation can make both its probability and derivative numerically exact.
+  undefined <- !interior
   if (any(undefined)) {
     warning(
       "Logit-delta limits are undefined for nonstructural boundary SOP ",
@@ -589,12 +586,31 @@ inferences_delta_sops <- function(
     variables <- avg_args$variables
     grid <- do.call(expand.grid, variables)
     n_cf <- nrow(grid)
-    if (nrow(newdata) %% n_cf != 0L) {
+    if (n_cf < 1L || nrow(newdata) < 1L || nrow(newdata) %% n_cf != 0L) {
       stop(
         "Stored prediction data are not aligned with the counterfactual grid."
       )
     }
     n_each <- as.integer(nrow(newdata) / n_cf)
+    # Native averaging needs contiguous scenarios with identical profile order.
+    for (column in union(names(newdata), names(grid))) {
+      expected <- if (column %in% names(grid)) {
+        rep(grid[[column]], each = n_each)
+      } else {
+        newdata[
+          rep(seq_len(n_each), times = n_cf),
+          column,
+          drop = FALSE
+        ][[1L]]
+      }
+      if (!identical(unname(newdata[[column]]), unname(expected))) {
+        stop(
+          "Stored prediction data must contain counterfactual grid blocks ",
+          "in grid order, with the same starting-profile order in every block.",
+          call. = FALSE
+        )
+      }
+    }
   } else {
     variables <- grid <- NULL
     n_cf <- n_each <- NULL

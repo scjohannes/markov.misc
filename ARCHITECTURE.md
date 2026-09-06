@@ -526,11 +526,23 @@ probabilities analytically and propagates the Jacobian with the Markov product
 rule: the next-state derivative contains both the derivative of current
 occupancy and the derivative of the transition probability. Absorbing-state
 probability and derivative mass are carried forward together.
+For VGLM, the fitted coefficient-map check uses VGAM's native
+`coef(model, matrix = TRUE)` expansion rather than the package's parallel
+implementation. Basis-vector regressions verify the entire linear map for
+transformed and interaction terms, constrained thresholds, and rescaled
+common-slope constraints; unsupported zero-column constraints still error.
 
 Fixed-profile SOPs retain the patient-by-time-by-state probability array and
 patient-by-time-by-state-by-raw-coefficient Jacobian. Averaged empirical targets
 instead average each counterfactual scenario inside the native recursion and
 retain only scenario-by-time-by-state probabilities and Jacobians.
+Before native averaging, stored counterfactual data must consist of contiguous
+blocks in `expand.grid()` scenario order. Every block must repeat the same
+starting profiles in the same order, with only counterfactual variables changed.
+The R boundary checks scenario values and all other columns, preserving column
+classes and dimensions. This protects both native block averaging and the
+patient alignment used by unconditional influences; point-estimate replay alone
+cannot detect all within-block profile permutations.
 Superpopulation targets additionally retain individual probabilities for the profile term, but
 never individual Jacobians. The delta memory preflight therefore counts the
 actual target-specific outputs plus the rolling probability/Jacobian workspace.
@@ -538,6 +550,16 @@ Crossed raw ordinal probabilities are errors in this path; they are not repaired
 by clipping before differentiation. Central finite differences and the former R
 recursion appear only in regression tests as independent derivative oracles.
 They are not production fallbacks.
+
+Logit-delta intervals return warned `NA` limits for exact zero/one estimates,
+regardless of the numerical standard error. The engine predicts the initial
+distribution before applying absorbing-state transitions and does not attach
+structural-boundary provenance. Absorbing transitions carry probability mass
+forward during prediction; observed rows after absorption need not be retained.
+Their deterministic transition rule does not make the probability of reaching
+the absorbing state certain. Explicit provenance would be needed if a
+future inference path introduced genuinely deterministic boundary cells. Wald
+intervals retain their identity-scale calculation.
 
 #### Empirical Covariance and Patient Influence
 
@@ -552,6 +574,14 @@ may lose dimnames for penalized fits or use `Design$mmcolnames` for spline
 terms; those two backend-owned forms
 are validated and relabeled to the raw coefficient order. Explicit user
 covariance matrices remain strictly name-matched.
+The ORM order contract is thresholds followed by the columns of the stored
+design matrix: `orm.fit()` uses the same `iname`/`xname` sequence for coefficients
+and information blocks. `infoMxop()` may drop labels when undoing predictor
+scaling, but does not permute those blocks. The ACI-06 regression in
+`tests/testthat/test-sops-delta-splines.R` checks transformed and interaction
+designs under both penalty-variance modes against a labeled, unscaled
+`rms::orm.fit()` information calculation at the same coefficients. Missing-label
+normalization remains limited to internally produced backend matrices.
 
 For `vcov = "unconditional"`, `R/sops-delta-superpopulation.R` aggregates raw
 transition-row scores by patient and combines them with patient-level profile

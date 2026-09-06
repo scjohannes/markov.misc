@@ -22,6 +22,12 @@
   interpolation matrices. Large comparison grids require substantially less
   working memory. Full `vcov()` output remains subject to the memory limit;
   use `rows` to extract smaller covariance blocks.
+- `inferences(method = "delta")` now reports warned `NA` logit confidence
+  limits for probabilities exactly zero or one, including when numerical
+  saturation produces a zero standard error. Wald intervals are unchanged.
+  Averaged inference now validates counterfactual scenario and patient ordering
+  before native averaging, and VGLM coefficient maps are checked against VGAM's
+  native coefficient expansion.
 - `inferences()` now supports deterministic analytical delta-method intervals
   for fixed individual first-order full proportional-odds ORM/VGLM SOPs,
   empirical and fitted-cohort superpopulation averages, and supported SOP or

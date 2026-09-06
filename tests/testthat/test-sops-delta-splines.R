@@ -162,6 +162,50 @@ test_that("backend orm spline covariance labels preserve coefficient order", {
   expect_match(conditionMessage(condition), "must be uniquely named")
 })
 
+test_that("unnamed orm bread preserves transformed and interaction coefficient order", {
+  data <- local_spline_delta_orm_case()$data
+  data$yprev_factor <- factor(data$yprev)
+  local_spline_delta_datadist(data)
+  formulas <- list(
+    y ~ rms::rcs(time, 3) * tx + rms::rcs(yprev, 4),
+    y ~ log(time + 1) * tx + yprev_factor
+  )
+
+  for (formula in formulas) {
+    for (variance in c("simple", "sandwich")) {
+      fit <- rms::orm(
+        formula,
+        data = data,
+        x = TRUE,
+        y = TRUE,
+        penalty = 0.1,
+        scale = TRUE,
+        var.penalty = variance
+      )
+      # Re-evaluate information without scaling so the backend retains labels.
+      reference <- rms::orm.fit(
+        x = fit$x,
+        y = fit$y,
+        initial = stats::coef(fit),
+        penalty.matrix = fit$penalty.matrix,
+        scale = FALSE,
+        maxit = 1,
+        compstats = FALSE
+      )
+      expect_equal(stats::coef(reference), stats::coef(fit), tolerance = 1e-12)
+      expected <- stats::vcov(reference, intercepts = "all")
+      coefficient_names <- names(stats::coef(fit))
+      expect_identical(rownames(expected), coefficient_names)
+      expect_identical(colnames(expected), coefficient_names)
+      expect_identical(
+        colnames(fit$x),
+        coefficient_names[-seq_len(fit$non.slopes)]
+      )
+      expect_equal(orm_model_bread(fit)$bread, expected, tolerance = 1e-8)
+    }
+  }
+})
+
 test_that("penalized orm previous-state splines support delta inference", {
   case <- local_spline_delta_orm_case()
   fit <- case$model

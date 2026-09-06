@@ -204,12 +204,12 @@ For every concern:
 | ACI-03 | High | Resolved | Penalized ORM superpopulation inference |
 | ACI-04 | High | Resolved | Zero-score profile sensitivity scaling |
 | ACI-05 | High | Resolved | Stored ORM robust covariance identity and correction metadata |
-| ACI-06 | Medium | Open | Unnamed penalized-ORM covariance relabeling |
-| ACI-07 | Medium | Open | VGLM raw-to-effective constraint mapping |
-| ACI-08 | Medium | Open | Structural boundary classification |
+| ACI-06 | Medium | Resolved | Unnamed penalized-ORM covariance relabeling |
+| ACI-07 | Medium | Resolved | VGLM raw-to-effective constraint mapping |
+| ACI-08 | Medium | Resolved | Structural boundary classification |
 | ACI-09 | Medium | Resolved | First-follow-up profiles and real-time integration conventions |
 | ACI-10 | Medium | Open | Memory accounting versus actual process memory |
-| ACI-11 | Medium | Open | Grouped native execution row-layout contract |
+| ACI-11 | Medium | Resolved | Grouped native execution row-layout contract |
 | ACI-12 | Medium | Resolved | Superpopulation `get_jacobian()` semantics |
 | ACI-13 | Medium | Open | `vcov()` dispatch for non-delta result objects |
 | ACI-14 | Medium | Resolved | Dense comparison and covariance materialization |
@@ -219,6 +219,7 @@ For every concern:
 | ACI-18 | High | Open | Independent superpopulation-inference validation oracle |
 | ACI-19 | Low | Resolved | Public target terminology and formal defaults |
 | ACI-20 | Low | Open | Generated native build artifacts in the worktree |
+| ACI-21 | Medium | Open | Explicit zero ORM penalty list handling |
 
 ### ACI-01: Superpopulation finite-sample normalization and fitted-cohort contract
 
@@ -389,7 +390,7 @@ For every concern:
 
 ### ACI-06: Unnamed penalized-ORM covariance relabeling
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-05)
 - **Priority:** Medium
 - **Current decision:** Internally produced ORM covariance matrices with missing
   dimnames are labeled in raw coefficient order. Known `Design$mmcolnames`
@@ -404,15 +405,37 @@ For every concern:
   columns, coefficient order, covariance order, and finite-difference
   Jacobians. Replace inferred relabeling with stronger backend metadata if
   available.
-- **Resolution log:** Pending.
+- **Resolution log:** Retained production code after source-contract review of
+  installed rms 8.1.1 and independent backend checks. `orm()` selects columns
+  by `Design$mmcolnames` and relabels them with `Design$colnames`; `orm.fit()`
+  uses `c(iname, xname)` for both coefficient names and information blocks.
+  `infoMxop()` can lose labels when undoing predictor scaling, without changing
+  that order. The metadata corroborates the current order; no additional
+  relabeling heuristic or covariance reconstruction is needed.
+  One compact regression in `tests/testthat/test-sops-delta-splines.R` reuses
+  the existing fixture for spline-by-treatment interactions and log-time plus
+  factor designs, each with `var.penalty = "simple"` and `"sandwich"`.
+  It compares the actual normalized inverse sensitivity against a labeled,
+  unscaled `rms::orm.fit()` information calculation, independently of the
+  normalization helper. Coefficients agree at `1e-12`, confirming evaluation
+  at the same fitted point, and covariance agrees at `1e-8`. Existing tests
+  retain explicit missing-name/alias cases, strict user-matrix rejection, and
+  finite-difference spline SOP Jacobians. The new test does not require rms to
+  keep dropping labels in future releases. `air format` and
+  `devtools::test(filter = "sops-delta-splines")` passed: 38 assertions,
+  no failures, warnings, or skips. Commands used the repository's `MAKEFLAGS`
+  and `LC_ALL=C` settings. Updated `ARCHITECTURE.md`; no public behavior or
+  production implementation changed. A separately discovered zero-penalty
+  input error is recorded under ACI-21.
 
 ### ACI-07: VGLM raw-to-effective constraint mapping
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-05)
 - **Priority:** Medium
 - **Current decision:** Construct the raw-to-effective map by concatenating
   VGAM constraint-matrix columns in term order and verify that the map
-  reconstructs fitted effective coefficients.
+  reconstructs fitted effective coefficients using VGAM's native
+  `coef(model, matrix = TRUE)` expansion.
 - **Concern:** The contract is correct for tested full-PO cumulative fits but may
   not cover unusual zero constraints, special terms, offsets, or future VGAM
   coefficient-order changes. Reproduction at the fitted coefficient vector is
@@ -421,24 +444,49 @@ For every concern:
   coefficient vectors, add constrained-formula fixtures, and document the exact
   VGAM constraint contract relied upon. Continue to fail explicitly outside
   verified structures.
-- **Resolution log:** Pending.
+- **Resolution log:** Installed VGAM 1.1.14 `coefvlm()` confirms raw coefficients
+  follow cumulative constraint-column counts in term order. Kept the map
+  algorithm and replaced the fitted reconstruction oracle: the old
+  `get_effective_coefs()` repeated our own mapping algorithm, while the new
+  check calls VGAM's native expansion. A compact basis-vector regression in
+  `tests/testthat/test-sops-delta-vglm-map.R` checks every raw coefficient for
+  spline-factor interactions, polynomial/reordered terms, equidistant
+  thresholds, and a negative non-unit common-slope constraint basis. It also
+  checks rejection of zero-column constraints. Existing offset, partial-PO,
+  and unsupported-scope checks remain unchanged. No dependency or mapping
+  abstraction was added. Focused map/core/superpopulation tests and the full
+  integrated test suite passed.
 
 ### ACI-08: Structural boundary classification
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-05)
 - **Priority:** Medium
-- **Current decision:** An SOP estimate exactly zero or one is treated as
-  structural when its delta standard error is at most
-  `sqrt(.Machine$double.eps)`; otherwise logit limits are returned as `NA` with a
-  warning.
-- **Concern:** This is a numerical heuristic. Logistic saturation can resemble
+- **Current decision:** Exact zero/one SOP estimates return warned `NA` logit
+  limits regardless of their numerical standard error. Wald intervals are
+  unchanged. No structural certainty is inferred without explicit provenance.
+- **Concern:** The previous SE threshold was a numerical heuristic. Logistic saturation can resemble
   a structural boundary, while accumulated floating-point derivative noise can
   obscure a genuinely structural absorbing-state probability.
-- **Resolution approach:** Propagate explicit structural-state metadata from the
-  SOP recursion and use it instead of an SE threshold. Add tests separating
-  absorbing-state structure, zero-probability design structure, and numerical
-  saturation.
-- **Resolution log:** Pending.
+- **Resolution approach:** Remove the SE heuristic and test numerical saturation
+  separately from absorbing transition structure. Require explicit provenance
+  if a deterministic-SOP path is introduced later.
+- **Resolution log:** Removed the tiny-SE heuristic after tracing native
+  initialization and absorbing transitions. The current engine predicts the
+  initial distribution from the model; absorbing transition rows carry mass
+  forward, but the probability of reaching an absorbing state is estimated.
+  These deterministic transition rows do not establish zero/one occupancy
+  probabilities. The user's observation convention drops or omits `y` after
+  absorption; no such rows need to be inserted. Automatic starting profiles
+  are restricted to patients represented in fitted likelihood rows.
+  Explicit structural metadata was not added because this inference path has
+  no corresponding deterministic-SOP producer. If such a path is introduced,
+  it must supply provenance rather than revive an SE heuristic.
+  `tests/testthat/test-sops-delta-boundaries.R` uses valid nonabsorbing starting
+  profiles, follows predicted absorption, and tests actual saturated individual
+  and averaged SOPs alongside zero/tiny/noisy-SE boundary inputs and unchanged
+  Wald calculations. Its 18 assertions and existing inference tests passed.
+  Updated the analytical-CI vignette, NEWS, and architecture; the full integrated
+  test suite passed.
 
 ### ACI-09: First-follow-up profiles and real-time integration conventions
 
@@ -575,17 +623,30 @@ For every concern:
 
 ### ACI-11: Grouped native execution row-layout contract
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-05)
 - **Priority:** Medium
 - **Current decision:** Counterfactual profiles are averaged in contiguous,
-  equal-sized scenario blocks produced by the current `avg_sops()` workflow.
+  equal-sized scenario blocks produced by `avg_sops()`. The R entry point now
+  validates grid order and identical starting-profile order in every block
+  before compiling the native plan.
 - **Concern:** The optimized native kernel is coupled to an internal row-ordering
-  contract. Strict point-estimate replay should detect a changed layout, but the
-  contract is not represented by an explicit grouping index.
-- **Resolution approach:** Document and test the layout contract directly.
-  Consider passing an explicit scenario/group index to native code so correct
-  grouping no longer depends on contiguity, then benchmark the cost.
-- **Resolution log:** Pending.
+  contract. Point-estimate replay alone can miss patient permutations that
+  preserve averages but misalign patient influence contributions.
+- **Resolution approach:** Validate, document, and test the existing layout
+  contract directly, without adding a redundant native grouping index.
+- **Resolution log:** Traced `create_counterfactual_data()` through native
+  block averaging and patient-influence reduction. Added one inline check of
+  scenario columns against repeated grid values and all other columns against
+  the first profile block. Row selection preserves column classes/dimensions,
+  including matrix-valued metadata. This rejects scenario interleaving, swapped
+  blocks, and differing patient permutations before computation, even where
+  averages alone cannot reveal incorrect influence alignment. A shared profile
+  permutation remains valid. Kept the existing native interface instead of
+  adding redundant group indices or reordering silently.
+  `tests/testthat/test-sops-delta-layout.R` verifies grouped-versus-ungrouped
+  probabilities/Jacobians, three invalid layouts, and common profile reversal,
+  including matrix-valued metadata. All six assertions and the full integrated
+  test suite passed.
 
 ### ACI-12: Superpopulation `get_jacobian()` semantics
 
@@ -777,6 +838,24 @@ For every concern:
   validation step before commits without hiding source or meaningful outputs.
 - **Resolution log:** Pending; the files are not part of commit `76c18c3`.
 
+### ACI-21: Explicit zero ORM penalty list handling
+
+- **Status:** Open (2026-09-05)
+- **Priority:** Medium
+- **Concern:** With an explicit `penalty = 0`, rms stores penalty settings as
+  a list while its penalty matrix contains only zeros. `orm_model_bread()` then
+  reaches `is.finite(penalty)` and errors because the input is a list. Omitting
+  the penalty works; a positive penalty avoids this branch via its nonzero
+  matrix. This is separate from covariance ordering.
+- **Evidence:** Reproduced during ACI-06 experiments using a fitted
+  `rms::orm(ordered(y) ~ rms::rcs(time, 3) * tx + yprev, penalty = 0, ...)`
+  and `orm_model_bread()`; the error is `default method not implemented for
+  type 'list'`.
+- **Resolution approach:** Check every penalty-detection caller, handle the
+  backend's penalty representation consistently, and add a small explicit-zero
+  regression. Preserve rejection of genuinely penalized unconditional inference.
+- **Resolution log:** Pending.
+
 ## Resolved Implementation Decisions
 
 These original implementation problems were corrected before the initial
@@ -887,3 +966,15 @@ issues.
   internal-only accessor contract. Removed the `get_jacobian()` export and
   public help, retained explicit `:::` inspection in the vignette, and verified
   the namespace boundary, focused delta tests, and analytical-CI vignette render.
+- Committed the ACI-12 changes in `7a8a86d`, then marked ACI-06 **Active**.
+  Resolved ACI-06 through installed-backend source review and a compact
+  independent covariance-order regression, with no production changes.
+  Recorded the separately reproduced explicit-zero-penalty error as ACI-21;
+  ACI-07 remains the next original open concern.
+- Reviewed ACI-07, ACI-08, and ACI-11 in parallel using subagents at the
+  user's request, then resolved them with native VGAM coefficient validation,
+  removal of the boundary-SE heuristic, and explicit scenario/profile-order
+  validation. Incorporated the observed-data convention that rows after
+  absorption are omitted. Full tests passed with the expected installed-only skip.
+  Package checking (tests run separately) passed with 0 errors, 0 warnings,
+  and the sole network-time verification note, including both vignette builds.

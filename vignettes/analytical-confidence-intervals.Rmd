@@ -222,9 +222,12 @@ incorrect proportional-odds restriction.
 
 For SOP probabilities, `conf_type = "auto"` selects componentwise logit-delta
 intervals. They remain inside $[0, 1]$, but they are not a simultaneous region
-for the probability simplex. Exact structural boundary cells with zero
-standard error receive degenerate intervals; a nonstructural boundary where the
-logit derivative is undefined is reported as `NA` with a warning.
+for the probability simplex. Estimates exactly equal to zero or one receive
+`NA` logit limits with a warning, even when their standard error is zero.
+Numerical saturation can otherwise look like certainty. Absorbing-state
+transition rows are deterministic, but the probability of reaching that state
+is estimated. Those transition rules therefore do not certify a zero/one SOP.
+The engine supplies no explicit structural-boundary provenance for its SOPs.
 
 `conf_type = "wald"` instead uses identity-scale normal intervals and may extend
 outside $[0, 1]$. Supported average comparisons always use Wald intervals;
