@@ -74,29 +74,33 @@ plot_sops(sop_ci, facet_var = "tx") +
 The default inference method remains `method = "mvn"`. For a deterministic
 first-order delta-method calculation, reuse the same averaged full
 proportional-odds SOP object (`sop`, created above by `avg_sops()`) and state the
-averaging target explicitly:
+variance estimate explicitly:
 
 ```r
-sop_empirical <- inferences(
+sop_conditional <- inferences(
   sop,
   method = "delta",
   vcov = "conditional"
 )
 
-sop_superpopulation <- inferences(
+sop_unconditional <- inferences(
   sop,
   method = "delta",
   vcov = "unconditional"
 )
 
-# Materialize only the covariance block needed downstream.
-V <- stats::vcov(sop_superpopulation, rows = 1:8)
+# Extract variances and covariances for the first eight estimates.
+V <- stats::vcov(sop_unconditional, rows = 1:8)
 ```
 
-The empirical target conditions on the observed standardization profiles. The
-superpopulation target treats the fitted cohort as sampled and combines profile
-variation with fitted-model score variation in a patient-level stacked influence
-function. `orm_markov(id_var = "id")` and `vglm_markov(id_var = "id")` preserve
+Conditional variance accounts for coefficient estimation while treating the
+patients' starting states and covariates used for prediction as given.
+Unconditional variance also accounts for which patients were sampled and their
+role in estimating those coefficients. It is the default for averaged results
+and requires the patients stored with the fitted model. Supplied `newdata`
+requires `vcov = "conditional"`. Both choices give the same point estimates.
+
+`orm_markov(id_var = "id")` and `vglm_markov(id_var = "id")` preserve
 one first-follow-up profile per fitted patient before response-driven row
 omission. `first_followup_time` selects that row only: for numeric time its
 `NULL` default resolves to 1, time 1 must exist, and values below 1 are rejected;
@@ -115,10 +119,9 @@ and `G` count only positive-weight represented rows and clusters. Independently,
 sandwich inside `markov.misc` from analytic ORM row scores and the full
 model-based bread, including fitted case weights. Penalized ORM fits using
 `var.penalty = "sandwich"` use the retained `var.from.info.matrix` inverse
-sensitivity as bread. These settings affect fixed and empirical coefficient
-covariance. Superpopulation inference instead uses
-unadjusted patient scores and model-based sensitivity in its stacked influence
-function, so it intentionally ignores backend HC1 and cluster adjustments.
+sensitivity as bread. These settings affect conditional analytical variance and MVN inference.
+Unconditional variance uses its own patient-level sample-covariance correction;
+`type` and `cadjust` do not change it.
 
 Use `orm_markov()`, `vglm_markov()`, or `blrm_markov()` for package model-based
 SOP and diagnostic workflows. Raw `rms`, `VGAM`, or `rmsb` fits do not carry the

@@ -341,7 +341,7 @@ test_that("grouped recursion retains only the required analytical state", {
     case$model,
     average_group_size = 4L
   )
-  superpopulation <- run_sop_delta_plan(
+  unconditional <- run_sop_delta_plan(
     plan,
     case$model,
     average_group_size = 4L,
@@ -375,11 +375,11 @@ test_that("grouped recursion retains only the required analytical state", {
     tolerance = 1e-15
   )
   expect_identical(
-    dim(superpopulation$individual_probabilities),
+    dim(unconditional$individual_probabilities),
     dim(full$probabilities)
   )
   expect_equal(
-    unname(superpopulation$individual_probabilities),
+    unname(unconditional$individual_probabilities),
     unname(full$probabilities),
     tolerance = 0
   )
@@ -390,14 +390,14 @@ test_that("grouped recursion retains only the required analytical state", {
     length(get_coef(case$model)),
     average_group_size = 4L
   )
-  superpopulation_bytes <- sop_delta_preflight(
+  unconditional_bytes <- sop_delta_preflight(
     plan,
     length(get_coef(case$model)),
     average_group_size = 4L,
     retain_individual_probabilities = TRUE
   )
-  expect_lt(grouped_bytes, superpopulation_bytes)
-  expect_lt(superpopulation_bytes, individual_bytes)
+  expect_lt(grouped_bytes, unconditional_bytes)
+  expect_lt(unconditional_bytes, individual_bytes)
 })
 
 test_that("analytical SOP validation rejects unsupported model structures", {

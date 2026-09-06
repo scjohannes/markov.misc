@@ -89,19 +89,20 @@ delta_weighted_sop_estimate <- function(
     y_levels = y_levels,
     absorb = absorb
   )
-  grid <- do.call(expand.grid, variables)
-  result <- marginalize_sops_array(
-    sops_array = probabilities,
-    grid = grid,
-    times = times,
-    y_levels = y_levels,
-    variables = variables,
-    n_cf = nrow(grid),
-    n_each = length(profile_weights),
-    weights = profile_weights,
-    newdata = prediction_data
+  n <- length(profile_weights)
+  unlist(
+    lapply(seq_len(nrow(do.call(expand.grid, variables))), function(i) {
+      rows <- (i - 1L) * n + seq_len(n)
+      as.vector(apply(
+        probabilities[rows, , , drop = FALSE],
+        c(2, 3),
+        function(x) {
+          stats::weighted.mean(x, profile_weights)
+        }
+      ))
+    }),
+    use.names = FALSE
   )
-  result$estimate
 }
 
 delta_weighted_refit_oracle <- function(
@@ -221,6 +222,7 @@ delta_weighted_refit_oracle <- function(
   influence_rows <- match(patient_ids, analytical$profile_ids)
 
   list(
+    inferred = inferred,
     numerical_coefficient = numerical_coefficient,
     expected_coefficient = expected_coefficient,
     numerical_sop = numerical_sop,
@@ -420,13 +422,11 @@ test_that("orm delta covariance recomputes after stored covariance mutation", {
   expect_equal(explicit$vcov, stored$vcov, tolerance = 1e-12)
 })
 
-test_that("vglm patient-weight refits validate stacked score orientation", {
+test_that("vglm patient-weight refits independently validate unconditional covariance", {
   fit <- local_delta_vglm_fit()
   fit_data <- attr(fit, "markov_data")
   profile_data <- attr(fit, "markov_starting_profile_data")
-  components <- get_delta_score_components(fit)
-  score_size <- rowSums(abs(components$scores))
-  patient_ids <- components$ids[order(score_size, decreasing = TRUE)[1:3]]
+  patient_ids <- as.character(profile_data$id)
 
   oracle <- delta_weighted_refit_oracle(
     model = fit,
@@ -457,15 +457,35 @@ test_that("vglm patient-weight refits validate stacked score orientation", {
     tolerance = 2e-3
   )
   expect_gt(max(abs(oracle$numerical_sop - oracle$profile_only_sop)), 1e-3)
+  # Each derivative changes fitting and averaging weights together. Using every
+  # patient checks the joint contribution, including cross-covariances, without
+  # constructing scores, sensitivity, or coefficient derivatives in the oracle.
+  n <- length(patient_ids)
+  centered <- sweep(oracle$numerical_sop, 2L, colMeans(oracle$numerical_sop))
+  covariance <- crossprod(centered) / (n * (n - 1))
+  expect_lt(
+    max(abs(stats::vcov(oracle$inferred) - covariance)) / max(abs(covariance)),
+    2e-3
+  )
+  expect_equal(
+    oracle$inferred$std.error,
+    sqrt(diag(covariance)),
+    tolerance = 2e-3
+  )
+  without_cross_term <- (stats::cov(oracle$profile_only_sop) +
+    stats::cov(oracle$numerical_sop - oracle$profile_only_sop)) /
+    n
+  expect_gt(
+    max(abs(covariance - without_cross_term)) / max(abs(covariance)),
+    2e-3
+  )
 })
 
-test_that("orm patient-weight refits validate stacked score orientation", {
+test_that("orm patient-weight refits independently validate unconditional covariance", {
   fit <- local_delta_orm_fit()
   fit_data <- attr(fit, "markov_data")
   profile_data <- attr(fit, "markov_starting_profile_data")
-  components <- get_delta_score_components(fit)
-  score_size <- rowSums(abs(components$scores))
-  patient_ids <- components$ids[order(score_size, decreasing = TRUE)[1:3]]
+  patient_ids <- as.character(profile_data$id)
 
   oracle <- delta_weighted_refit_oracle(
     model = fit,
@@ -495,9 +515,31 @@ test_that("orm patient-weight refits validate stacked score orientation", {
     tolerance = 2e-3
   )
   expect_gt(max(abs(oracle$numerical_sop - oracle$profile_only_sop)), 1e-3)
+  # Each derivative changes fitting and averaging weights together. Using every
+  # patient checks the joint contribution, including cross-covariances, without
+  # constructing scores, sensitivity, or coefficient derivatives in the oracle.
+  n <- length(patient_ids)
+  centered <- sweep(oracle$numerical_sop, 2L, colMeans(oracle$numerical_sop))
+  covariance <- crossprod(centered) / (n * (n - 1))
+  expect_lt(
+    max(abs(stats::vcov(oracle$inferred) - covariance)) / max(abs(covariance)),
+    2e-3
+  )
+  expect_equal(
+    oracle$inferred$std.error,
+    sqrt(diag(covariance)),
+    tolerance = 2e-3
+  )
+  without_cross_term <- (stats::cov(oracle$profile_only_sop) +
+    stats::cov(oracle$numerical_sop - oracle$profile_only_sop)) /
+    n
+  expect_gt(
+    max(abs(covariance - without_cross_term)) / max(abs(covariance)),
+    2e-3
+  )
 })
 
-test_that("superpopulation score machinery rejects partial proportional odds", {
+test_that("unconditional score machinery rejects partial proportional odds", {
   skip_if_not_installed("VGAM")
   data <- make_test_data(
     n_patients = 35,

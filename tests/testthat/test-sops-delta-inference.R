@@ -118,7 +118,7 @@ delta_public_orm_case <- local({
   }
 })
 
-delta_public_superpopulation_case <- local({
+delta_public_unconditional_case <- local({
   value <- NULL
   function() {
     skip_if_not_installed("VGAM")
@@ -510,7 +510,7 @@ test_that("public delta workflow returns bounded SOP and Wald comparison interva
   )
 })
 
-test_that("superpopulation targets reject explicit coefficient covariance", {
+test_that("unconditional targets reject explicit coefficient covariance", {
   object <- data.frame(
     estimand = "sop",
     time = 1,
@@ -531,7 +531,7 @@ test_that("superpopulation targets reject explicit coefficient covariance", {
   condition <- tryCatch(
     delta_validate_comparison_scope(
       object,
-      target = "superpopulation",
+      target = "unconditional",
       vcov = diag(1),
       conf_type = "wald"
     ),
@@ -633,8 +633,8 @@ test_that("public empirical ORM averages use complete named covariance", {
   expect_identical(attr(inferred, "covariance_source"), "explicit")
 })
 
-test_that("fitted-cohort superpopulation averages expose stacked influence", {
-  case <- delta_public_superpopulation_case()
+test_that("fitted-cohort unconditional averages expose stacked influence", {
+  case <- delta_public_unconditional_case()
   avg <- avg_sops(
     case$model,
     variables = list(tx = c(0, 1)),
@@ -690,7 +690,7 @@ test_that("fitted-cohort superpopulation averages expose stacked influence", {
     profile_ids = profile_ids,
     score_components = get_delta_score_components(
       case$model,
-      cluster = delta_superpopulation_cluster(NULL)
+      cluster = delta_unconditional_cluster(NULL)
     )
   )
   analytical <- attr(inferred, "analytical")
@@ -717,7 +717,7 @@ test_that("fitted-cohort superpopulation averages expose stacked influence", {
     ignore_attr = TRUE
   )
   expect_identical(analytical$profile_ids, profile_ids)
-  expect_identical(attr(inferred, "target"), "superpopulation")
+  expect_identical(attr(inferred, "target"), "unconditional")
   metadata <- attr(inferred, "covariance_metadata")
   expect_equal(attr(inferred, "covariance_source"), "stacked_patient_influence")
   expect_equal(metadata$n_patients, length(profile_ids))
@@ -729,8 +729,8 @@ test_that("fitted-cohort superpopulation averages expose stacked influence", {
   expect_equal(metadata$bread_source, "robcov_vglm_observed")
 })
 
-test_that("backend HC settings affect empirical but not superpopulation inference", {
-  case <- delta_public_superpopulation_case()
+test_that("backend HC settings affect empirical but not unconditional inference", {
+  case <- delta_public_unconditional_case()
   raw <- case$model$vglm_fit
   data <- case$data
   hc0 <- robcov_vglm(
@@ -818,13 +818,13 @@ test_that("public delta scope enforces fixed targets and patient clustering", {
     error = TRUE
   )
 
-  superpopulation_case <- delta_public_superpopulation_case()
+  unconditional_case <- delta_public_unconditional_case()
   avg <- avg_sops(
-    superpopulation_case$model,
+    unconditional_case$model,
     variables = list(tx = c(0, 1)),
     times = 1:2,
-    y_levels = superpopulation_case$y_levels,
-    absorb = max(superpopulation_case$y_levels)
+    y_levels = unconditional_case$y_levels,
+    absorb = max(unconditional_case$y_levels)
   )
   expect_snapshot(
     inferences(
@@ -840,16 +840,16 @@ test_that("public delta scope enforces fixed targets and patient clustering", {
   )
 
   supplied <- avg_sops(
-    superpopulation_case$model,
-    newdata = markov_validate_starting_profiles(superpopulation_case$model)[
+    unconditional_case$model,
+    newdata = markov_validate_starting_profiles(unconditional_case$model)[
       seq_len(5L),
       ,
       drop = FALSE
     ],
     variables = list(tx = c(0, 1)),
     times = 1:2,
-    y_levels = superpopulation_case$y_levels,
-    absorb = max(superpopulation_case$y_levels)
+    y_levels = unconditional_case$y_levels,
+    absorb = max(unconditional_case$y_levels)
   )
   expect_snapshot(
     inferences(supplied, method = "delta", vcov = "unconditional"),
@@ -873,7 +873,7 @@ test_that("logit delta intervals distinguish structural boundaries", {
 
 
 test_that("delta vcov choices preserve calculations and select class defaults", {
-  case <- delta_public_superpopulation_case()
+  case <- delta_public_unconditional_case()
   args <- list(
     model = case$model,
     variables = list(tx = c(0, 1)),
@@ -914,7 +914,7 @@ test_that("delta vcov choices preserve calculations and select class defaults", 
     expect_equal(inferences(object, method = "delta", vcov = NULL), explicit)
     expect_identical(
       attr(default, "target"),
-      if (individual) "fixed" else "superpopulation"
+      if (individual) "fixed" else "unconditional"
     )
   }
 })

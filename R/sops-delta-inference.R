@@ -30,7 +30,7 @@ delta_resolve_vcov <- function(object, vcov) {
     )
   }
   target <- if (identical(choice, "unconditional")) {
-    "superpopulation"
+    "unconditional"
   } else if (individual) {
     "fixed"
   } else {
@@ -56,7 +56,7 @@ delta_validate_target <- function(object, target) {
   }
 
   target <- target %||% "empirical"
-  if (!target %in% c("empirical", "superpopulation")) {
+  if (!target %in% c("empirical", "unconditional")) {
     stop(
       "Averaged delta inference supports `vcov = \"conditional\"`, ",
       "`vcov = \"unconditional\"`, or a coefficient covariance matrix.",
@@ -64,7 +64,7 @@ delta_validate_target <- function(object, target) {
     )
   }
   if (
-    identical(target, "superpopulation") &&
+    identical(target, "unconditional") &&
       isTRUE(attr(object, "newdata_supplied"))
   ) {
     stop(
@@ -258,14 +258,14 @@ delta_jacobian_variance <- function(jacobian, coefficient_vcov) {
   variance
 }
 
-delta_superpopulation_cluster <- function(cluster) {
+delta_unconditional_cluster <- function(cluster) {
   cluster
 }
 
 delta_profile_ids <- function(baseline_data, id_var) {
   if (is.null(id_var) || !id_var %in% names(baseline_data)) {
     stop(
-      "Superpopulation delta inference requires the stored starting-profile ",
+      "Unconditional delta inference requires the stored starting-profile ",
       "ID column.",
       call. = FALSE
     )
@@ -273,7 +273,7 @@ delta_profile_ids <- function(baseline_data, id_var) {
   ids <- as.character(baseline_data[[id_var]])
   if (anyNA(ids) || anyDuplicated(ids)) {
     stop(
-      "Superpopulation delta inference requires exactly one non-missing ",
+      "Unconditional delta inference requires exactly one non-missing ",
       "starting profile per fitted patient.",
       call. = FALSE
     )
@@ -281,7 +281,7 @@ delta_profile_ids <- function(baseline_data, id_var) {
   ids
 }
 
-delta_superpopulation_state <- function(
+delta_unconditional_state <- function(
   individual_values,
   average_jacobian,
   profile_ids,
@@ -307,7 +307,7 @@ delta_superpopulation_state <- function(
   standard_error <- stacked$std.error
   if (is.null(standard_error) || length(standard_error) != ncol(influence)) {
     if (nrow(influence) < 2L) {
-      stop("Superpopulation delta inference requires at least two patients.")
+      stop("Unconditional delta inference requires at least two patients.")
     }
     standard_error <- sqrt(diag(stats::cov(influence) / nrow(influence)))
   }
@@ -552,10 +552,10 @@ inferences_delta_sops <- function(
 ) {
   is_average <- inherits(object, "markov_avg_sops")
   target <- delta_validate_target(object, target)
-  if (identical(target, "superpopulation") && !is.null(vcov)) {
+  if (identical(target, "unconditional") && !is.null(vcov)) {
     stop(
       "A coefficient covariance matrix cannot be supplied for unconditional inference; ",
-      "superpopulation inference uses fitted-model score components and the ",
+      "unconditional inference uses fitted-model score components and the ",
       "stacked patient influence function.",
       call. = FALSE
     )
@@ -568,10 +568,10 @@ inferences_delta_sops <- function(
   call_args <- attr(object, "call_args")
   by <- if (is_average) avg_args$by else call_args$by %||% attr(object, "by")
   model_plan <- delta_validate_sop_scope(object, model, by)
-  score_components <- if (identical(target, "superpopulation")) {
+  score_components <- if (identical(target, "unconditional")) {
     get_delta_score_components(
       model = model,
-      cluster = delta_superpopulation_cluster(cluster)
+      cluster = delta_unconditional_cluster(cluster)
     )
   } else {
     NULL
@@ -627,7 +627,7 @@ inferences_delta_sops <- function(
       plan,
       model_plan,
       average_group_size = if (is_average) n_each else NULL,
-      retain_individual_probabilities = identical(target, "superpopulation")
+      retain_individual_probabilities = identical(target, "unconditional")
     ),
     n_profiles = if (is_average) n_cf else nrow(newdata),
     n_times = length(times),
@@ -680,10 +680,10 @@ inferences_delta_sops <- function(
   average_jacobian <- reduced$jacobian[index, , drop = FALSE]
   colnames(average_jacobian) <- engine_result$coefficient_names
 
-  if (identical(target, "superpopulation")) {
+  if (identical(target, "unconditional")) {
     if (is.null(reduced$individual_values)) {
       stop(
-        "Superpopulation analytical SOP inference lost individual ",
+        "Unconditional analytical SOP inference lost individual ",
         "probabilities."
       )
     }
@@ -691,7 +691,7 @@ inferences_delta_sops <- function(
     baseline_data <- newdata[seq_len(n_each), , drop = FALSE]
     id_var <- avg_args$id_var %||% attr(object, "id_var")
     profile_ids <- delta_profile_ids(baseline_data, id_var)
-    superpopulation <- delta_superpopulation_state(
+    unconditional <- delta_unconditional_state(
       individual_values = individual_values,
       average_jacobian = average_jacobian,
       profile_ids = profile_ids,
@@ -699,13 +699,13 @@ inferences_delta_sops <- function(
     )
     analytical <- list(
       representation = "influence",
-      average_jacobian = superpopulation$average_jacobian,
-      influence = superpopulation$influence,
+      average_jacobian = unconditional$average_jacobian,
+      influence = unconditional$influence,
       profile_ids = profile_ids,
       coefficient_names = colnames(average_jacobian),
-      covariance_metadata = superpopulation$metadata
+      covariance_metadata = unconditional$metadata
     )
-    standard_error <- superpopulation$std.error
+    standard_error <- unconditional$std.error
   } else {
     coefficient <- delta_coefficient_state(
       model,

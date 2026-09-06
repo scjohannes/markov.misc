@@ -250,7 +250,7 @@ test_that("penalized orm previous-state splines support delta inference", {
   )
 })
 
-test_that("superpopulation delta rejects weighted orm score construction", {
+test_that("unconditional delta rejects weighted orm score construction", {
   case <- local_spline_delta_orm_case()
   data <- case$data
   local_spline_delta_datadist(data)

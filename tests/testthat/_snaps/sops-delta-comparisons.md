@@ -6,7 +6,7 @@
       Error in `markov.misc:::delta_real_time_visit_weights()`:
       ! `baseline_time` must be earlier than the earliest mapped SOP time.
 
-# superpopulation comparisons retain transformed stacked influence
+# unconditional comparisons retain transformed stacked influence
 
     Code
       inferences(point, method = "delta", vcov = "unknown")

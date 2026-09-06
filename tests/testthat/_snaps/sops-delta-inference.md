@@ -12,7 +12,7 @@
       inferences(fixed, method = "delta", vcov = "conditional")
     Condition
       Error:
-      ! Analytical superpopulation inference requires patient clustering. Supply `cluster`, or fit with `orm_markov(..., id_var = ...)` or `vglm_markov(..., id_var = ...)` so row-aligned fitting data and patient-ID metadata are stored. Observation rows are not used as implicit clusters.
+      ! Analytical unconditional inference requires patient clustering. Supply `cluster`, or fit with `orm_markov(..., id_var = ...)` or `vglm_markov(..., id_var = ...)` so row-aligned fitting data and patient-ID metadata are stored. Observation rows are not used as implicit clusters.
 
 ---
 

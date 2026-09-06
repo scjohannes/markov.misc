@@ -41,10 +41,10 @@ delta_validate_comparison_scope <- function(
   }
 
   target <- delta_validate_target(object, target)
-  if (identical(target, "superpopulation") && !is.null(vcov)) {
+  if (identical(target, "unconditional") && !is.null(vcov)) {
     stop(
       "A coefficient covariance matrix cannot be supplied for unconditional inference; ",
-      "superpopulation inference uses fitted-model score components and the ",
+      "unconditional inference uses fitted-model score components and the ",
       "stacked patient influence function.",
       call. = FALSE
     )
@@ -309,7 +309,7 @@ delta_propagate_comparison_state <- function(avg, operator) {
   )
   n <- nrow(influence)
   if (n < 2L) {
-    stop("Superpopulation delta inference requires at least two patients.")
+    stop("Unconditional delta inference requires at least two patients.")
   }
   centered <- sweep(influence, 2L, colMeans(influence), "-")
   variance <- colSums(centered^2) / ((n - 1) * n)

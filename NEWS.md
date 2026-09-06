@@ -1,5 +1,9 @@
 # markov.misc 0.1.0
 
+- `inferences(method = "delta")` now uses `"unconditional"` consistently in
+  result metadata and error messages for variance that includes patient sampling.
+  Internal helper and test filenames use the same terminology.
+
 - `orm_markov()` and analytical inference now accept explicit `penalty = 0`
   without failing on rms's stored penalty list.
 - Model-based SOP and diagnostic workflows now require fits created by

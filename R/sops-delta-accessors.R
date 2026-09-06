@@ -152,7 +152,7 @@ delta_jacobian <- function(analytical) {
   jacobian
 }
 
-# Internal inspection helper: the superpopulation Jacobian contains only the
+# Internal inspection helper: the unconditional Jacobian contains only the
 # coefficient derivative, not the complete patient influence representation.
 get_jacobian <- function(x, rows = NULL) {
   analytical <- delta_analytical(x)
@@ -174,7 +174,7 @@ delta_vcov <- function(object, rows = NULL) {
     n <- nrow(analytical$influence)
     if (n < 2L) {
       stop(
-        "Superpopulation analytical covariance requires at least two patients."
+        "Unconditional analytical covariance requires at least two patients."
       )
     }
     required <- (as.double(n) * m + as.double(m) * m) * 8

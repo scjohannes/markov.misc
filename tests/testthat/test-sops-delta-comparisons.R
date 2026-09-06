@@ -376,7 +376,7 @@ test_that("delta real-time weights ignore unused time-map entries", {
   )
 })
 
-test_that("factor-time superpopulation differences use the replayed grid", {
+test_that("factor-time unconditional differences use the replayed grid", {
   case <- delta_comparison_factor_case()
   point <- delta_factor_time_point(case$fit, case)
   inferred <- inferences(
@@ -385,12 +385,12 @@ test_that("factor-time superpopulation differences use the replayed grid", {
     vcov = "unconditional"
   )
 
-  expect_identical(attr(inferred, "target"), "superpopulation")
+  expect_identical(attr(inferred, "target"), "unconditional")
   expect_equal(inferred$estimate, point$estimate, tolerance = 1e-12)
   expect_equal(sum(is.finite(inferred$std.error)), nrow(inferred))
 })
 
-test_that("superpopulation comparisons retain transformed stacked influence", {
+test_that("unconditional comparisons retain transformed stacked influence", {
   case <- delta_comparison_factor_case()
   point <- avg_comparisons(
     case$fit,

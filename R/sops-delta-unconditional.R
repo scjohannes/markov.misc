@@ -1,6 +1,6 @@
-# Patient-cluster covariance and superpopulation delta-method helpers.
+# Patient-cluster covariance and unconditional delta-method helpers.
 
-delta_superpopulation_coefficients <- function(model) {
+delta_unconditional_coefficients <- function(model) {
   beta <- get_coef(model)
   if (
     !is.numeric(beta) ||
@@ -20,7 +20,7 @@ delta_superpopulation_coefficients <- function(model) {
   beta
 }
 
-delta_superpopulation_model <- function(model) {
+delta_unconditional_model <- function(model) {
   if (inherits(model, "robcov_vglm")) {
     fit <- model$vglm_fit
     if (is.null(fit) || !inherits(fit, "vglm")) {
@@ -35,18 +35,18 @@ delta_superpopulation_model <- function(model) {
 }
 
 delta_validate_full_po_model <- function(model) {
-  fit <- delta_superpopulation_model(model)
+  fit <- delta_unconditional_model(model)
 
   if (inherits(fit, "blrm")) {
     stop(
-      "Analytical superpopulation inference supports only frequentist full ",
+      "Analytical unconditional inference supports only frequentist full ",
       "proportional-odds orm and vglm models; blrm models are not supported.",
       call. = FALSE
     )
   }
   if (!inherits(fit, c("orm", "vglm"))) {
     stop(
-      "Analytical superpopulation inference supports only full proportional-odds ",
+      "Analytical unconditional inference supports only full proportional-odds ",
       "orm and vglm models.",
       call. = FALSE
     )
@@ -185,7 +185,7 @@ delta_fitting_row_count <- function(model) {
     return(nrow(model$scores))
   }
 
-  fit <- delta_superpopulation_model(model)
+  fit <- delta_unconditional_model(model)
   if (inherits(fit, "vglm")) {
     return(as.integer(stats::nobs(fit, type = "lm")))
   }
@@ -208,14 +208,14 @@ delta_fitting_row_count <- function(model) {
   }
 
   stop(
-    "Analytical superpopulation inference supports only full proportional-odds ",
+    "Analytical unconditional inference supports only full proportional-odds ",
     "orm and vglm models.",
     call. = FALSE
   )
 }
 
 delta_align_explicit_cluster <- function(model, cluster, n_rows) {
-  fit <- delta_superpopulation_model(model)
+  fit <- delta_unconditional_model(model)
   if (inherits(fit, "vglm")) {
     return(align_cluster_vglm(fit, cluster, n_rows))
   }
@@ -263,7 +263,7 @@ delta_validate_cluster <- function(cluster, n_rows) {
   list(cluster = cluster, ids = ids)
 }
 
-# Resolve patient clusters for analytical superpopulation inference. Explicit
+# Resolve patient clusters for analytical unconditional inference. Explicit
 # row-level IDs take precedence; fitting rows are never implicit clusters.
 resolve_delta_cluster <- function(model, cluster = NULL) {
   delta_validate_full_po_model(model)
@@ -291,7 +291,7 @@ resolve_delta_cluster <- function(model, cluster = NULL) {
           call. = FALSE
         )
       }
-      fit <- delta_superpopulation_model(model)
+      fit <- delta_unconditional_model(model)
       data <- markov_align_model_data(data, fit)
       cluster <- data[[id_var]]
       source <- "explicit_formula"
@@ -311,7 +311,7 @@ resolve_delta_cluster <- function(model, cluster = NULL) {
         !is.data.frame(data)
     ) {
       stop(
-        "Analytical superpopulation inference requires patient clustering. ",
+        "Analytical unconditional inference requires patient clustering. ",
         "Supply ",
         "`cluster`, or fit with `orm_markov(..., id_var = ...)` or ",
         "`vglm_markov(..., id_var = ...)` so row-aligned fitting data and ",
@@ -328,7 +328,7 @@ resolve_delta_cluster <- function(model, cluster = NULL) {
         call. = FALSE
       )
     }
-    fit <- delta_superpopulation_model(model)
+    fit <- delta_unconditional_model(model)
     data <- markov_align_model_data(data, fit)
     cluster <- data[[id_var]]
     source <- "stored_id_var"
@@ -443,7 +443,7 @@ delta_orm_model_bread <- function(model, coefficient_names) {
   )
 }
 
-delta_reject_weighted_orm_superpopulation <- function(model) {
+delta_reject_weighted_orm_unconditional <- function(model) {
   weights <- model$weights
   if (
     is.null(weights) ||
@@ -454,7 +454,7 @@ delta_reject_weighted_orm_superpopulation <- function(model) {
   }
 
   stop(
-    "Superpopulation delta inference does not currently support orm fits with ",
+    "Unconditional delta inference does not currently support orm fits with ",
     "non-unit case weights because the required row score contributions ",
     "must incorporate those weights. Use `vcov = \"conditional\"` or refit ",
     "without case weights.",
@@ -462,7 +462,7 @@ delta_reject_weighted_orm_superpopulation <- function(model) {
   )
 }
 
-delta_reject_penalized_orm_superpopulation <- function(model) {
+delta_reject_penalized_orm_unconditional <- function(model) {
   penalty_matrix <- model$penalty.matrix
   penalty <- unlist(model$penalty, use.names = FALSE)
   penalized <-
@@ -477,7 +477,7 @@ delta_reject_penalized_orm_superpopulation <- function(model) {
   }
 
   stop(
-    "Superpopulation delta inference does not currently support penalized ",
+    "Unconditional delta inference does not currently support penalized ",
     "orm likelihoods because the patient scores and sensitivity have not ",
     "been shown to incorporate the penalty consistently. Ordinary spline ",
     "transformations remain supported with `vcov = \"conditional\"`.",
@@ -489,7 +489,7 @@ delta_reject_penalized_orm_superpopulation <- function(model) {
 # and otherwise using the backend's patient-cluster robust convention.
 get_delta_cluster_vcov <- function(model, cluster = NULL, vcov = NULL) {
   delta_validate_full_po_model(model)
-  beta <- delta_superpopulation_coefficients(model)
+  beta <- delta_unconditional_coefficients(model)
 
   if (!is.null(vcov)) {
     covariance <- delta_validate_named_matrix(
@@ -503,7 +503,7 @@ get_delta_cluster_vcov <- function(model, cluster = NULL, vcov = NULL) {
       metadata = list(
         source = "explicit",
         covariance = "user_supplied",
-        backend = class(delta_superpopulation_model(model))[[1L]],
+        backend = class(delta_unconditional_model(model))[[1L]],
         type = NA_character_,
         cadjust = NA,
         adjustment_factor = NA_real_,
@@ -515,7 +515,7 @@ get_delta_cluster_vcov <- function(model, cluster = NULL, vcov = NULL) {
   }
 
   cluster_info <- resolve_delta_cluster(model, cluster = cluster)
-  fit <- delta_superpopulation_model(model)
+  fit <- delta_unconditional_model(model)
 
   if (inherits(fit, "vglm")) {
     stored_cluster_matches <- inherits(model, "robcov_vglm") &&
@@ -650,11 +650,11 @@ delta_validate_scores <- function(scores, coefficient_names, n_rows) {
 # per-participant sensitivity for the stacked influence function.
 get_delta_score_components <- function(model, cluster = NULL) {
   delta_validate_full_po_model(model)
-  beta <- delta_superpopulation_coefficients(model)
-  fit <- delta_superpopulation_model(model)
+  beta <- delta_unconditional_coefficients(model)
+  fit <- delta_unconditional_model(model)
   if (inherits(fit, "orm")) {
-    delta_reject_weighted_orm_superpopulation(fit)
-    delta_reject_penalized_orm_superpopulation(fit)
+    delta_reject_weighted_orm_unconditional(fit)
+    delta_reject_penalized_orm_unconditional(fit)
   }
   cluster_info <- resolve_delta_cluster(model, cluster = cluster)
   n_rows <- cluster_info$metadata$n_rows
@@ -729,7 +729,7 @@ delta_validate_profile_matrix <- function(value, label) {
 }
 
 # Combine centered profile functionals and fitted-coefficient influence for the
-# fitted-cohort superpopulation target.
+# fitted-cohort unconditional target.
 delta_stacked_influence <- function(
   individual_values,
   average_jacobian,
@@ -746,7 +746,7 @@ delta_stacked_influence <- function(
 
   if (n < 2L) {
     stop(
-      "Stacked superpopulation inference requires at least two profiles.",
+      "Stacked unconditional inference requires at least two profiles.",
       call. = FALSE
     )
   }
@@ -804,7 +804,7 @@ delta_stacked_influence <- function(
       "Likelihood-score patients are absent from the target profiles: ",
       paste(utils::head(unmatched_scores, 5L), collapse = ", "),
       if (length(unmatched_scores) > 5L) " ..." else "",
-      ". Fitted-cohort superpopulation inference requires every score patient to ",
+      ". Fitted-cohort unconditional inference requires every score patient to ",
       "appear exactly once in `profile_ids`.",
       call. = FALSE
     )
@@ -814,7 +814,7 @@ delta_stacked_influence <- function(
       "Target-profile patients have no usable likelihood transition: ",
       paste(utils::head(unmatched_profiles, 5L), collapse = ", "),
       if (length(unmatched_profiles) > 5L) " ..." else "",
-      ". Superpopulation inference includes only fitted patients and does not ",
+      ". Unconditional inference includes only fitted patients and does not ",
       "insert zero patient-score rows.",
       call. = FALSE
     )
@@ -922,7 +922,7 @@ delta_stacked_influence <- function(
       list(
         source = "stacked_patient_influence",
         covariance_source = "stacked_patient_influence",
-        target = "superpopulation",
+        target = "unconditional",
         cohort = "fitted_patients_with_starting_profiles",
         covariance_convention = "sample_covariance_of_influence_divided_by_n",
         finite_sample_method = "patient_level_sample_covariance",

@@ -113,7 +113,7 @@ The package is organized by workflow stage rather than by model class.
 | Model fitting helpers | `R/markov-model-data.R`, `R/vglm_helpers.R`, `R/vgam_helpers.R`, `R/robcov_orm.R`, `R/robcov_vglm.R`, `R/mvn_helpers.R` | Fit package-aware Markov models, retain wrapper provenance, compute effective coefficients and package-owned robust covariance, and mutate coefficients for simulation draws. |
 | SOP API | `R/sops-api.R` | Public user entrypoints for individual and marginal SOPs. |
 | SOP engine | `R/sops-engine.R`, `R/sops-backends.R`, `R/sops-fast-path.R`, `R/sops-result-helpers.R` | Validate models, predict transition probabilities, run first- and second-order Markov recursions, reshape arrays to tidy objects. |
-| SOP inference | `R/sops-inference.R`, `R/sops-delta-core.R`, `R/sops-delta-superpopulation.R`, `R/sops-delta-inference.R`, `R/sops-delta-accessors.R`, `R/sops-delta-comparisons.R`, `R/sops-inference-draws.R`, `R/sops-draws.R`, `R/sops-score-bootstrap.R`, `R/sops-bootstrap-inference.R`, `R/sops-comparisons-inference.R` | Compute deterministic first-order delta intervals or uncertainty intervals from MVN coefficient draws, posterior draws, score bootstrap draws, ordinary refit bootstrap samples, or fractional weighted refits. |
+| SOP inference | `R/sops-inference.R`, `R/sops-delta-core.R`, `R/sops-delta-unconditional.R`, `R/sops-delta-inference.R`, `R/sops-delta-accessors.R`, `R/sops-delta-comparisons.R`, `R/sops-inference-draws.R`, `R/sops-draws.R`, `R/sops-score-bootstrap.R`, `R/sops-bootstrap-inference.R`, `R/sops-comparisons-inference.R` | Compute deterministic first-order delta intervals or uncertainty intervals from MVN coefficient draws, posterior draws, score bootstrap draws, ordinary refit bootstrap samples, or fractional weighted refits. |
 | Bootstrap infrastructure | `R/bootstrap_helpers.R`, `R/bootstrap-coefs.R`, `R/bootstrap-tidy.R` | Memory-efficient group bootstrap sampling, fractional weighted bootstrap weights, just-in-time materialization, model refitting, and bootstrap coefficient summaries. |
 | Endpoint summaries | `R/endpoint-summaries.R`, `R/endpoint-tte.R`, `R/competing-risks.R`, `R/sops-time-in-state.R`, `R/sops-interpolate.R`, `R/sops-comparisons.R`, `R/sops-comparisons-setup.R`, `R/sops-comparisons-reduce.R` | Convert trajectories or SOPs to days-at-home, time-to-event, competing-risk, real-time interpolation, time-in-state summaries, and average counterfactual comparisons. |
 | Operating characteristics | `R/power.R` | Sample from Arrow superpopulations, run iteration-level analyses, summarize power, type I error, bias, coverage, and Monte Carlo error. |
@@ -478,7 +478,9 @@ The dispatcher resolves `vcov` through `delta_resolve_vcov()` before calling the
 analytical handlers. `NULL` selects the class default; a named coefficient
 covariance matrix selects conditional inference. Character choices are valid
 only for delta inference. The public `target` argument has been removed, while
-internal `fixed`, `empirical`, and `superpopulation` metadata labels remain.
+internal `fixed` and `empirical` labels distinguish individual and averaged
+conditional calculations. The `unconditional` label is used consistently in
+metadata, helper names, error messages, and filenames.
 Comparison inference passes the resolved target and matrix directly to the SOP
 handler so replay cannot accidentally change the selected calculation.
 
@@ -510,7 +512,7 @@ flowchart TD
   REDUCE --> EMP{"Target representation"}
   EMP -- "fixed individual / empirical average" --> COV["Patient-cluster coefficient covariance"]
   COV --> COEF["Store J and V"]
-  EMP -- "fitted-cohort superpopulation" --> SCORE["Aggregate likelihood scores by patient"]
+  EMP -- "fitted-cohort unconditional" --> SCORE["Aggregate likelihood scores by patient"]
   SCORE --> IF["Centered profile term + coefficient influence"]
   IF --> INFL["Store average J and patient influence matrix"]
   COEF --> OP["Optional supported comparison operator L"]
@@ -546,7 +548,7 @@ The R boundary checks scenario values and all other columns, preserving column
 classes and dimensions. This protects both native block averaging and the
 patient alignment used by unconditional influences; point-estimate replay alone
 cannot detect all within-block profile permutations.
-Superpopulation targets additionally retain individual probabilities for the profile term, but
+Unconditional targets additionally retain individual probabilities for the profile term, but
 never individual Jacobians. The delta memory preflight therefore counts the
 actual target-specific outputs plus the rolling probability/Jacobian workspace.
 Crossed raw ordinal probabilities are errors in this path; they are not repaired
@@ -586,7 +588,7 @@ designs under both penalty-variance modes against a labeled, unscaled
 `rms::orm.fit()` information calculation at the same coefficients. Missing-label
 normalization remains limited to internally produced backend matrices.
 
-For `vcov = "unconditional"`, `R/sops-delta-superpopulation.R` aggregates raw
+For `vcov = "unconditional"`, `R/sops-delta-unconditional.R` aggregates raw
 transition-row scores by patient and combines them with patient-level profile
 functionals. If `h_i` is the vector of counterfactual SOP cells for patient
 `i`, `G` is the average raw-coefficient Jacobian, `s_i` is the patient score,
@@ -601,22 +603,30 @@ profile; no zero scores or sensitivity-ratio scaling are inserted. A custom
 coefficient covariance is not accepted for this target because it cannot supply
 the joint score/profile cross-covariance. Backend VGLM HC/cadjust choices affect
 empirical coefficient propagation but are intentionally ignored by this stacked
-superpopulation covariance; their ignored values and the bread source are
+unconditional covariance; their ignored values and the bread source are
 reported in metadata.
 
-The positive score orientation and sensitivity scale are independently checked
-in `tests/testthat/test-sops-delta-superpopulation.R`. The validation perturbs
-all likelihood-row weights and the starting-profile averaging weight for one
-patient, performs symmetric full ORM or VGLM refits, and numerically
-differentiates both the coefficients and the complete weighted SOP functional.
-Multiplying the weight derivative by the cohort size recovers `Ainv %*% s_i`
-and the complete stacked influence, respectively. Because this oracle uses
-backend refits and direct weighted averaging, it does not reuse the production
-one-step score/Jacobian construction. The VGLM oracle uses tighter convergence
-and a larger finite-difference step than the ORM oracle to keep optimizer noise
-below the comparison tolerance.
+Unconditional variance is independently checked in
+`tests/testthat/test-sops-delta-unconditional.R` by changing each patient's
+weight in both model fitting and prediction averaging. For every patient in
+35-patient ORM and VGLM examples, the test performs two full backend refits,
+with weights slightly above and below one, then averages predictions using
+base R `weighted.mean()`. The change in the average estimates supplies a
+numerical patient contribution without using analytical scores, sensitivity,
+or coefficient derivatives to construct that contribution. Ordinary point
+prediction is shared with the package; its derivatives are checked separately.
 
-Weighted ORM fits are rejected for the fitted-cohort superpopulation target
+The centered crossproduct of all numerical contributions, divided by
+`n * (n - 1)`, is compared with the complete public `vcov()` result, and its
+standard errors with those from `inferences()`. Maximum covariance error must
+be less than 0.2% of the largest reference covariance magnitude. The examples
+also verify that omitting the cross-term between patient sampling and
+coefficient estimation changes covariance by more than that tolerance.
+This checks the final patient-count correction and off-diagonal covariances,
+not just selected patient contributions. VGLM refits use tighter convergence
+to limit optimizer noise.
+
+Weighted ORM fits are rejected for the fitted-cohort unconditional target
 because the stacked score/sensitivity contract for weighted estimating
 equations has not been established. The package-owned empirical sandwich does
 apply fitted case weights to analytic ORM row scores. Penalized ORM fits
@@ -681,7 +691,7 @@ the SOP recursion itself has been differentiated.
 
 The implemented analytical scope is first-order, full proportional odds,
 reverse cumulative logit, and frequentist `orm`, `vglm`, or `robcov_vglm`.
-Individual SOPs, empirical average SOPs, fitted-cohort superpopulation average SOPs,
+Individual SOPs, empirical average SOPs, fitted-cohort unconditional average SOPs,
 and difference comparisons for `estimand = "sop"` or
 `estimand = "time_in_state"` are supported. Analytical comparison intervals
 are Wald intervals. Ratios, `time_benefit`, `by`-stratum inference, partial or
@@ -822,7 +832,7 @@ and-slope scale. It obtains the model-based covariance from a valid `orig.var`
 or `stats::vcov(..., intercepts = "all")`; penalized fits requesting
 `var.penalty = "sandwich"` instead use their retained
 `var.from.info.matrix` inverse sensitivity. Penalty detection flattens rms's
-numeric/list settings in both bread selection and the superpopulation guard;
+numeric/list settings in both bread selection and the unconditional guard;
 explicit zero penalties therefore follow the unpenalized path.
 It multiplies analytic row scores
 by fitted case weights, aggregates them by patient, and forms the sandwich as
@@ -1253,7 +1263,7 @@ Important validation checks include:
 - Analytical covariance requires the complete named raw-coefficient scale.
   Patient clustering is resolved explicitly or from stored fitting data plus
   `id_var`; observation rows are never an implicit independence unit.
-- Fitted-cohort superpopulation inference rejects user-supplied `newdata`, custom
+- Fitted-cohort unconditional inference rejects user-supplied `newdata`, custom
   coefficient covariance, profile-only patients, and unmatched score/profile
   IDs. A missing first transition response is allowed when the first-follow-up
   predictors are complete and the patient contributes a later likelihood row.
@@ -1311,16 +1321,16 @@ Analytical inference has three focused test boundaries:
   central finite differences used only as a test oracle, for ORM and VGLM raw
   coefficients, factor visits, absorbing states, invalid structures, crossed
   probabilities, and allocation limits.
-- `test-sops-delta-superpopulation.R` checks patient cluster resolution, backend
+- `test-sops-delta-unconditional.R` checks patient cluster resolution, backend
   covariance conventions, row-score aggregation, exact score/profile alignment,
   profile-only rejection, and the finite-sample cross term in the stacked
   influence function.
 - `test-sops-delta-inference.R` checks public dispatch, interval defaults,
   linear SOP and real-time time-in-state comparison operators, low-rank
-  accessors, and superpopulation/custom-covariance errors.
+  accessors, and unconditional/custom-covariance errors.
 - `test-sops-delta-splines.R` checks penalized ORM spline covariance aliases,
   exact coefficient order, native-versus-R recursion, public finite-difference
-  Jacobians, and weighted/penalized ORM superpopulation rejection.
+  Jacobians, and weighted/penalized ORM unconditional rejection.
 
 MVN and bootstrap methods remain useful alternative inferential procedures;
 numerical agreement with their nonlinear draws is not a validation requirement
@@ -1403,7 +1413,7 @@ Useful regression themes include:
 - MVN, score-bootstrap, posterior, standard refit-bootstrap, and FWB refit
   inference paths.
 - Analytical raw-coefficient Jacobians, patient-cluster covariance, stacked
-  superpopulation influence functions, low-rank covariance access, and supported
+  unconditional influence functions, low-rank covariance access, and supported
   linear comparison operators.
 - Draw extraction, interpolation, and time-in-state integration.
 - Missing-state bootstrap samples and mapping back to original state labels.
@@ -1479,7 +1489,7 @@ patchwork object when `combine = TRUE` and a named ggplot list otherwise.
 | `R/viz-helpers.R` | shared ggplot helpers | Common plotting validation, faceting, and default discrete scales. |
 | `R/sops-inference.R` | `inferences()`, `inferences_simulation()` | Main inference dispatcher and coefficient-draw replay. |
 | `R/sops-delta-core.R` | `get_effective_coef_map()`, `run_sop_delta_plan()`, `compile_and_run_sop_delta()` | Analytic first-order full-PO category derivatives and SOP Jacobian recursion on the complete raw-coefficient scale. |
-| `R/sops-delta-superpopulation.R` | `resolve_delta_cluster()`, `get_delta_cluster_vcov()`, `get_delta_score_components()`, `delta_stacked_influence()` | Patient-cluster covariance resolution and fitted-cohort superpopulation influence construction. |
+| `R/sops-delta-unconditional.R` | `resolve_delta_cluster()`, `get_delta_cluster_vcov()`, `get_delta_score_components()`, `delta_stacked_influence()` | Patient-cluster covariance resolution and fitted-cohort unconditional influence construction. |
 | `R/sops-delta-inference.R` | `inferences_delta_sops()`, `delta_finalize_result()` | Analytical SOP dispatch, target reduction, intervals, and factorized result state. |
 | `R/sops-delta-accessors.R` | `get_jacobian()`, `vcov.markov_sops()`, `vcov.markov_avg_sops()`, `vcov.markov_avg_comparisons()` | Selected Jacobian and covariance materialization from analytical state. |
 | `R/sops-delta-comparisons.R` | `inferences_delta_comparisons()`, `delta_comparison_operator()` | Linear propagation for SOP and time-in-state differences, including real-time interpolation and trapezoidal integration. |
@@ -1518,5 +1528,5 @@ patchwork object when `combine = TRUE` and a named ggplot list otherwise.
 | Real-time interpolation | Mapping visit-index SOPs to elapsed time and interpolating probabilities for AUC/time-in-state summaries. |
 | Analytical delta method | First-order propagation of the fitted raw-coefficient covariance or patient influence through an analytic SOP Jacobian. |
 | Empirical target | An average over the observed standardization profiles, conditional on those profiles. |
-| Superpopulation target | A fitted-cohort average whose profile distribution is treated as sampled and enters the stacked influence function. |
+| Unconditional target | A fitted-cohort average whose profile distribution is treated as sampled and enters the stacked influence function. |
 | Stacked influence function | Patient-level sum of the centered profile functional and coefficient-estimation influence, retaining their covariance. |

@@ -21,7 +21,7 @@ the post-implementation concerns that will be investigated one at a time.
   coefficient covariance.
 - For averaged objects, treat `vcov = "conditional"` as conditional on the
   observed standardization profiles. Treat `vcov = "unconditional"` as a
-  fitted-cohort superpopulation target and use a stacked patient influence
+  fitted-cohort unconditional target and use a stacked patient influence
   function that retains profile/model-score covariance. Averaged results default
   to unconditional inference. Individual `sops()` defaults to conditional and
   rejects unconditional inference. A coefficient matrix selects conditional
@@ -75,7 +75,7 @@ bias, informative missingness, or Markov/proportional-odds misspecification.
   `markov.misc.delta_max_bytes` and the typed
   `markov_misc_delta_too_large` condition.
 
-### Covariance and Superpopulation Targets
+### Covariance and Unconditional Targets
 
 - [x] Validate complete named, finite, symmetric, positive-semidefinite custom
   covariance matrices for coefficient-form targets.
@@ -92,12 +92,12 @@ bias, informative missingness, or Markov/proportional-odds misspecification.
   `stats::cov(influence) / n` with the finite-sample convention reported in
   metadata.
 - [x] Reject custom covariance and user-supplied external profiles for the
-  superpopulation target.
+  unconditional target.
 
 ### Result Access and Comparisons
 
 - [x] Store coefficient-form analytical state as `J` plus coefficient `V`.
-- [x] Store superpopulation-form analytical state as average `J` plus the
+- [x] Store unconditional-form analytical state as average `J` plus the
   patient influence matrix.
 - [x] Add row-selective `get_jacobian()` and S3 `vcov()` methods without storing
   a dense all-cell covariance.
@@ -110,7 +110,7 @@ bias, informative missingness, or Markov/proportional-odds misspecification.
 
 - [x] Add focused core tests for ORM/VGLM derivatives, absorbing states, factor
   visits, validation conditions, and allocation guards.
-- [x] Add focused superpopulation tests for cluster resolution, covariance
+- [x] Add focused unconditional tests for cluster resolution, covariance
   conventions, exact score/profile alignment, profile-only exclusion, and the
   stacked cross term.
 - [x] Add focused public/accessor/comparison tests for dispatch, interval
@@ -130,7 +130,7 @@ bias, informative missingness, or Markov/proportional-odds misspecification.
 - First-order Markov recursion.
 - Full proportional odds with reverse cumulative logit.
 - Frequentist `orm`, `vglm`, and `robcov_vglm` backends.
-- Individual SOPs, empirical average SOPs, and fitted-cohort superpopulation
+- Individual SOPs, empirical average SOPs, and fitted-cohort unconditional
   average SOPs.
 - Difference comparisons for `estimand = "sop"` and
   `estimand = "time_in_state"`.
@@ -199,9 +199,9 @@ For every concern:
 
 | ID | Priority | Status | Concern |
 | --- | --- | --- | --- |
-| ACI-01 | High | Resolved | Superpopulation finite-sample normalization and fitted-cohort contract |
-| ACI-02 | High | Resolved | Superpopulation score orientation and cross-term scaling |
-| ACI-03 | High | Resolved | Penalized ORM superpopulation inference |
+| ACI-01 | High | Resolved | Unconditional finite-sample normalization and fitted-cohort contract |
+| ACI-02 | High | Resolved | Unconditional score orientation and cross-term scaling |
+| ACI-03 | High | Resolved | Penalized ORM unconditional inference |
 | ACI-04 | High | Resolved | Zero-score profile sensitivity scaling |
 | ACI-05 | High | Resolved | Stored ORM robust covariance identity and correction metadata |
 | ACI-06 | Medium | Resolved | Unnamed penalized-ORM covariance relabeling |
@@ -210,22 +210,22 @@ For every concern:
 | ACI-09 | Medium | Resolved | First-follow-up profiles and real-time integration conventions |
 | ACI-10 | Medium | Open | Memory accounting versus actual process memory |
 | ACI-11 | Medium | Resolved | Grouped native execution row-layout contract |
-| ACI-12 | Medium | Resolved | Superpopulation `get_jacobian()` semantics |
+| ACI-12 | Medium | Resolved | Unconditional `get_jacobian()` semantics |
 | ACI-13 | Medium | Resolved | `vcov()` dispatch for non-delta result objects |
 | ACI-14 | Medium | Resolved | Dense comparison and covariance materialization |
 | ACI-15 | Medium | Open | Numerical validation tolerances and portability |
 | ACI-16 | Medium | Open | Native C++ maintenance and semantic parity |
 | ACI-17 | Low | Open | Performance benchmark generalizability |
-| ACI-18 | High | Open | Independent superpopulation-inference validation oracle |
+| ACI-18 | High | Resolved | Independent validation of unconditional variance |
 | ACI-19 | Low | Resolved | Public target terminology and formal defaults |
 | ACI-20 | Low | Resolved | Generated native build artifacts in the worktree |
 | ACI-21 | Medium | Resolved | Explicit zero ORM penalty list handling |
 
-### ACI-01: Superpopulation finite-sample normalization and fitted-cohort contract
+### ACI-01: Unconditional finite-sample normalization and fitted-cohort contract
 
 - **Status:** Resolved on 2026-07-19
 - **Priority:** High
-- **Current decision:** Superpopulation covariance is
+- **Current decision:** Unconditional covariance is
   `stats::cov(influence) / n`. Because `stats::cov()` uses denominator `n - 1`,
   this is the manuscript's patient-level sample-covariance correction,
   `n / (n - 1)`, relative to the centered patient-level HC0 expression. Do not
@@ -252,7 +252,7 @@ For every concern:
   data; fixed user `newdata` remains empirical-only; `refit_data` remains solely
   refitting infrastructure. The implementation removes profile-only zero scores
   and sensitivity-ratio scaling, rejects penalized or weighted ORM
-  superpopulation inference before Jacobian allocation, exposes the covariance
+  unconditional inference before Jacobian allocation, exposes the covariance
   convention and ignored backend HC settings in metadata, and retains
   `stats::cov(phi) / n`. Work began after checkpoint commit `7b04ff6`.
   `air format .`, focused analytical/profile tests, the complete test suite, and
@@ -261,7 +261,7 @@ For every concern:
   `devtools::check()` completed with 0 errors and 0 warnings; its sole note was
   the isolated environment's inability to verify the current network time.
 
-### ACI-02: Superpopulation score orientation and cross-term scaling
+### ACI-02: Unconditional score orientation and cross-term scaling
 
 - **Status:** Resolved on 2026-07-22
 - **Priority:** High
@@ -294,19 +294,19 @@ For every concern:
   patient-level aggregation of repeated transition rows. The oracle uses full
   backend refits and weighted profile averaging rather than the production
   one-step score/Jacobian formula. No production formula change was required.
-  `air format .`, the focused superpopulation tests, and the complete test suite
+  `air format .`, the focused unconditional tests, and the complete test suite
   passed. The factor-time vignette's comparison object was renamed consistently
   to `cmp_days` after the first check exposed its stale `cmp_days_point` name;
   the vignette then rendered successfully. A final `devtools::check()` including
   two complete vignette builds finished with 0 errors, 0 warnings, and the sole
   environment note that the current time could not be verified.
 
-### ACI-03: Penalized ORM superpopulation inference
+### ACI-03: Penalized ORM unconditional inference
 
 - **Status:** Resolved on 2026-07-19
 - **Priority:** High
 - **Current decision:** Empirical inference supports penalized ORM fits.
-  Superpopulation inference deliberately rejects penalized ORM fits before
+  Unconditional inference deliberately rejects penalized ORM fits before
   allocating the analytical Jacobian. Supporting this combination is not part
   of the current analytical-CI contract.
 - **Concern:** The reconstructed patient contributions are unpenalized
@@ -317,11 +317,11 @@ For every concern:
 - **Resolution approach:** Retain an explicit, informative early error for
   `vcov = "unconditional"` with a penalized ORM fit. Preserve empirical
   inference because it propagates the fitted coefficient covariance through
-  the SOP Jacobian and does not require reconstructing the superpopulation
+  the SOP Jacobian and does not require reconstructing the unconditional
   score/sensitivity system.
 - **Resolution log:** The rejection is an intentional scope decision, not a
   temporary fallback. Regression tests verify that empirical delta inference
-  remains available for penalized ORM fits and that superpopulation inference
+  remains available for penalized ORM fits and that unconditional inference
   fails before the potentially large Jacobian allocation. The
   `many-levels-previous-state-spline` vignette exercises the supported empirical
   path.
@@ -454,7 +454,7 @@ For every concern:
   thresholds, and a negative non-unit common-slope constraint basis. It also
   checks rejection of zero-column constraints. Existing offset, partial-PO,
   and unsupported-scope checks remain unchanged. No dependency or mapping
-  abstraction was added. Focused map/core/superpopulation tests and the full
+  abstraction was added. Focused map/core/unconditional tests and the full
   integrated test suite passed.
 
 ### ACI-08: Structural boundary classification
@@ -581,7 +581,7 @@ For every concern:
   interval, explicit inclusion when requested, `baseline_time = NULL`, invalid
   anchor ordering, duplicate mapped times, and fixed `newdata`. Repeat these for
   point estimates, simulation/bootstrap/posterior draws, empirical delta
-  inference, and supported superpopulation differences. Require the renamed API
+  inference, and supported unconditional differences. Require the renamed API
   to reproduce current valid `origin_time = 0` estimates exactly when the same
   `target_times` are explicit; test the intentional no-`target_times` default
   change separately. Then run `air format .`, focused tests, the full suite,
@@ -648,20 +648,20 @@ For every concern:
   including matrix-valued metadata. All six assertions and the full integrated
   test suite passed.
 
-### ACI-12: Superpopulation `get_jacobian()` semantics
+### ACI-12: Unconditional `get_jacobian()` semantics
 
 - **Status:** Resolved (2026-09-05)
 - **Priority:** Medium
 - **Current decision:** `get_jacobian()` is an unexported inspection helper.
-  For a superpopulation target, it returns `G`,
+  For a unconditional target, it returns `G`,
   the average derivative with respect to model coefficients. Profile-distribution
   variation remains available only through the stored influence representation
   and `vcov()`.
 - **Concern:** The name `get_jacobian()` may suggest that the returned matrix
-  fully represents superpopulation uncertainty, which it does not.
+  fully represents unconditional uncertainty, which it does not.
 - **Resolution approach:** Assess likely downstream usage. Either retain the
   contract with stronger naming/documentation and metadata, add a separate
-  influence accessor, or reject `get_jacobian()` for superpopulation targets if
+  influence accessor, or reject `get_jacobian()` for unconditional targets if
   the partial interpretation is too easy to misuse.
 - **Resolution log:** Adopted the user's internal-only contract rather than
   extending the public API. Removed the export, public help topic, README
@@ -799,22 +799,30 @@ For every concern:
   break-even regions rather than a single general speedup claim.
 - **Resolution log:** Pending.
 
-### ACI-18: Independent superpopulation-inference validation oracle
+### ACI-18: Independent validation of unconditional variance
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-06)
 - **Priority:** High
-- **Current decision:** Validate recursive Jacobians against central finite
-  differences and superpopulation covariance against hand calculations of the
-  approved stacked influence formula. Do not require close MVN/bootstrap
-  agreement.
-- **Concern:** Finite differences validate `G`, but the superpopulation hand tests
-  reproduce the same score/sensitivity formula as production code. This leaves
-  no fully independent oracle for the complete stacked influence calculation.
-- **Resolution approach:** Implement a small, deliberately slow test-only
-  estimating-equation perturbation or symbolic example that is independent of
-  production helpers. Use bootstrap or simulation only for qualitative
-  diagnostics, not as a close-agreement acceptance criterion.
-- **Resolution log:** Pending.
+- **Concern:** Hand calculations repeating the production variance formula do
+  not independently verify the complete calculation. Earlier weighted-refit
+  tests checked only three patients per model and not the final covariance.
+- **Resolution:** Extended the existing weighted-refit tests to all 35 patients
+  for both ORM and VGLM. Each patient receives slightly increased and decreased
+  weights in full backend refits and in prediction averaging. Numerical changes
+  in the resulting averages provide patient contributions independently of the
+  production score, sensitivity, and coefficient-derivative calculation.
+  Averaging uses base R `weighted.mean()` instead of the package averaging
+  helper. Ordinary point predictions remain shared; separate derivative tests
+  cover their calculation.
+- **Evidence:** The centered crossproduct of all numerical contributions,
+  divided by `n * (n - 1)`, matches public `vcov()` output with maximum error
+  below 0.2% of the largest reference covariance magnitude. Standard errors
+  also agree. Both examples detect omission of the cross-term between patient
+  sampling and coefficient estimation at that tolerance. No production bug
+  was found and no production code change was needed.
+- **Validation:** `devtools::test(filter = '^sops-delta-unconditional$')`:
+  92 assertions passed, no failures, warnings, or skips. Formatting and diff
+  checks passed. No vignette build was needed.
 
 ### ACI-19: Public target terminology and formal defaults
 
@@ -861,10 +869,10 @@ For every concern:
   backend's penalty representation consistently, and add a small explicit-zero
   regression. Preserve rejection of genuinely penalized unconditional inference.
 - **Resolution log:** Flatten stored penalty settings with base `unlist()` in
-  both `orm_model_bread()` and `delta_reject_penalized_orm_superpopulation()`.
+  both `orm_model_bread()` and `delta_reject_penalized_orm_unconditional()`.
   A regression fits actual wrapper models with omitted and explicit zero
   penalties under both penalty-variance modes, then compares model bread,
-  estimates, and conditional/unconditional SOP covariance. The superpopulation,
+  estimates, and conditional/unconditional SOP covariance. The unconditional,
   spline, and ORM robust-covariance test files passed, including existing
   rejection of positive penalties. No dependency or helper was added.
 
@@ -881,7 +889,7 @@ tracked above.
   derivative workspace as simultaneous, causing a 300,960,000-byte estimate in
   the many-level empirical workflow.
 - **Resolution:** Average empirical Jacobians inside native recursion; retain
-  individual probabilities only for the superpopulation target; count rolling
+  individual probabilities only for the unconditional target; count rolling
   workspace rather than mutually exclusive origin workspaces.
 - **Evidence:** The full many-level spline vignette renders under the default
   256 MiB limit. Grouped results match full individual recursion and the test-only
@@ -935,7 +943,7 @@ issues.
   retained rather than lost.
 - Checkpointed the concern register in commit `7b04ff6`.
 - Marked ACI-01 **Active**. Confirmed that the manuscript estimator remains
-  `stats::cov(phi) / n`, renamed the public target to `"superpopulation"`
+  `stats::cov(phi) / n`, established the calculation now selected by `vcov = "unconditional"`
   without a `"population"` compatibility alias, and adopted the fitted-cohort
   and preserved-origin-profile contract recorded under ACI-01.
 - Resolved ACI-01 after separating likelihood, refit, starting-profile, and user
@@ -944,7 +952,7 @@ issues.
   roxygen regeneration, and the package check. ACI-04 was resolved as an
   inseparable consequence because the approved cohort contract removes the
   zero-score-patient pathway entirely.
-- Resolved ACI-03 by making rejection of penalized ORM superpopulation inference
+- Resolved ACI-03 by making rejection of penalized ORM unconditional inference
   an intentional scope decision. The reconstructed likelihood scores and the
   penalty-aware sensitivity do not currently define a verified stacked patient
   influence function, and penalty-selection uncertainty is not represented.
@@ -999,3 +1007,10 @@ issues.
   Focused tests passed; no vignettes were built.
 - Resolved ACI-13 by user decision: `vcov()` remains analytical-only and may
   error for bootstrap and MVN results. No implementation change was needed.
+
+- Completed the repository-wide unconditional-variance terminology update:
+  renamed internal helpers, metadata labels, errors, and source/test files;
+  aligned README and developer documentation. Actual simulation source
+  populations retain their existing terminology. Full `devtools::test()`:
+  2,288 assertions passed, no failures or warnings, and one expected
+  installed-package-only worker check skipped. No vignettes were built.
