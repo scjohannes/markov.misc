@@ -9,6 +9,8 @@ vglm_markov(
   family = stop("argument 'family' needs to be assigned"),
   data = list(),
   id_var = NULL,
+  type = c("HC0", "HC1"),
+  cadjust = NULL,
   weights = NULL,
   subset = NULL,
   na.action,
@@ -26,6 +28,8 @@ vglm_markov(
   form2 = NULL,
   qr.arg = TRUE,
   smart = TRUE,
+  time_var = "time",
+  first_followup_time = NULL,
   ...
 )
 }
@@ -56,6 +60,13 @@ vglm_markov(
 
 \item{id_var}{Optional character scalar naming the patient or cluster ID
 column in \code{data}. When supplied, \code{\link[=robcov_vglm]{robcov_vglm()}} is applied automatically.}
+
+\item{type}{HC correction passed to \code{\link[=robcov_vglm]{robcov_vglm()}} when \code{id_var} is
+supplied: \code{"HC0"} (the default) or \code{"HC1"}.}
+
+\item{cadjust}{Optional logical cluster correction passed to \code{\link[=robcov_vglm]{robcov_vglm()}}
+when \code{id_var} is supplied. \code{NULL} uses the clustered default, which applies
+the \code{G / (G - 1)} correction.}
 
 \item{weights}{
   an optional vector or matrix of (prior fixed and known) weights
@@ -265,6 +276,15 @@ proportional odds fit returned by \code{vglm_markov()}.}
 
   }
 
+\item{time_var}{Character scalar naming the modeled time column used to
+identify the designated starting-profile row.}
+
+\item{first_followup_time}{First scheduled post-baseline outcome time used to
+select the starting-profile row. For numeric time, \code{NULL} uses 1. Numeric
+schedules may not contain values below 1, and an explicit value must be the
+earliest observed time. Factor and character time require an explicit
+matching value.}
+
 \item{...}{
   further arguments passed into \code{\link[VGAM]{vglm.control}}.
 
@@ -277,9 +297,10 @@ a \code{robcov_vglm} object when \code{id_var} is supplied.
 }
 \description{
 \code{vglm_markov()} is the recommended VGAM fitting entrypoint for
-\code{markov.misc} SOP workflows. It follows \code{VGAM::vglm()} closely, stores the
-row-aligned fitting data for downstream SOP inference, and marks the fit so
-the SOP prediction code can use package-native Markov prediction. For inline
+\code{markov.misc} SOP workflows. It follows \code{VGAM::vglm()} closely, stores
+separate likelihood, refit, and designated-start profile data for downstream
+SOP inference, and marks the fit so the SOP prediction code can use
+package-native Markov prediction. For inline
 registered RMS spline terms such as \code{rcs(time, 4)}, \code{lsp(time, 5)}, or their
 namespace-qualified forms, the internal VGAM assignment metadata is split by
 generated spline column.
@@ -304,6 +325,15 @@ automatic cluster-robust covariance and FWB refits need \code{id_var}.
 
 Offsets are not supported in \code{markov.misc} SOP workflows, so \code{vglm_markov()}
 rejects both \code{offset()} terms and the \code{offset} argument.
+
+Starting profiles are retained before response-driven model-frame
+omission. Every fitted patient must have exactly one complete profile at
+the cohort-wide \code{first_followup_time}, including ID, model predictors,
+time, and the previous state; the transition response on that row may be
+missing. A patient is included only when at least one usable likelihood
+transition is fitted somewhere. Patients with no fitted transition are
+excluded, and a fitted patient without a complete designated profile is an
+error. Later likelihood rows are not substituted for that profile.
 }
 \examples{
 \dontrun{

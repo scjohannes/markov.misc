@@ -213,7 +213,7 @@ compute_scores_orm <- function(model) {
   }
   if (is.null(model$x) || is.null(model$y)) {
     stop(
-      "orm score bootstrap requires the model to be fitted with ",
+      "orm score calculations require the model to be fitted with ",
       "`x = TRUE, y = TRUE`."
     )
   }
@@ -258,6 +258,9 @@ compute_scores_orm <- function(model) {
   slope_scores <- as.matrix(model$x) * rowSums(d_eta)
   scores <- cbind(intercept_scores, slope_scores)
   colnames(scores) <- names(beta)
+  weights <- orm_case_weights(model, n)
+  scores <- scores * weights
+  colnames(scores) <- names(beta)
   scores
 }
 
@@ -289,21 +292,5 @@ align_cluster_orm <- function(model, cluster, n_scores) {
 }
 
 get_orm_model_vcov <- function(model) {
-  beta <- stats::coef(model)
-
-  if (!is.null(model$orig.var)) {
-    return(validate_coef_vcov(beta, model$orig.var, arg = "orm model vcov"))
-  }
-
-  if (requireNamespace("rms", quietly = TRUE)) {
-    robust <- rms::robcov(model)
-    if (!is.null(robust$orig.var)) {
-      return(validate_coef_vcov(beta, robust$orig.var, arg = "orm model vcov"))
-    }
-  }
-
-  stop(
-    "Could not obtain a full model-based covariance matrix for the orm fit. ",
-    "Refit with rms::orm(..., x = TRUE, y = TRUE)."
-  )
+  orm_model_bread(model)$bread
 }

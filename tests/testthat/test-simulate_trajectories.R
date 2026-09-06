@@ -185,6 +185,677 @@ test_that("sim_actt2_brownian allows overriding threshold-specific time effects"
   expect_gt(sum(direct_drift$y != default_drift$y), 0)
 })
 
+test_that("sim_actt1_markov returns reproducible ACTT-1 trajectories", {
+  traj <- sim_actt1_markov(
+    n_patients = 80,
+    follow_up_time = 6,
+    seed = 1987
+  )
+  repeated <- sim_actt1_markov(
+    n_patients = 80,
+    follow_up_time = 6,
+    seed = 1987
+  )
+
+  expect_trajectory_contract(
+    traj,
+    expected_cols = c("id", "time", "y", "yprev", "tx"),
+    n_patients = 80,
+    follow_up_time = 6,
+    states = 1:8
+  )
+  expect_identical(traj, repeated)
+  expect_setequal(unique(traj$yprev[traj$time == 1]), 4:7)
+  expect_absorbing_state_sticky(traj, absorbing_state = 8)
+
+  absorbing <- sim_actt1_markov(
+    n_patients = 1,
+    treatment_prob = 1,
+    follow_up_time = 4,
+    baseline_data = data.frame(id = 1L, yprev = 8L, tx = 1L),
+    seed = 1
+  )
+  expect_equal(absorbing$y, rep(8L, 4))
+  expect_equal(absorbing$yprev, rep(8L, 4))
+})
+
+test_that("sim_actt1_markov samples the reported baseline counts", {
+  traj <- sim_actt1_markov(
+    n_patients = 10000,
+    follow_up_time = 1,
+    seed = 4815
+  )
+  initial <- traj[traj$time == 1, , drop = FALSE]
+  observed <- prop.table(table(factor(initial$yprev, levels = 4:7)))
+  parameters <- markov.misc:::actt1_markov_parameters()
+
+  expect_equal(
+    parameters$baseline_probabilities,
+    c(138, 435, 193, 285) / 1051
+  )
+  expect_equal(parameters$baseline_states, 4:7)
+  expect_equal(sum(parameters$baseline_probabilities), 1)
+  expect_equal(
+    as.numeric(observed),
+    parameters$baseline_probabilities,
+    tolerance = 0.02
+  )
+})
+
+test_that("sim_actt1_markov codes one as Remdesivir", {
+  placebo <- sim_actt1_markov(
+    n_patients = 20,
+    treatment_prob = 0,
+    follow_up_time = 1,
+    seed = 91
+  )
+  remdesivir <- sim_actt1_markov(
+    n_patients = 20,
+    treatment_prob = 1,
+    follow_up_time = 1,
+    seed = 91
+  )
+
+  expect_equal(unique(placebo$tx), 0)
+  expect_equal(unique(remdesivir$tx), 1)
+})
+
+test_that("ACTT-1 parameters preserve selected posterior means", {
+  parameters <- markov.misc:::actt1_markov_parameters()
+
+  expect_equal(
+    parameters$orm_intercepts,
+    c(-3.3535, -3.5896, -3.8395, -6.0379, -9.7465, -12.3361, -18.8334)
+  )
+  expect_equal(
+    unname(parameters$extra_params[c(
+      "yprev=2",
+      "yprev=3",
+      "yprev=4",
+      "yprev=5",
+      "yprev=6",
+      "yprev=7"
+    )]),
+    c(-0.0402, 3.9042, 5.0754, 8.0171, 11.5073, 16.1963)
+  )
+  expect_equal(
+    unname(parameters$extra_params[c(
+      "day",
+      "day'",
+      "day''",
+      "day'''",
+      "day''''"
+    )]),
+    c(-0.1110, 1.6444, -3.1537, 1.2387, 1.1910)
+  )
+  expect_identical(
+    names(parameters$extra_params),
+    c(
+      "day",
+      "day'",
+      "day''",
+      "day'''",
+      "day''''",
+      paste0("yprev=", 1:7),
+      "day x f(y)"
+    )
+  )
+  expect_equal(parameters$extra_params[["day x f(y)"]], -0.0188)
+})
+
+test_that("ACTT-1 linear predictor combines time state and treatment", {
+  parameters <- markov.misc:::actt1_markov_parameters()
+  extra_params <- c(parameters$extra_params, treatment_effect_decay = 0)
+  lp <- function(yprev, day, tx, parameter = -0.0657, decay = 0) {
+    extra_params[["treatment_effect_decay"]] <- decay
+    markov.misc:::actt1_markov_lp(
+      yprev = factor(yprev, levels = 1:8),
+      t = day,
+      tx = tx,
+      parameter = parameter,
+      extra_params = extra_params
+    )
+  }
+  day_names <- c("day", "day'", "day''", "day'''", "day''''")
+  basis <- markov.misc:::actt_markov_rcs_basis(7)
+
+  expect_equal(lp(4, 7, 1) - lp(4, 7, 0), rep(-0.0657, 7))
+  expect_equal(lp(4, 1, 1) - lp(4, 1, 0), rep(-0.0657, 7))
+  expect_equal(
+    lp(4, 15, 1, decay = 0.2) - lp(4, 15, 0, decay = 0.2),
+    rep(-0.0657 * exp(-0.2 * 14), 7)
+  )
+  expect_equal(
+    lp(5, 7, 0) - lp(4, 7, 0),
+    rep(8.0171 - 5.0754, 7)
+  )
+  expect_equal(lp(4, 7, 1, parameter = 0), lp(4, 7, 0))
+  expect_equal(
+    unname(lp(4, 7, 0) - parameters$extra_params["yprev=4"]),
+    drop(basis %*% parameters$extra_params[day_names]) +
+      parameters$extra_params[["day x f(y)"]] * 7 * rev(2:8)
+  )
+  expect_equal(
+    markov.misc:::actt1_markov_lp(
+      yprev = factor(4, levels = 1:8),
+      t = 7,
+      tx = 1,
+      parameter = -0.0657,
+      extra_params = parameters$extra_params
+    ),
+    lp(4, 7, 1)
+  )
+})
+
+test_that("ACTT-1 reversed thresholds reproduce Bayesian model probabilities", {
+  parameters <- markov.misc:::actt1_markov_parameters()
+  eta <- markov.misc:::actt1_markov_lp(
+    yprev = factor(5, levels = 1:8),
+    t = 10,
+    tx = 1,
+    parameter = -0.0657,
+    extra_params = c(parameters$extra_params, treatment_effect_decay = 0)
+  )
+  model_cumulative <- stats::plogis(parameters$orm_intercepts + rev(eta))
+  model_probabilities <- c(
+    1 - model_cumulative[1],
+    -diff(model_cumulative),
+    model_cumulative[length(model_cumulative)]
+  )
+  simulator_cumulative <- stats::plogis(rev(parameters$orm_intercepts) + eta)
+  simulator_probabilities <- rev(c(
+    simulator_cumulative[1],
+    diff(simulator_cumulative),
+    1 - simulator_cumulative[length(simulator_cumulative)]
+  ))
+
+  expect_equal(simulator_probabilities, model_probabilities, tolerance = 1e-15)
+  expect_gte(min(simulator_probabilities), 0)
+  expect_equal(sum(simulator_probabilities), 1)
+})
+
+test_that("ACTT-1 partial PO time deviation calibrates mortality", {
+  parameters <- markov.misc:::actt1_markov_parameters()
+  occupancy <- c(0, 0, 0, parameters$baseline_probabilities, 0)
+
+  for (day in 1:28) {
+    transition <- matrix(0, nrow = 8, ncol = 8)
+    for (previous_state in 1:7) {
+      eta <- markov.misc:::actt1_markov_lp(
+        yprev = factor(previous_state, levels = 1:8),
+        t = day,
+        tx = 0,
+        parameter = 0,
+        extra_params = c(
+          parameters$extra_params,
+          treatment_effect_decay = 0
+        )
+      )
+      cumulative <- stats::plogis(rev(parameters$orm_intercepts) + eta)
+      transition[previous_state, ] <- rev(c(
+        cumulative[1],
+        diff(cumulative),
+        1 - cumulative[length(cumulative)]
+      ))
+    }
+    transition[8, 8] <- 1
+    occupancy <- drop(occupancy %*% transition)
+  }
+
+  expect_equal(occupancy[8], 0.0953, tolerance = 0.001)
+})
+
+test_that("sim_actt1_markov validates wrapper inputs", {
+  expect_snapshot(error = TRUE, sim_actt1_markov(n_patients = 0))
+  expect_snapshot(error = TRUE, sim_actt1_markov(treatment_prob = 2))
+  expect_snapshot(error = TRUE, sim_actt1_markov(treatment_effect = Inf))
+  expect_snapshot(error = TRUE, sim_actt1_markov(treatment_effect_decay = -1))
+})
+
+test_that("sim_actt2_markov returns reproducible ACTT-2 trajectories", {
+  traj <- sim_actt2_markov(
+    n_patients = 80,
+    follow_up_time = 6,
+    seed = 1987
+  )
+  repeated <- sim_actt2_markov(
+    n_patients = 80,
+    follow_up_time = 6,
+    treatment_effect = -0.0657,
+    seed = 1987
+  )
+
+  expect_trajectory_contract(
+    traj,
+    expected_cols = c("id", "time", "y", "yprev", "tx"),
+    n_patients = 80,
+    follow_up_time = 6,
+    states = 1:8
+  )
+  expect_identical(traj, repeated)
+  expect_setequal(unique(traj$yprev[traj$time == 1]), 4:7)
+  expect_absorbing_state_sticky(traj, absorbing_state = 8)
+})
+
+test_that("sim_actt2_markov samples the supplied baseline distribution", {
+  traj <- sim_actt2_markov(
+    n_patients = 10000,
+    follow_up_time = 1,
+    seed = 4815
+  )
+  initial <- traj[traj$time == 1, , drop = FALSE]
+  observed <- prop.table(table(factor(initial$yprev, levels = 4:7)))
+  expected <- markov.misc:::actt2_markov_parameters()
+
+  expect_equal(
+    as.numeric(observed),
+    expected$baseline_probabilities,
+    tolerance = 0.02
+  )
+  expect_equal(mean(initial$tx), 0.5, tolerance = 0.03)
+})
+
+test_that("sim_actt2_markov uses one for the baricitinib arm", {
+  placebo <- sim_actt2_markov(
+    n_patients = 20,
+    treatment_prob = 0,
+    follow_up_time = 1,
+    seed = 91
+  )
+  baricitinib <- sim_actt2_markov(
+    n_patients = 20,
+    treatment_prob = 1,
+    follow_up_time = 1,
+    seed = 91
+  )
+
+  expect_equal(unique(placebo$tx), 0)
+  expect_equal(unique(baricitinib$tx), 1)
+})
+
+test_that("ACTT restricted cubic spline reproduces the supplied basis", {
+  days <- c(1, 3, 7, 22, 28)
+  expected <- rbind(
+    c(1, 0, 0, 0, 0),
+    c(3, 0.0016, 0, 0, 0),
+    c(7, 0.2, 0.0016, 0, 0),
+    c(22, 12.7933333333, 6.548, 2.1253333333, 0.3426666667),
+    c(28, 25.84, 15.12, 6.4, 1.76)
+  )
+
+  expect_equal(
+    unname(markov.misc:::actt_markov_rcs_basis(days)),
+    unname(expected),
+    tolerance = 1e-9
+  )
+})
+
+test_that("ACTT spline basis agrees with Hmisc", {
+  skip_if_not_installed("Hmisc")
+  actual <- markov.misc:::actt_markov_rcs_basis(1:28)
+  expected <- Hmisc::rcspline.eval(
+    1:28,
+    knots = c(2, 6, 11, 16, 21, 27),
+    inclx = TRUE
+  )
+
+  expect_equal(dim(actual), dim(expected))
+  expect_equal(as.numeric(actual), as.numeric(expected), tolerance = 1e-12)
+})
+
+test_that("ACTT-2 linear predictor preserves shared orm slopes", {
+  parameters <- markov.misc:::actt2_markov_parameters()
+  extra_params <- c(parameters$extra_params, treatment_effect_decay = 0)
+  lp <- function(yprev, day, tx, decay = 0) {
+    extra_params[["treatment_effect_decay"]] <- decay
+    markov.misc:::actt2_markov_lp(
+      yprev = factor(yprev, levels = 1:8),
+      t = day,
+      tx = tx,
+      parameter = -0.0657,
+      extra_params = extra_params
+    )
+  }
+
+  expect_equal(lp(4, 7, 1) - lp(4, 7, 0), -0.0657)
+  expect_equal(
+    lp(4, 7, 1, decay = 0.2) - lp(4, 7, 0, decay = 0.2),
+    -0.0657 * exp(-0.2 * 6)
+  )
+  expect_equal(lp(5, 7, 1) - lp(4, 7, 1), 7.4148 - 4.5199)
+
+  basis <- markov.misc:::actt_markov_rcs_basis(7)
+  day_names <- c("day", "day'", "day''", "day'''", "day''''")
+  expect_equal(
+    unname(lp(4, 7, 0) - parameters$extra_params["yprev=4"]),
+    drop(basis %*% parameters$extra_params[day_names])
+  )
+})
+
+test_that("ACTT-2 reversed thresholds reproduce orm state probabilities", {
+  parameters <- markov.misc:::actt2_markov_parameters()
+  expect_equal(
+    parameters$orm_intercepts,
+    c(-1.7503, -2.4174, -2.6911, -4.8406, -8.9716, -12.6833, -19.5542)
+  )
+
+  eta <- markov.misc:::actt2_markov_lp(
+    yprev = factor(5, levels = 1:8),
+    t = 10,
+    tx = 0,
+    parameter = -0.0657,
+    extra_params = c(parameters$extra_params, treatment_effect_decay = 0)
+  )
+  orm_cumulative <- stats::plogis(parameters$orm_intercepts + eta)
+  orm_probabilities <- c(
+    1 - orm_cumulative[1],
+    -diff(orm_cumulative),
+    orm_cumulative[length(orm_cumulative)]
+  )
+  simulator_cumulative <- stats::plogis(rev(parameters$orm_intercepts) + eta)
+  simulator_columns <- c(
+    simulator_cumulative[1],
+    diff(simulator_cumulative),
+    1 - simulator_cumulative[length(simulator_cumulative)]
+  )
+  simulator_probabilities <- rev(simulator_columns)
+
+  expect_equal(simulator_probabilities, orm_probabilities, tolerance = 1e-15)
+  expect_gte(min(simulator_probabilities), 0)
+  expect_equal(sum(simulator_probabilities), 1)
+})
+
+test_that("sim_actt2_markov validates wrapper inputs", {
+  expect_snapshot(error = TRUE, sim_actt2_markov(n_patients = 0))
+  expect_snapshot(error = TRUE, sim_actt2_markov(treatment_prob = 2))
+  expect_snapshot(error = TRUE, sim_actt2_markov(treatment_effect = Inf))
+  expect_snapshot(error = TRUE, sim_actt2_markov(treatment_effect_decay = -1))
+})
+
+test_that("sim_actt2_markov_60day returns reproducible trajectories", {
+  trajectories <- sim_actt2_markov_60day(
+    n_patients = 80,
+    follow_up_time = 6,
+    seed = 2026
+  )
+  repeated <- sim_actt2_markov_60day(
+    n_patients = 80,
+    follow_up_time = 6,
+    seed = 2026
+  )
+
+  expect_trajectory_contract(
+    trajectories,
+    expected_cols = c("id", "time", "y", "yprev", "tx"),
+    n_patients = 80,
+    follow_up_time = 6,
+    states = 1:8
+  )
+  expect_identical(trajectories, repeated)
+  expect_setequal(unique(trajectories$yprev[trajectories$time == 1]), 4:7)
+  expect_absorbing_state_sticky(trajectories, absorbing_state = 8)
+
+  default <- sim_actt2_markov_60day(n_patients = 2, seed = 2026)
+  expect_equal(nrow(default), 120)
+  expect_equal(range(default$time), c(1, 60))
+})
+
+test_that("sim_actt2_markov_60day uses the calibrated baseline distribution", {
+  trajectories <- sim_actt2_markov_60day(
+    n_patients = 10000,
+    follow_up_time = 1,
+    seed = 4815
+  )
+  initial <- trajectories[trajectories$time == 1, , drop = FALSE]
+  observed <- prop.table(table(factor(initial$yprev, levels = 4:7)))
+  parameters <- markov.misc:::actt2_markov_60day_parameters()
+
+  expect_equal(parameters$baseline_states, 4:7)
+  expect_equal(sum(parameters$baseline_probabilities), 1)
+  expect_equal(
+    as.numeric(observed),
+    parameters$baseline_probabilities,
+    tolerance = 0.02
+  )
+})
+
+test_that("ACTT-2 60-day parameters preserve the orm calibration", {
+  parameters <- markov.misc:::actt2_markov_60day_parameters()
+
+  expect_equal(parameters$drift_start_lambda, 6.026099)
+  expect_equal(parameters$n_fit_transitions, 5590720L)
+  expect_equal(parameters$treatment_effect, -0.00344081587038234)
+  expect_equal(
+    parameters$orm_intercepts,
+    c(
+      -6.48590352305606,
+      -8.98334851035646,
+      -10.2826703630608,
+      -11.0388174995576,
+      -14.1517663647389,
+      -16.9418587523501,
+      -22.8326631030386
+    )
+  )
+  expect_equal(parameters$time_knots, c(2, 11, 20, 30, 39, 49, 59))
+  expect_equal(
+    unname(parameters$extra_params[paste0("yprev=", 2:7)]),
+    c(
+      7.78190841234478,
+      9.7553019571941,
+      10.9217897817441,
+      12.789303156482,
+      15.4186523641647,
+      19.3967392254069
+    )
+  )
+  expect_equal(
+    unname(parameters$extra_params[grep(
+      "^time",
+      names(parameters$extra_params)
+    )]),
+    c(
+      -0.0551480786641631,
+      0.705650641016978,
+      -1.89732599383498,
+      1.72332047124566,
+      -0.72372165657455,
+      0.324725461513862
+    )
+  )
+  expect_equal(
+    attr(parameters$extra_params, "time_knots"),
+    parameters$time_knots
+  )
+})
+
+test_that("sim_actt2_markov_60day codes active treatment as one", {
+  placebo <- sim_actt2_markov_60day(
+    n_patients = 20,
+    treatment_prob = 0,
+    follow_up_time = 1,
+    seed = 91
+  )
+  active <- sim_actt2_markov_60day(
+    n_patients = 20,
+    treatment_prob = 1,
+    follow_up_time = 1,
+    seed = 91
+  )
+
+  expect_equal(unique(placebo$tx), 0)
+  expect_equal(unique(active$tx), 1)
+
+  parameters <- markov.misc:::actt2_markov_60day_parameters()
+  eta_placebo <- markov.misc:::actt2_markov_60day_lp(
+    yprev = factor(5, levels = 1:8),
+    t = 30,
+    tx = 0,
+    parameter = parameters$treatment_effect,
+    extra_params = parameters$extra_params
+  )
+  eta_active <- markov.misc:::actt2_markov_60day_lp(
+    yprev = factor(5, levels = 1:8),
+    t = 30,
+    tx = 1,
+    parameter = parameters$treatment_effect,
+    extra_params = parameters$extra_params
+  )
+  expected_state <- function(eta) {
+    cumulative <- stats::plogis(parameters$orm_intercepts + eta)
+    probabilities <- c(
+      1 - cumulative[1],
+      -diff(cumulative),
+      cumulative[length(cumulative)]
+    )
+    sum((1:8) * probabilities)
+  }
+
+  expect_lt(expected_state(eta_active), expected_state(eta_placebo))
+})
+
+test_that("ACTT-2 60-day spline and linear predictor match the fit", {
+  parameters <- markov.misc:::actt2_markov_60day_parameters()
+  time_names <- c(
+    "time",
+    "time'",
+    "time''",
+    "time'''",
+    "time''''",
+    "time'''''"
+  )
+  lp <- function(yprev, time, tx, treatment_effect = -0.00344081587038234) {
+    markov.misc:::actt2_markov_60day_lp(
+      yprev = factor(yprev, levels = 1:8),
+      t = time,
+      tx = tx,
+      parameter = treatment_effect,
+      extra_params = parameters$extra_params
+    )
+  }
+  basis <- markov.misc:::markov_rcs_basis(30, parameters$time_knots)
+
+  expect_equal(lp(4, 30, 1) - lp(4, 30, 0), -0.00344081587038234)
+  expect_equal(
+    lp(5, 30, 0) - lp(4, 30, 0),
+    12.789303156482 - 10.9217897817441
+  )
+  expect_equal(
+    unname(lp(4, 30, 0) - parameters$extra_params["yprev=4"]),
+    drop(basis %*% parameters$extra_params[time_names])
+  )
+
+  skip_if_not_installed("Hmisc")
+  expected_basis <- Hmisc::rcspline.eval(
+    1:60,
+    knots = parameters$time_knots,
+    inclx = TRUE
+  )
+  actual_basis <- markov.misc:::markov_rcs_basis(
+    1:60,
+    parameters$time_knots
+  )
+  expect_equal(
+    as.numeric(actual_basis),
+    as.numeric(expected_basis),
+    tolerance = 1e-12
+  )
+})
+
+test_that("ACTT-2 60-day thresholds reproduce orm probabilities", {
+  parameters <- markov.misc:::actt2_markov_60day_parameters()
+  eta <- markov.misc:::actt2_markov_60day_lp(
+    yprev = factor(5, levels = 1:8),
+    t = 30,
+    tx = 1,
+    parameter = -0.00344081587038234,
+    extra_params = parameters$extra_params
+  )
+  orm_cumulative <- stats::plogis(parameters$orm_intercepts + eta)
+  orm_probabilities <- c(
+    1 - orm_cumulative[1],
+    -diff(orm_cumulative),
+    orm_cumulative[length(orm_cumulative)]
+  )
+  simulator_cumulative <- stats::plogis(rev(parameters$orm_intercepts) + eta)
+  simulator_probabilities <- rev(c(
+    simulator_cumulative[1],
+    diff(simulator_cumulative),
+    1 - simulator_cumulative[length(simulator_cumulative)]
+  ))
+
+  expect_equal(simulator_probabilities, orm_probabilities, tolerance = 1e-15)
+  expect_gte(min(simulator_probabilities), 0)
+  expect_equal(sum(simulator_probabilities), 1)
+})
+
+test_that("ACTT-2 60-day wrapper records its occupancy approximation", {
+  parameters <- markov.misc:::actt2_markov_60day_parameters()
+  occupancy <- c(0, 0, 0, parameters$baseline_probabilities, 0)
+  model_occupancy <- matrix(NA_real_, nrow = 60, ncol = 8)
+
+  for (time in 1:60) {
+    transition <- matrix(0, nrow = 8, ncol = 8)
+    for (previous_state in 1:7) {
+      eta <- markov.misc:::actt2_markov_60day_lp(
+        yprev = factor(previous_state, levels = 1:8),
+        t = time,
+        tx = 0,
+        parameter = 0,
+        extra_params = parameters$extra_params
+      )
+      cumulative <- stats::plogis(parameters$orm_intercepts + eta)
+      transition[previous_state, ] <- c(
+        1 - cumulative[1],
+        -diff(cumulative),
+        cumulative[length(cumulative)]
+      )
+    }
+    transition[8, 8] <- 1
+    occupancy <- drop(occupancy %*% transition)
+    model_occupancy[time, ] <- occupancy
+  }
+
+  anchors <- parameters$source_occupancy_anchors$time
+  expect_equal(
+    model_occupancy[anchors, 1],
+    c(
+      0.001536016,
+      0.106008767,
+      0.295104864,
+      0.512141223,
+      0.651705392,
+      0.785397182
+    ),
+    tolerance = 1e-8
+  )
+  expect_equal(
+    model_occupancy[anchors, 8],
+    c(
+      0.004106592,
+      0.039311254,
+      0.071121793,
+      0.121029029,
+      0.146696961,
+      0.155479916
+    ),
+    tolerance = 1e-8
+  )
+  expect_gt(
+    max(abs(
+      model_occupancy[anchors, 8] -
+        parameters$source_occupancy_anchors$state8
+    )),
+    0.05
+  )
+})
+
+test_that("sim_actt2_markov_60day validates wrapper inputs", {
+  expect_snapshot(error = TRUE, sim_actt2_markov_60day(n_patients = 0))
+  expect_snapshot(error = TRUE, sim_actt2_markov_60day(treatment_prob = 2))
+  expect_snapshot(error = TRUE, sim_actt2_markov_60day(treatment_effect = Inf))
+})
+
 test_that("sim_trajectories_markov validates inputs and absent covariates", {
   baseline <- data.frame(id = 1:2, yprev = c(1, 1))
 
@@ -739,14 +1410,29 @@ test_that("recurr_event simulates events and validates vector parameter lengths"
   expect_true(all(result[, "id"] %in% 1:2))
   expect_true(all(result[, "event_time"] < 10))
 
+  set.seed(3)
+  expected <- c(
+    cumsum(stats::rexp(3, rate = 0.5)),
+    cumsum(stats::rexp(3, rate = 2))
+  )
+  set.seed(3)
+  per_patient <- recurr_event(
+    id = 1:2,
+    param = c(0.5, 2),
+    follow_up = Inf,
+    max_events = 3
+  )
+  expect_equal(unname(per_patient[, "event_time"]), expected)
+  expect_equal(unname(per_patient[, "id"]), rep(1:2, each = 3))
+
   expect_error(
     recurr_event(
       id = 1:2,
-      param = c(0.1, 0.2),
+      param = c(0.1, 0.2, 0.3),
       follow_up = 10,
       max_events = NULL
     ),
-    "Length of param must be one or equal to max_events",
+    "Length of param must be one or equal to the number of participants.",
     fixed = TRUE
   )
 })
@@ -760,7 +1446,7 @@ test_that("recurr_event auto-selects event counts for scalar and vector rates", 
     max_events = NULL
   )
   vector <- recurr_event(
-    id = 1,
+    id = 1:3,
     param = c(0.01, 0.02, 0.03),
     b = 0,
     follow_up = 1,
@@ -794,7 +1480,7 @@ test_that("sim_trajectories_tte validates inputs", {
     "baseline_data must contain columns",
     fixed = TRUE
   )
-  baseline <- data.frame(id = 1, tx = 0, state = 2, event_time = 0)
+  baseline <- data.frame(id = 1, tx = 0, state = 2, frailty = 0, event_time = 0)
   expect_error(
     sim_trajectories_tte(baseline, states = 1:3, param = c(0.1, 0.2)),
     "param length must equal length\\(states\\)"
@@ -807,6 +1493,7 @@ test_that("sim_trajectories_tte validates inputs", {
   expect_error(
     sim_trajectories_tte(
       baseline,
+      frailty_event_param = rep(0, 3),
       states = 1:3,
       param = rep(0.1, 3),
       hazard_ratios = list(c(1, 1))
@@ -817,6 +1504,7 @@ test_that("sim_trajectories_tte validates inputs", {
   expect_error(
     sim_trajectories_tte(
       baseline,
+      frailty_event_param = rep(0, 3),
       states = 1:3,
       param = rep(0.1, 3),
       hazard_ratios = list(rep(1, 3)),
@@ -832,6 +1520,7 @@ test_that("sim_trajectories_tte expands event histories into daily states", {
     id = c(1, 2),
     tx = c(0, 1),
     state = c(2, 2),
+    frailty = 0,
     event_time = 0
   )
 
@@ -845,6 +1534,7 @@ test_that("sim_trajectories_tte expands event histories into daily states", {
     {
       result <- sim_trajectories_tte(
         baseline,
+        frailty_event_param = rep(0, 3),
         states = 1:3,
         absorbing_states = 3,
         follow_up_time = 3,
@@ -867,6 +1557,7 @@ test_that("sim_trajectories_tte maps positive tx codes to matching hazard ratios
     id = 1,
     tx = 1,
     state = 1,
+    frailty = 0,
     event_time = 0
   )
   observed_param <- numeric()
@@ -879,6 +1570,7 @@ test_that("sim_trajectories_tte maps positive tx codes to matching hazard ratios
     {
       sim_trajectories_tte(
         baseline,
+        frailty_event_param = rep(0, 2),
         states = 1:2,
         absorbing_states = 2,
         follow_up_time = 1,
@@ -898,12 +1590,14 @@ test_that("sim_trajectories_tte requires hazard ratios for observed treatment ar
     id = 1,
     tx = 2,
     state = 1,
+    frailty = 0,
     event_time = 0
   )
 
   expect_error(
     sim_trajectories_tte(
       baseline,
+      frailty_event_param = rep(0, 2),
       states = 1:2,
       param = c(10, 20),
       hazard_ratios = list(c(1, 1)),
@@ -924,6 +1618,7 @@ test_that("sim_trajectories_tte generates baseline data and handles absorbing ba
         baseline_states = 1:3,
         prob = c(0.2, 0.3, 0.5),
         n = 2,
+        frailty_event_param = rep(0, 3),
         states = 1:3,
         absorbing_states = 3,
         follow_up_time = 2,
@@ -942,6 +1637,7 @@ test_that("sim_trajectories_tte generates baseline data and handles absorbing ba
     id = c(1, 2),
     tx = c(0, 1),
     state = factor(c(NA, 3), levels = 1:3),
+    frailty = 0,
     event_time = 0
   )
   with_mocked_bindings(
@@ -952,6 +1648,7 @@ test_that("sim_trajectories_tte generates baseline data and handles absorbing ba
       expect_warning(
         absorbing <- sim_trajectories_tte(
           baseline,
+          frailty_event_param = rep(0, 3),
           states = 1:3,
           absorbing_states = 3,
           follow_up_time = 2,
@@ -973,6 +1670,7 @@ test_that("sim_trajectories_tte generates baseline data and handles absorbing ba
     id = 1,
     tx = 0,
     state = 3,
+    frailty = 0,
     event_time = 0
   )
   with_mocked_bindings(
@@ -983,6 +1681,7 @@ test_that("sim_trajectories_tte generates baseline data and handles absorbing ba
       expect_warning(
         numeric_out <- sim_trajectories_tte(
           numeric_absorbing,
+          frailty_event_param = rep(0, 3),
           states = 1:3,
           absorbing_states = 3,
           follow_up_time = 2,

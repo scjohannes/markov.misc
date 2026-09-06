@@ -113,35 +113,35 @@ mc
 ```
 
 ```{r}
-et <- plot_transitions(
-  raw_data,
-  id_var = "id",
-  time_var = "time",
-  y_var = "y")
+# et <- plot_transitions(
+#   raw_data,
+#   id_var = "id",
+#   time_var = "time",
+#   y_var = "y")
 
-mt <- plot_transitions(
-  fit_many,
-  id_var = "id",
-  time_var = "time",
-  y_var = "y",
-  times = seq_len(FOLLOW_UP),
-  y_levels = fit_many$yunique,
-  absorb = ABSORB)
+# mt <- plot_transitions(
+#   fit_many,
+#   id_var = "id",
+#   time_var = "time",
+#   y_var = "y",
+#   times = seq_len(FOLLOW_UP),
+#   y_levels = fit_many$yunique,
+#   absorb = ABSORB)
 
-et
-mt
+# et
+# mt
 
-td <- plot_transitions(
-  fit_many,
-  comparison = "difference",
-  variables = list(tx = c(0, 1)),
-  id_var = "id",
-  time_var = "time",
-  y_var = "y",
-  times = seq_len(FOLLOW_UP),
-  y_levels = fit_many$yunique,
-  absorb = ABSORB)
-td
+# td <- plot_transitions(
+#   fit_many,
+#   comparison = "difference",
+#   variables = list(tx = c(0, 1)),
+#   id_var = "id",
+#   time_var = "time",
+#   y_var = "y",
+#   times = seq_len(FOLLOW_UP),
+#   y_levels = fit_many$yunique,
+#   absorb = ABSORB)
+# td
 ```
 
 ```{r}
@@ -172,8 +172,12 @@ sop_many <- avg_sops(
   y_levels = fit_many$yunique,
   p_var = "yprev"
 ) |> 
-  inferences(n_draws = 20)
+  inferences(method = "delta", vcov = "conditional")
 ```
+
+The analytical delta method propagates the complete fitted ORM covariance
+through the previous-state spline and Markov recursion. Here the empirical
+target treats the observed standardization profiles as fixed.
 
 With many states, a stacked distribution is usually easier to read than one
 line per state.
@@ -182,8 +186,19 @@ line per state.
 plot_sops(
   sop_many,
   geom = "bar",
-  facet_var = "tx",
-  n_draws = 0
+  facet_var = "tx"
+) +
+  scale_x_continuous(breaks = c(1, 7, 14)) +
+  labs(
+    x = "Week",
+    y = "State occupancy probability"
+  )
+
+plot_sops(
+  sop_many,
+  geom = "line",
+  facet_var = "state",
+  linetype_var = "tx"
 ) +
   scale_x_continuous(breaks = c(1, 7, 14)) +
   labs(
@@ -192,38 +207,9 @@ plot_sops(
   )
 ```
 
-## Constrasts
+## Contrasts
 
-We can calcualte contrasts for time in state or weeks benefit.
-
-```{r}
-c <- avg_comparisons(
-  fit_many, 
-  times = seq_len(FOLLOW_UP),
-  variables = list(tx = c(0, 1)), 
-  estimand = "time_in_state",
-  state_sets = list(good = 1:10, average = 11:20, bad = 21:30),
-) |> 
-  inferences(
-    n_draws = 10
-  )
-
-plot_comparisons(c)
-```
-
-```{r}
-tb <- avg_comparisons(
-  fit_many, 
-  times = seq_len(FOLLOW_UP),
-  variables = list(tx = c(0, 1)),
-  estimand = "time_benefit"
-) |> 
-  inferences(
-    n_draws = 50
-  )
-
-plot_comparisons(tb)
-```
+We can show the difference in the SOPs from above over time.
 
 ```{r}
 sc <- avg_comparisons(
@@ -233,8 +219,45 @@ sc <- avg_comparisons(
   estimand = "sop"
 ) |> 
   inferences(
-    n_draws = 10
+    method = "delta",
+    vcov = "conditional"
   )
 
 plot_comparisons(sc, facet_var = "state_set")
+```
+
+We can calculate contrasts for time in state or weeks benefit.
+
+```{r}
+c <- avg_comparisons(
+  fit_many, 
+  times = seq_len(FOLLOW_UP),
+  variables = list(tx = c(0, 1)), 
+  estimand = "time_in_state"
+  # state_sets = list(good = 1:10, average = 11:20, bad = 21:30)
+) |> 
+  inferences(
+    method = "delta",
+    vcov = "conditional"
+  )
+
+plot_comparisons(c)
+```
+
+Analytical delta intervals do not yet support `time_benefit`, so this contrast
+continues to use coefficient draws.
+
+```{r}
+tb <- avg_comparisons(
+  fit_many, 
+  times = seq_len(FOLLOW_UP),
+  variables = list(tx = c(0, 1)),
+  estimand = "time_benefit"
+) |> 
+  inferences(
+    method = "mvn",
+    n_draws = 50
+  )
+
+plot_comparisons(tb)
 ```

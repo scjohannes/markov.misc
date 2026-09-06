@@ -8,15 +8,16 @@ time_in_state(
   x,
   target_states = 1,
   time_map = NULL,
-  origin_time = NULL,
-  target_times = NULL,
-  origin = c("empirical_baseline", "none")
+  baseline_time = 0,
+  target_times = NULL
 )
 }
 \arguments{
 \item{x}{Input object.
 \itemize{
 \item \strong{Array:} \verb{[Patients x Time x States]} (Frequentist) or \verb{[Draws x Patients x Time x States]} (Bayes).
+\item \strong{Tidy SOP:} A \code{markov_sops}, \code{markov_avg_sops}, or
+\code{markov_interpolated_sops} object.
 \item \strong{Data Frame:} Legacy wide bootstrap SOP data containing columns
 \code{boot_id}, \code{time}, \code{tx}, and \verb{state_*}.
 }}
@@ -29,22 +30,25 @@ For bootstrap outputs, these must match the suffix of the \code{state_} columns 
 labels to real elapsed times. Supplying this switches tidy SOP and array
 inputs to trapezoidal real-time AUC.}
 
-\item{origin_time}{Optional real time for an empirical baseline anchor. For
-tidy outputs from \code{\link[=sops]{sops()}} or \code{\link[=avg_sops]{avg_sops()}}, this is passed to
-\code{\link[=interpolate_sops]{interpolate_sops()}}.}
+\item{baseline_time}{Real time of the observed baseline state for tidy SOP
+outputs. The default \code{0} supplies a fixed interpolation anchor to
+\code{\link[=interpolate_sops]{interpolate_sops()}}. Set to \code{NULL} to disable baseline anchoring.}
 
 \item{target_times}{Optional numeric real-time grid for tidy SOP outputs when
 \code{time_map} is supplied. This controls the interpolation grid used for AUC,
-for example \code{target_times = 1:28} with \code{origin_time = 0} uses day 0 as an anchor
-but starts the AUC at day 1.}
-
-\item{origin}{Origin handling for tidy SOP outputs when \code{origin_time} is
-supplied. See \code{\link[=interpolate_sops]{interpolate_sops()}}.}
+for example \code{target_times = 1:28} with \code{baseline_time = 0} uses day 0 as an
+anchor but starts the AUC at day 1. If \code{NULL}, integration uses only the
+mapped follow-up nodes and excludes the baseline interval.}
 }
 \value{
 \itemize{
 \item \strong{Input = Array (Frequentist):} A named numeric vector of length \code{n_patients}.
 \item \strong{Input = Array (Bayesian):} A matrix of dimension \code{[n_draws x n_patients]}.
+\item \strong{Input = Tidy SOP:} A data frame with \code{total_time} and grouping
+columns. When stored draws are available, draw-based \code{conf.low},
+\code{conf.high}, and \code{std.error} columns are recomputed and the reduced draws
+are retained in a \code{draws} attribute. Any draw-specific baseline anchors
+have already been propagated by \code{\link[=interpolate_sops]{interpolate_sops()}}.
 \item \strong{Input = Bootstrap DF:} A tibble with columns:
 \itemize{
 \item \code{boot_id}: Bootstrap iteration
@@ -57,12 +61,16 @@ supplied. See \code{\link[=interpolate_sops]{interpolate_sops()}}.}
 \description{
 Calculates the expected total time spent in specified target state(s).
 By default this sums state occupancy probabilities over visit-scale unit
-steps. When \code{time_map} or \code{origin_time} is supplied, it maps/interpolates to
+steps. When \code{time_map} is supplied, it maps/interpolates to
 real time and uses trapezoidal AUC. Already interpolated SOP output from
 \code{\link[=interpolate_sops]{interpolate_sops()}} is integrated on its current real-time grid.
 It automatically adapts to the input format:
 \itemize{
 \item \strong{Patient-Level:} If input is an array from \code{soprob_markov}, it returns time-in-state for each patient.
+\item \strong{Tidy SOP:} If input is a \code{markov_sops} or \code{markov_avg_sops}
+object, it returns grouped total time. Stored simulation, bootstrap, or
+posterior draws are reduced identically and used to recompute confidence
+intervals and standard errors.
 \item \strong{Legacy Wide Bootstrap-Level:} If input is a data frame with
 \code{boot_id}, \code{time}, \code{tx}, and \verb{state_*} columns, it returns mean
 time-in-state per treatment group and the difference for each bootstrap
@@ -80,7 +88,7 @@ real_days_home <- time_in_state(
   avg,
   target_states = 1,
   time_map = c("1" = 3, "2" = 7, "3" = 14, "4" = 28),
-  origin_time = 0,
+  baseline_time = 0,
   target_times = 1:28
 )
 

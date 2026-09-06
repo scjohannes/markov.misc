@@ -13,7 +13,7 @@ inferences(
   workers = NULL,
   seed = NULL,
   conf_level = 0.95,
-  conf_type = "perc",
+  conf_type = "auto",
   null = NULL,
   return_draws = TRUE,
   update_datadist = TRUE,
@@ -28,6 +28,7 @@ from \code{\link[=avg_comparisons]{avg_comparisons()}}.}
 \item{method}{Character. Inference method:
 \itemize{
 \item \code{"mvn"}: Multivariate-normal coefficient draws.
+\item \code{"delta"}: Deterministic analytical delta-method inference.
 \item \code{"score_bootstrap"}: One-step score perturbation using fixed
 exponential cluster weights.
 \item \code{"bootstrap"}: Ordinary patient-level refit bootstrap.
@@ -40,12 +41,24 @@ iterations (for bootstrap). Default is 1000. For \code{blrm} SOP objects this
 argument is ignored; rerun \code{sops()}/\code{avg_sops()} with \code{n_draws} and \code{seed}
 to change posterior draws.}
 
-\item{vcov}{Optional custom variance-covariance matrix. If provided,
-overrides the vcov extracted from the model.}
+\item{vcov}{For \code{method = "delta"}, \code{"conditional"} treats prediction or
+standardization covariates as fixed; \code{"unconditional"} includes their
+sampling variability and its cross-term with coefficient estimation.
+\code{NULL} (the default) selects unconditional inference for \code{avg_sops()} and
+\code{avg_comparisons()}, and conditional inference for \code{sops()}. Individual
+\code{sops()} results support only conditional inference. A complete, named
+coefficient covariance matrix selects conditional inference and overrides
+the model covariance. Character choices are available only for delta
+inference; other methods retain their existing matrix/\code{NULL} behavior.}
 
-\item{cluster}{Optional row-level cluster vector for score bootstrap with
-\code{orm} models. Values should match
-\code{id_var} in the baseline data used by \code{avg_sops()}.}
+\item{cluster}{Optional patient-cluster specification. For analytical
+conditional and unconditional variance estimates, supply a
+vector aligned with the fitting rows or a one-sided formula selecting a
+stored fitting-data column. Otherwise the model's stored \code{id_var} is used;
+fitting rows are never treated as implicit clusters. For unconditional
+inference, the cluster labels must match the stored starting-profile patient
+IDs exactly. For score bootstrap with \code{orm}, this is the row-aligned cluster
+vector.}
 
 \item{workers}{Number of parallel workers. If NULL (default) or 1, uses
 sequential processing. If > 1, uses parallel processing with that many
@@ -58,19 +71,26 @@ restored on exit.}
 SOP objects this argument is ignored; rerun \code{sops()}/\code{avg_sops()} with
 \code{conf_level} to change posterior intervals.}
 
-\item{conf_type}{Type of frequentist confidence interval:
+\item{conf_type}{Type of frequentist confidence interval. \code{"auto"} uses
+percentile intervals for draw-based methods, componentwise logit-delta
+intervals for SOP probabilities, and identity-scale Wald intervals for
+analytical comparisons:
 \itemize{
-\item \code{"perc"} (default): Percentile-based intervals from the simulation
+\item \code{"auto"}: Method-appropriate default.
+\item \code{"perc"}: Percentile-based intervals from the simulation
 distribution.
 \item \code{"wald"}: Uses simulation standard errors with normal quantiles.
+\item \code{"logit"}: Componentwise logit-delta limits for probabilities;
+available only with \code{method = "delta"} on SOP objects.
 }}
 
 \item{null}{Optional single finite numeric null value. Supplying it adds
 Wald \code{statistic}, \code{p.value}, and \code{s.value} columns. A zero null is rejected
 for known ratio comparisons.}
 
-\item{return_draws}{Logical. If TRUE, stores all individual simulation/bootstrap
-draws as an attribute. Extract with \code{get_draws()}. Default is TRUE}
+\item{return_draws}{Logical. If \code{TRUE}, stores individual simulation or
+bootstrap draws as an attribute. Extract with \code{\link[=get_draws]{get_draws()}}. Delta
+inference never stores draws. Default is \code{TRUE}.}
 
 \item{update_datadist}{Logical. Whether to update datadist for rms models
 during bootstrap. Default is TRUE.}
@@ -82,23 +102,70 @@ for bootstrap refitting. Default is FALSE.}
 The input object with added columns:
 \item{conf.low}{Lower confidence bound}
 \item{conf.high}{Upper confidence bound}
-\item{std.error}{Standard error from simulation/bootstrap}
+\item{std.error}{Standard error from analytical delta propagation,
+simulation, or bootstrap}
 
-If \code{return_draws = TRUE}, the object also has a \code{"draws"} attribute
-containing all individual draws. Extract
-with \code{get_draws()}. For ungrouped \code{sops()} objects evaluated on the stored
-empirical prediction cohort, score-bootstrap and FWB draws include the
-draw-specific \code{score_weight} or \code{fwb_weight} column.
+For simulation and bootstrap methods, \code{return_draws = TRUE} also stores a
+\code{"draws"} attribute containing all individual draws. Delta results instead
+store a low-rank \code{"analytical"} attribute and never store draws. For
+ungrouped \code{sops()} objects evaluated on the stored prediction
+cohort, score-bootstrap and FWB draws include the draw-specific
+\code{score_weight} or \code{fwb_weight} column.
 }
 \description{
-Adds confidence intervals to SOP objects using simulation-based or bootstrap
-methods. The default method is multivariate-normal coefficient simulation.
-For objects produced from
-\code{rmsb::blrm()} models, posterior uncertainty is already computed by
-\code{sops()}/\code{avg_sops()}, so \code{inferences()} ignores \code{method} and returns the
-object unchanged.
+Adds confidence intervals to SOP objects using analytical delta,
+simulation-based, or bootstrap methods. The default method is
+multivariate-normal coefficient simulation. Objects produced from
+\code{rmsb::blrm()} models already contain posterior uncertainty, so non-delta
+calls return them unchanged. \code{method = "delta"} is frequentist-only and
+errors for \code{blrm} objects.
 }
 \details{
+\subsection{Analytical Delta Method}{
+
+\code{method = "delta"} differentiates the first-order full
+proportional-odds SOP recursion on the model's complete raw-coefficient
+scale. With \code{vcov = "conditional"}, covariance is propagated as
+\eqn{J V J^\top}, where \eqn{J} contains derivatives of the reported
+estimates with respect to the model coefficients and \eqn{V} is their
+complete named covariance matrix. An explicit covariance matrix passed
+as \code{vcov} overrides the model covariance for conditional inference.
+
+\code{vcov = "conditional"} accounts for uncertainty in the estimated model
+coefficients while treating the patients' starting states and covariates
+used for prediction or averaging as given.
+\code{vcov = "unconditional"} is the default for averaged results and is available
+only for the patients stored with the fitted model. It also accounts for
+variation in which patients are sampled from the population, including its
+association with coefficient estimation from those same patients. Thus it
+estimates uncertainty in the population average. The calculation combines
+each patient's deviation from the average prediction with their contribution
+to coefficient estimation, then divides the sample covariance of these
+combined contributions by the number of patients. The sample covariance
+uses the usual divisor of one less than the number of patients; the model's
+\code{type} and \code{cadjust} corrections are not applied again.
+User-supplied prediction cohorts require \code{vcov = "conditional"};
+unavailable unconditional inference errors rather than silently falling back.
+A custom covariance matrix always selects conditional inference because
+unconditional inference requires fitted-model scores and sensitivity.
+Every included patient must contribute at least one usable likelihood
+transition and have exactly one complete model-stored starting profile. The
+starting profile may have a missing first transition response; its ID,
+predictors, scheduled starting time, and previous state must be observed.
+Weighted and penalized ORM fits do not support unconditional variance because
+their score/sensitivity contracts have not been established. They remain
+eligible for conditional delta inference when their fitted covariance is valid.
+
+Analytical covariance is patient-cluster robust only when valid patient IDs
+are supplied explicitly or retained as the fitted model's \code{id_var}.
+Observation rows are not an automatic clustering fallback, and multiway or
+otherwise non-patient cluster structures are not currently supported.
+Patient-cluster robustness protects variance estimation against
+within-patient score correlation; it does not remove bias from a misspecified
+transition model, informative observation process, or Markov assumption.
+\code{blrm} models are not supported by the analytical method.
+}
+
 \subsection{Simulation Method}{
 
 The simulation method works as follows:
@@ -118,10 +185,10 @@ cluster-level exponential multipliers.
 for \code{engine = "mvn"}
 \item \code{engine = "score_bootstrap"} supports \code{avg_sops()} and \code{sops()} with
 \code{robcov_vglm} models and with \code{orm} models when \code{cluster} is supplied.
-When the prediction rows are the stored empirical cohort, the same
+When the prediction rows are the stored patients, the same
 cluster-level weights used for the score perturbation are used for every
 empirical averaging step. With \code{by}, weights are normalized within each
-subgroup; without \code{by}, they are normalized over the full empirical cohort.
+subgroup; without \code{by}, they are normalized over the full set of stored patients.
 }
 }
 
@@ -151,14 +218,14 @@ for bootstrap draw weights.
 }
 
 For marginal \code{avg_sops()} objects built from user-supplied \code{newdata}, the
-supplied rows are fixed standardization profiles. The same fixed-profile rule
-applies to \code{sops(newdata = ...)}. Score bootstrap and FWB use the
+supplied patients' starting states and covariates are treated as given.
+This also applies to \code{sops(newdata = ...)}. Score bootstrap and FWB use the
 original/refit data for coefficient or refit uncertainty, but do not attach or
 apply draw weights to the supplied prediction profiles because those rows
 cannot be assumed to align with the bootstrap clusters.
 
-This design ensures consistency: the same vcov is used for both point
-estimates and inference, regardless of how \code{inferences()} is called.
+Choosing conditional or unconditional analytical variance changes the
+standard errors and confidence intervals, not the point estimates.
 }
 }
 \examples{
@@ -191,7 +258,7 @@ result_score <- avg_sops(
 ) |>
   inferences(method = "score_bootstrap", n_draws = 1000)
 
-# orm_markov() uses rms::robcov() for full robust covariance matrices.
+# orm_markov() stores the package-owned full robust covariance matrix.
 dd <- rms::datadist(data)
 options(datadist = "dd")
 fit_orm <- orm_markov(y ~ time + tx + yprev, data = data, id_var = "id")
@@ -256,8 +323,8 @@ quantile(treatment_effect$effect, c(0.025, 0.5, 0.975))
 
 }
 \seealso{
-\code{\link[=avg_sops]{avg_sops()}}, \code{\link[=sops]{sops()}}, \code{\link[=get_draws]{get_draws()}}, \code{\link[=robcov_vglm]{robcov_vglm()}},
-\code{\link[=set_coef]{set_coef()}}
+\code{\link[=avg_sops]{avg_sops()}}, \code{\link[=sops]{sops()}}, \code{\link[=get_draws]{get_draws()}},
+\code{\link[=robcov_vglm]{robcov_vglm()}}, \code{\link[=set_coef]{set_coef()}}
 
 \code{\link[=get_draws]{get_draws()}} to extract individual draws from any inference method
 }

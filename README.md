@@ -41,6 +41,8 @@ fit <- orm_markov(
   y ~ rms::rcs(time, 4) + tx + yprev,
   data = markov_data,
   id_var = "id",
+  type = "HC0",
+  cadjust = TRUE,
   opt_method = "LM",
   scale = TRUE
 )
@@ -67,6 +69,85 @@ plot_sops(sop_ci, facet_var = "tx") +
   )
 ```
 
+## Analytical Confidence Intervals
+
+The default inference method remains `method = "mvn"`. For a deterministic
+first-order delta-method calculation, reuse the same averaged full
+proportional-odds SOP object (`sop`, created above by `avg_sops()`) and state the
+variance estimate explicitly:
+
+```r
+sop_conditional <- inferences(
+  sop,
+  method = "delta",
+  vcov = "conditional"
+)
+
+sop_unconditional <- inferences(
+  sop,
+  method = "delta",
+  vcov = "unconditional"
+)
+
+# Extract variances and covariances for the first eight estimates.
+V <- stats::vcov(sop_unconditional, rows = 1:8)
+```
+
+Conditional variance accounts for coefficient estimation while treating the
+patients' starting states and covariates used for prediction as given.
+Unconditional variance also accounts for which patients were sampled and their
+role in estimating those coefficients. It is the default for averaged results
+and requires the patients stored with the fitted model. Supplied `newdata`
+requires `vcov = "conditional"`. Both choices give the same point estimates.
+
+`orm_markov(id_var = "id")` and `vglm_markov(id_var = "id")` preserve
+one first-follow-up profile per fitted patient before response-driven row
+omission. `first_followup_time` selects that row only: for numeric time its
+`NULL` default resolves to 1, time 1 must exist, and values below 1 are rejected;
+factor or character time requires an explicit value. A missing first transition
+response is allowed when ID, predictors, and `yprev` are complete and the
+patient contributes another usable likelihood transition. The same automatic
+profiles support `sops()`, `avg_sops()`, and `avg_comparisons()` when `newdata`
+is omitted.
+
+Both frequentist wrappers expose the same empirical sandwich correction
+controls. `type = "HC0"` applies no row degrees-of-freedom correction, whereas
+`type = "HC1"` multiplies by `(n - 1) / (n - p)`. For weighted ORM fits, `n`
+and `G` count only positive-weight represented rows and clusters. Independently,
+`cadjust = TRUE` multiplies by `G / (G - 1)`; its `NULL` default resolves to
+`TRUE` when patient clustering is requested. `orm_markov()` computes this
+sandwich inside `markov.misc` from analytic ORM row scores and the full
+model-based bread, including fitted case weights. Penalized ORM fits using
+`var.penalty = "sandwich"` use the retained `var.from.info.matrix` inverse
+sensitivity as bread. These settings affect conditional analytical variance and MVN inference.
+Unconditional variance uses its own patient-level sample-covariance correction;
+`type` and `cadjust` do not change it.
+
+Use `orm_markov()`, `vglm_markov()`, or `blrm_markov()` for package model-based
+SOP and diagnostic workflows. Raw `rms`, `VGAM`, or `rmsb` fits do not carry the
+wrapper provenance and stored-data contracts those workflows now require.
+
+Real-time summaries are configured downstream rather than in the fitting
+wrapper. `baseline_time = 0` places the observed `yprev` distribution at
+baseline (`NULL` disables this anchor), `time_map` maps factor visits to elapsed
+time, and `target_times` defines the returned and integrated grid. For example,
+with the first modeled SOP mapped to day 7, `target_times = 1:28` interpolates
+from the observed day-0 distribution to day 7 but integrates only days 1--28.
+When `target_times` is omitted, time-in-state summaries integrate the mapped
+follow-up nodes and exclude the baseline interval.
+
+Patient-cluster robustness protects the variance against arbitrary within-patient
+score correlation; it does not correct transition-model bias, informative
+observation, or Markov/proportional-odds misspecification.
+
+For analytical inference, omitted `vcov` (or `NULL`) selects `"unconditional"`
+for averaged SOPs and comparisons, and `"conditional"` for individual `sops()`.
+Individual results support only conditional inference. A custom coefficient
+covariance matrix also selects conditional inference. Supplied `newdata`
+requires an explicit conditional choice; unsupported unconditional inference
+errors without falling back. The `target` argument has been removed.
+
+
 ## Learn More
 
 After installation, see:
@@ -77,6 +158,7 @@ vignette("partial-po-vglm-sops", package = "markov.misc")
 vignette("second-order-orm-sops", package = "markov.misc")
 vignette("many-levels-previous-state-spline", package = "markov.misc")
 vignette("factor-time-orm-sops", package = "markov.misc")
+vignette("analytical-confidence-intervals", package = "markov.misc")
 vignette("bayesian-rmsb-sops", package = "markov.misc")
 vignette("mvn-vs-bootstrap-orm-sops", package = "markov.misc")
 ```

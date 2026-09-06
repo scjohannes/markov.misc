@@ -4,14 +4,16 @@ test_that("Markov workflows reject non-logit vglm links", {
   data <- suppressWarnings(
     make_test_data(n_patients = 80, seed = 841, follow_up_time = 5)
   )
-  fit <- VGAM::vglm(
-    ordered(y) ~ time + tx + yprev,
-    family = VGAM::cumulative(
-      reverse = TRUE,
-      parallel = TRUE,
-      link = "probitlink"
-    ),
-    data = data
+  fit <- suppressWarnings(
+    vglm_markov(
+      ordered(y) ~ time + tx + yprev,
+      family = VGAM::cumulative(
+        reverse = TRUE,
+        parallel = TRUE,
+        link = "probitlink"
+      ),
+      data = data
+    )
   )
 
   error <- tryCatch(
@@ -45,12 +47,12 @@ test_that("Markov workflows reject non-logistic orm families", {
     },
     add = TRUE
   )
-  fit <- rms::orm(
-    ordered(y) ~ time + tx + yprev,
-    family = "probit",
-    data = data,
-    x = TRUE,
-    y = TRUE
+  fit <- suppressWarnings(
+    orm_markov(
+      ordered(y) ~ time + tx + yprev,
+      family = "probit",
+      data = data
+    )
   )
 
   error <- tryCatch(
@@ -68,10 +70,12 @@ test_that("Markov workflows accept logit vglm and orm models", {
   data <- suppressWarnings(
     make_test_data(n_patients = 80, seed = 843, follow_up_time = 5)
   )
-  vglm_fit <- VGAM::vglm(
-    ordered(y) ~ time + tx + yprev,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
+  vglm_fit <- suppressWarnings(
+    vglm_markov(
+      ordered(y) ~ time + tx + yprev,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data
+    )
   )
   dd_name <- ".markov_misc_link_accept_dd"
   assign(dd_name, rms::datadist(data), envir = globalenv())
@@ -83,13 +87,50 @@ test_that("Markov workflows accept logit vglm and orm models", {
     },
     add = TRUE
   )
-  orm_fit <- rms::orm(
+  orm_fit <- suppressWarnings(
+    orm_markov(
+      ordered(y) ~ time + tx + yprev,
+      data = data
+    )
+  )
+
+  expect_null(markov.misc:::validate_markov_model(vglm_fit))
+  expect_null(markov.misc:::validate_markov_model(orm_fit))
+})
+
+test_that("Markov workflows reject raw and manually robust backend fits", {
+  skip_if_not_installed("VGAM")
+  skip_if_not_installed("rms")
+
+  data <- suppressWarnings(
+    make_test_data(n_patients = 40, seed = 844, follow_up_time = 5)
+  )
+  raw_fit <- VGAM::vglm(
+    ordered(y) ~ time + tx + yprev,
+    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+    data = data
+  )
+  robust_fit <- robcov_vglm(raw_fit, cluster = data$id)
+  raw_orm_fit <- rms::orm(
     ordered(y) ~ time + tx + yprev,
     data = data,
     x = TRUE,
     y = TRUE
   )
 
-  expect_null(markov.misc:::validate_markov_model(vglm_fit))
-  expect_null(markov.misc:::validate_markov_model(orm_fit))
+  expect_error(
+    markov.misc:::validate_markov_model(raw_fit),
+    "require fits created by `vglm_markov()`",
+    fixed = TRUE
+  )
+  expect_error(
+    markov.misc:::validate_markov_model(robust_fit),
+    "require fits created by `vglm_markov()`",
+    fixed = TRUE
+  )
+  expect_error(
+    markov.misc:::validate_markov_model(raw_orm_fit),
+    "require fits created by `orm_markov()`",
+    fixed = TRUE
+  )
 })

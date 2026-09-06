@@ -153,8 +153,10 @@ set_coef.vglm <- function(model, new_coefs) {
 #' use in simulation-based inference. This function provides a unified
 #' interface for obtaining robust vcov from different model types.
 #'
-#' @param model A fitted model object (e.g., `vglm`, `orm`, `lrm`) or a
-#'   `robcov_vglm` object (which already contains robust vcov).
+#' @param model A fitted `vglm`, `orm`, or `lrm` object, or a `robcov_vglm`
+#'   object that already contains robust covariance. Model-based SOP workflows
+#'   separately require provenance from the corresponding `*_markov()` fitting
+#'   wrapper.
 #' @param cluster Optional. Specifies how to compute cluster-robust standard
 #'   errors:
 #'   \itemize{
@@ -171,9 +173,11 @@ set_coef.vglm <- function(model, new_coefs) {
 #' @param adjust Deprecated compatibility alias for `cadjust` for `vglm`
 #'   models.
 #' @param bread Bread used for a raw `vglm` model: `"observed"` or `"vglm"`.
-#' @param type HC correction used for a raw `vglm` model: `"HC0"` or `"HC1"`.
-#' @param cadjust Optional logical cluster correction used for a raw `vglm`
-#'   model. By default it is applied when `cluster` is supplied.
+#' @param type HC correction used when computing an ORM or VGLM sandwich:
+#'   `"HC0"` or `"HC1"`.
+#' @param cadjust Optional logical finite-cluster correction used when computing
+#'   an ORM or VGLM sandwich. By default it is applied when `cluster` is
+#'   supplied.
 #'
 #' @return A variance-covariance matrix.
 #'
@@ -185,9 +189,11 @@ set_coef.vglm <- function(model, new_coefs) {
 #' `robcov_vglm()`), the stored robust vcov is returned directly.
 #'
 #' **2. No clustering requested:**
-#' If `cluster = NULL`, returns the robust (sandwich) vcov. For `vglm` models,
-#' this is computed via [robcov_vglm()]; for `orm` models, it uses
-#' `rms::robcov()`.
+#' If `cluster = NULL`, returns the robust sandwich covariance. VGLM models use
+#' [robcov_vglm()], while ORM models use the package-internal analytic-score
+#' sandwich. A stored package-owned ORM covariance is reused only when its
+#' provenance and covariance identity remain valid and no correction override
+#' is requested.
 #'
 #' **3. Cluster formula:**
 #' If `cluster` is a formula like `~id`, the function first tries to extract
@@ -199,6 +205,12 @@ set_coef.vglm <- function(model, new_coefs) {
 #' score contributions, which have length equal to the number of observations
 #' used to fit the model. The cluster variable must therefore match this length,
 #' NOT the length of any new prediction data.
+#'
+#' ORM and VGLM HC1 and finite-cluster corrections use the same definitions.
+#' `type = "HC1"` applies `(n - 1) / (n - p)` and `cadjust = TRUE`
+#' independently applies `G / (G - 1)`. An explicit cluster or correction
+#' request recomputes the ORM covariance; otherwise a valid covariance stored by
+#' [orm_markov()] is returned unchanged.
 #'
 #' @examples
 #' \dontrun{
@@ -220,7 +232,7 @@ set_coef.vglm <- function(model, new_coefs) {
 #' V3 <- get_vcov_robust(fit_robust)  # Same as fit_robust$var
 #' }
 #'
-#' @seealso [robcov_vglm()], [rms::robcov()], [set_coef()]
+#' @seealso [orm_markov()], [robcov_vglm()], [set_coef()]
 #'
 #' @importFrom stats vcov
 #' @export
@@ -233,14 +245,23 @@ get_vcov_robust <- function(
   type = c("HC0", "HC1"),
   cadjust = NULL
 ) {
+  type_missing <- missing(type)
+  cadjust_missing <- missing(cadjust)
+  type <- match.arg(type)
+
   # --- Case 1: Already a robcov_vglm object ---
   if (inherits(model, "robcov_vglm")) {
     return(model$var)
   }
 
-  # --- Case 2: rms model with robcov already applied ---
-  # rms::robcov() stores robust var in fit$var, original in fit$orig.var
-  if (inherits(model, c("orm", "lrm")) && !is.null(model$orig.var)) {
+  # --- Case 2: package-owned orm robust covariance ---
+  if (
+    inherits(model, "orm") &&
+      is.null(cluster) &&
+      type_missing &&
+      cadjust_missing &&
+      orm_stored_covariance_valid(model)
+  ) {
     return(model$var)
   }
 
@@ -257,10 +278,16 @@ get_vcov_robust <- function(
           cadjust = cadjust
         )$var
       )
-    } else if (inherits(model, c("orm", "lrm"))) {
-      if (!requireNamespace("rms", quietly = TRUE)) {
-        stop("Package 'rms' is required for robust vcov with orm/lrm models")
-      }
+    } else if (inherits(model, "orm")) {
+      return(
+        robcov_orm(
+          model,
+          cluster = NULL,
+          type = type,
+          cadjust = cadjust
+        )$var
+      )
+    } else if (inherits(model, "lrm")) {
       return(rms::robcov(model)$var)
     }
     # Fallback for other models
@@ -362,13 +389,23 @@ get_vcov_robust <- function(
       cadjust = cadjust
     )
     return(robcov_result$var)
-  } else if (inherits(model, c("orm", "lrm"))) {
-    # Use rms::robcov
-    if (!requireNamespace("rms", quietly = TRUE)) {
-      stop("Package 'rms' is required for robust vcov with orm/lrm models")
+  } else if (inherits(model, "orm")) {
+    stored_metadata <- orm_robust_metadata(model)
+    orm_type <- if (type_missing) stored_metadata$type %||% type else type
+    orm_cadjust <- if (cadjust_missing) {
+      stored_metadata$cadjust %||% cadjust
+    } else {
+      cadjust
     }
-    robcov_result <- rms::robcov(model, cluster = cluster)
+    robcov_result <- robcov_orm(
+      model,
+      cluster = cluster,
+      type = orm_type,
+      cadjust = orm_cadjust
+    )
     return(robcov_result$var)
+  } else if (inherits(model, "lrm")) {
+    return(rms::robcov(model, cluster = cluster)$var)
   } else {
     stop(
       "Unsupported model class for robust vcov: ",
@@ -398,8 +435,9 @@ validate_coef_vcov <- function(beta, Sigma, arg = "vcov") {
       nrow(Sigma),
       " x ",
       ncol(Sigma),
-      "). For orm models, use the full covariance matrix from ",
-      "rms::robcov(fit)$var or rms::robcov(fit)$orig.var, not stats::vcov(fit)."
+      "). For orm models, supply a complete raw-coefficient covariance, ",
+      "preferably the package-owned covariance stored by `orm_markov()` or ",
+      "an explicitly named full matrix."
     )
   }
 

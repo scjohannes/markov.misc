@@ -1,5 +1,76 @@
 # markov.misc 0.1.0
 
+- `inferences(method = "delta")` now checks covariance matrices and variances
+  relative to their scale, accepting small valid matrices while rejecting
+  negative variances that were previously rounded to zero. Point-estimate
+  checks allow small numerical differences relative to the estimate, and
+  derivative checks accommodate covariates expressed in large units.
+
+- `inferences()` now clears old baseline draws when rerun, so switching from
+  bootstrap to MVN inference keeps the baseline fixed during interpolation.
+
+- `inferences(method = "delta")` now uses `"unconditional"` consistently in
+  result metadata and error messages for variance that includes patient sampling.
+  Internal helper and test filenames use the same terminology.
+
+- `orm_markov()` and analytical inference now accept explicit `penalty = 0`
+  without failing on rms's stored penalty list.
+- `orm_markov()` now checks covariance positive definiteness independently of
+  coefficient units, allowing valid fits when covariates are rescaled (for
+  example, converting time from days to minutes).
+- Model-based SOP and diagnostic workflows now require fits created by
+  `orm_markov()`, `vglm_markov()`, or `blrm_markov()`. This wrapper provenance
+  guarantees the stored fitting-data contracts needed for prediction and
+  inference; internal bootstrap refits retain it automatically.
+- `orm_markov()` now computes its cluster-robust covariance with a package-owned
+  analytic-score sandwich instead of `rms::robcov()`. Its new `type` and
+  `cadjust` controls match `vglm_markov()`, support weighted empirical
+  covariance, and record correction, cluster, bread, and integrity metadata.
+- `vglm_markov()` now accepts `type` and `cadjust` to control the HC0/HC1 and
+  finite-cluster corrections used by its automatic robust covariance wrapper.
+- `get_jacobian()` is now an unexported inspection helper. Use `inferences()`
+  and `vcov()` for public analytical inference and covariance extraction.
+- `inferences(method = "delta")` replaces `target` with `vcov = "conditional"`
+  or `"unconditional"`. Averaged results now default to unconditional inference;
+  individual `sops()` results default to conditional inference. Custom covariance
+  matrices select conditional inference. Supplied prediction cohorts require
+  an explicit conditional choice.
+- `inferences(method = "delta")` now propagates average comparisons using only
+  nonzero source indices and weights, avoiding dense comparison and real-time
+  interpolation matrices. Large comparison grids require substantially less
+  working memory. Full `vcov()` output remains subject to the memory limit;
+  use `rows` to extract smaller covariance blocks.
+- `inferences(method = "delta")` now reports warned `NA` logit confidence
+  limits for probabilities exactly zero or one, including when numerical
+  saturation produces a zero standard error. Wald intervals are unchanged.
+  Averaged inference now validates counterfactual scenario and patient ordering
+  before native averaging, and VGLM coefficient maps are checked against VGAM's
+  native coefficient expansion.
+- `inferences()` now supports analytical delta-method intervals for individual
+  and average first-order full proportional-odds ORM/VGLM SOPs and supported
+  SOP or time-in-state differences. Conditional variance accounts for model
+  coefficient estimation; unconditional variance also accounts for sampling
+  the patients used in the average. `conf_type = "auto"` uses logit intervals
+  for SOP probabilities and Wald intervals for comparisons. Unconditional
+  variance is unavailable for weighted or penalized ORM fits.
+- `orm_markov()`, `vglm_markov()`, and `blrm_markov()` now retain designated
+  starting profiles before response-driven row omission, separately from fitted
+  likelihood rows and refit data. Automatic SOP prediction requires one complete
+  starting profile per fitted patient; the first transition response may be
+  missing when the patient contributes a usable later transition. Patients with
+  no usable fitted transition are excluded, and `refit_data` is not used as a
+  prediction-profile fallback.
+- `orm_markov()`, `vglm_markov()`, and `blrm_markov()` now exclude missing
+  times when selecting starting profiles, allowing automatic SOP prediction
+  when a patient has a complete starting profile and a later time is missing.
+- `orm_markov()`, `vglm_markov()`, and `blrm_markov()` now use
+  `first_followup_time` solely to select automatic starting profiles. Numeric
+  time defaults to 1 and rejects schedules below 1; factor or character time
+  requires an explicit value. The wrappers no longer accept `start_time`,
+  `origin_time`, or `time_map`.
+- `vcov()` methods for analytical SOP and average-comparison results now
+  materialize selected covariance blocks from retained coefficient or patient
+  influence representations instead of storing a dense all-cell covariance.
 - Markov/SOP workflows now reject non-logit `orm` and cumulative `vglm` links
   before prediction instead of applying logistic algebra to incompatible fits.
 - `inferences()` now reuses serial execution plans, evaluates fixed-order draw
@@ -13,6 +84,23 @@
   irregular or duplicate grids.
 - `interpolate_sops()` now preserves `NA` outside each estimate or draw series'
   own observed time support instead of extrapolating from endpoint values.
+- `sim_actt1_markov()` now generates simplified ACTT-1 eight-state trajectories
+  from posterior mean proportional-odds coefficients, the observed baseline
+  state counts, an assumed ACTT-2 day-spline basis, and a state-8 absorbing rule.
+  Age and sex effects are intentionally omitted. The fitted threshold-specific
+  time deviation is retained to reproduce approximately 10% mortality by day 28.
+- `sim_actt2_markov()` now generates ACTT-2-like eight-state trajectories from
+  the supplied proportional-odds coefficients, fixed restricted cubic day
+  spline, baseline-state distribution, and state-8 absorbing rule.
+- `sim_actt2_markov_60day()` provides a 60-day full proportional-odds Markov
+  approximation fitted to 5,590,720 transitions from a deterministic-seed
+  100,000-patient `sim_trajectories_brownian_gap()` cohort. The source uses
+  `drift_start = rpois(n, 6.026099)` and the supplied 60-day calibration
+  parameters. Documentation records the approximation gap: day-60 mortality is
+  15.55% under the fitted Markov recursion versus 9.58% in the source cohort.
+- `sim_actt1_markov()` and `sim_actt2_markov()` accept a day-1
+  `treatment_effect` and a nonnegative `treatment_effect_decay` rate for an
+  optional exponentially diminishing treatment effect.
 - `sim_trajectories_brownian()` and the default `sim_trajectories_markov()` path
   now use fused serial categorical sampling and direct long-output construction.
 - `soprob_markov()` now streams visit designs into fused PO or general-logit
@@ -30,6 +118,11 @@
   is used; inference reports the fallback only once per call.
 - `states_to_tte_v2()` now collapses trajectories with a linear indexed run
   scan, and bootstrap samples are materialized from reusable row-index plans.
+- Standard refit bootstrap wrapper fits now replace the source ID with each
+  resampled copy's unique bootstrap patient ID before cluster-robust fitting.
+- `time_in_state()` now restricts stored draws to `target_times` for already
+  interpolated SOPs, keeping confidence intervals and standard errors aligned
+  with the requested time range.
 - `vglm_markov()` now uses an extensible RMS basis registry and ships first-class
   assignment metadata for both `rcs()` and `lsp()` terms.
 - `avg_sops()` now marginalizes counterfactual SOP arrays directly instead of
@@ -52,12 +145,14 @@
 - `avg_comparisons()` now computes average SOP, time-in-state, and ordinal
   time-benefit contrasts between counterfactual levels, with uncertainty added
   through the existing `inferences()` workflow.
-- `avg_comparisons(metric = "time_benefit")` inference now reuses the shared
+- `avg_comparisons(estimand = "time_benefit")` inference now reuses the shared
   SOP simulation draw engine, honors `workers` for simulation draws, and applies
   the same longitudinal-data validation used by other refit bootstrap paths.
-- `avg_comparisons(metric = "time_benefit")` inference now applies stored
-  `time_map`/`origin_time` settings to draw-level SOPs before computing
-  real-time AUC intervals.
+- `avg_comparisons(estimand = "time_benefit")` inference now applies stored
+  `time_map`, `baseline_time`, and `target_times` settings to draw-level SOPs
+  before computing real-time AUC intervals. `baseline_time = 0` anchors
+  interpolation at the observed previous-state distribution; omitted
+  `target_times` exclude the baseline interval from real-time AUC by default.
 - `bootstrap_standardized_sops()` and `plot_bootstrap_sops()` have been moved
   to `archive/`; use `avg_sops()` with `inferences(method = "bootstrap")` and
   `plot_sops()` for active bootstrap SOP workflows.

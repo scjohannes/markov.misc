@@ -1,9 +1,10 @@
 #' Fit a VGAM Markov Model
 #'
 #' `vglm_markov()` is the recommended VGAM fitting entrypoint for
-#' `markov.misc` SOP workflows. It follows `VGAM::vglm()` closely, stores the
-#' row-aligned fitting data for downstream SOP inference, and marks the fit so
-#' the SOP prediction code can use package-native Markov prediction. For inline
+#' `markov.misc` SOP workflows. It follows `VGAM::vglm()` closely, stores
+#' separate likelihood, refit, and designated-start profile data for downstream
+#' SOP inference, and marks the fit so the SOP prediction code can use
+#' package-native Markov prediction. For inline
 #' registered RMS spline terms such as `rcs(time, 4)`, `lsp(time, 5)`, or their
 #' namespace-qualified forms, the internal VGAM assignment metadata is split by
 #' generated spline column.
@@ -32,9 +33,30 @@
 #' @param family A VGAM family object, e.g. `VGAM::cumulative()`.
 #' @param id_var Optional character scalar naming the patient or cluster ID
 #'   column in `data`. When supplied, [robcov_vglm()] is applied automatically.
+#' @param type HC correction passed to [robcov_vglm()] when `id_var` is
+#'   supplied: `"HC0"` (the default) or `"HC1"`.
+#' @param cadjust Optional logical cluster correction passed to [robcov_vglm()]
+#'   when `id_var` is supplied. `NULL` uses the clustered default, which applies
+#'   the `G / (G - 1)` correction.
+#' @param time_var Character scalar naming the modeled time column used to
+#'   identify the designated starting-profile row.
+#' @param first_followup_time First scheduled post-baseline outcome time used to
+#'   select the starting-profile row. For numeric time, `NULL` uses 1. Numeric
+#'   schedules may not contain values below 1, and an explicit value must be the
+#'   earliest observed time. Factor and character time require an explicit
+#'   matching value.
 #' @param constraints Optional VGAM constraints list. For inline registered RMS
 #'   basis terms, names should match the column-level constraint names in a full
 #'   proportional odds fit returned by `vglm_markov()`.
+#'
+#' @details Starting profiles are retained before response-driven model-frame
+#'   omission. Every fitted patient must have exactly one complete profile at
+#'   the cohort-wide `first_followup_time`, including ID, model predictors,
+#'   time, and the previous state; the transition response on that row may be
+#'   missing. A patient is included only when at least one usable likelihood
+#'   transition is fitted somewhere. Patients with no fitted transition are
+#'   excluded, and a fitted patient without a complete designated profile is an
+#'   error. Later likelihood rows are not substituted for that profile.
 #'
 #' @return A fitted S4 `vglm` object with internal Markov marker attributes, or
 #'   a `robcov_vglm` object when `id_var` is supplied.
@@ -96,6 +118,8 @@ vglm_markov <- function(
   family = stop("argument 'family' needs to be assigned"),
   data = list(),
   id_var = NULL,
+  type = c("HC0", "HC1"),
+  cadjust = NULL,
   weights = NULL,
   subset = NULL,
   na.action,
@@ -113,8 +137,13 @@ vglm_markov <- function(
   form2 = NULL,
   qr.arg = TRUE,
   smart = TRUE,
+  time_var = "time",
+  first_followup_time = NULL,
   ...
 ) {
+  type <- match.arg(type)
+  markov_call <- match.call(expand.dots = FALSE)
+  markov_reject_legacy_wrapper_args(markov_call$..., "vglm_markov()")
   dataname <- as.character(substitute(data))
   function.name <- "vglm"
   ocall <- match.call()
@@ -161,6 +190,7 @@ vglm_markov <- function(
     warn_duplicate_markov_id_time(
       original_data,
       id_var,
+      time_var = time_var,
       wrapper = "vglm_markov()"
     )
   } else if (!is.null(original_data) && "id" %in% names(original_data)) {
@@ -390,11 +420,41 @@ vglm_markov <- function(
   attr(answer, "markov_vglm") <- TRUE
   attr(answer, "markov_split_assign") <- split_assign$has_basis
   attr(answer, "markov_basis_terms") <- split_assign$basis_terms
-  answer <- markov_attach_model_data(answer, fit_data, id_var)
+  stored <- markov_prepare_stored_data(
+    data = original_data,
+    formula = formula,
+    subset = ocall$subset,
+    eval_env = parent.frame(),
+    fit_data = fit_data,
+    id_var = id_var,
+    time_var = time_var,
+    first_followup_time = first_followup_time
+  )
+  answer <- markov_attach_model_data(
+    answer,
+    data = fit_data,
+    id_var = id_var,
+    refit_data = stored$refit_data,
+    starting_profile_data = stored$starting_profile_data,
+    starting_profile_metadata = stored$starting_profile_metadata
+  )
+  answer <- markov_set_fit_wrapper(answer, "vglm_markov")
 
   if (!is.null(id_var)) {
-    robust <- robcov_vglm(answer, cluster = fit_data[[id_var]])
-    robust <- markov_attach_model_data(robust, fit_data, id_var)
+    robust <- robcov_vglm(
+      answer,
+      cluster = fit_data[[id_var]],
+      type = type,
+      cadjust = cadjust
+    )
+    robust <- markov_attach_model_data(
+      robust,
+      data = fit_data,
+      id_var = id_var,
+      refit_data = stored$refit_data,
+      starting_profile_data = stored$starting_profile_data,
+      starting_profile_metadata = stored$starting_profile_metadata
+    )
     return(robust)
   }
 

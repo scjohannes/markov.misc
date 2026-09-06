@@ -11,6 +11,8 @@ blrm_markov(
   data,
   ...,
   id_var = NULL,
+  time_var = "time",
+  first_followup_time = NULL,
   x = TRUE,
   y = TRUE
 )
@@ -31,6 +33,13 @@ column in \code{data}. When supplied, SOP calls can reuse the stored full data
 and infer the ID column for baseline extraction and random-effect
 prediction.}
 
+\item{time_var}{Character scalar naming the modeled time column used to
+identify the designated starting-profile row.}
+
+\item{first_followup_time}{First scheduled post-baseline outcome time used to
+select the starting-profile row. See \code{\link[=orm_markov]{orm_markov()}} for the numeric and
+categorical time contracts.}
+
 \item{x}{set to \code{FALSE} to not store the design matrix in the fit.  \code{x=TRUE} is needed if running \code{blrmStats} for example.}
 
 \item{y}{set to \code{FALSE} to not store the response variable in the fit}
@@ -41,10 +50,17 @@ A fitted \code{blrm} object with \code{markov.misc} stored-data metadata.
 \description{
 \code{blrm_markov()} is a thin package-aware wrapper around \code{\link[rmsb:blrm]{rmsb::blrm()}} for
 Markov SOP workflows. It fits with \code{x = TRUE} and \code{y = TRUE} by default,
-rejects offsets, and stores the row-aligned fitting data and optional patient
-ID column on the returned model. Bayesian fits do not receive
+rejects offsets, and stores separate likelihood, refit, and designated-start
+profile data plus the optional patient ID on the returned model. Bayesian
+fits do not receive
 cluster-robust covariance; posterior uncertainty comes from the fitted
 \code{blrm} draws.
+}
+\details{
+The designated-start profile and fitted-patient eligibility contract
+is the same as for \code{\link[=orm_markov]{orm_markov()}}. In particular, the transition response
+at the starting row may be missing when that patient contributes another
+usable likelihood transition.
 }
 \examples{
 \dontrun{

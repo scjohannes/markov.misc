@@ -15,5 +15,6 @@
 ^design$
 ^cran-comments\.md$
 ^CRAN-READINESS-PLAN\.md$
+^ANALYTICAL_CIS_PLAN\.md$
 ^markov\.misc_.*\.tar\.gz$
 ^vignettes/\.gitignore$

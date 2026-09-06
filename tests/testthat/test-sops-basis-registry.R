@@ -153,12 +153,12 @@ test_that("orm lsp terms use the optimized execution plan", {
     },
     add = TRUE
   )
-  fit <- rms::orm(
+  fit <- suppressWarnings(orm_markov(
     ordered(y) ~ rms::lsp(time, c(3, 7)) + tx + yprev,
     data = data,
     x = TRUE,
     y = TRUE
-  )
+  ))
   baseline <- data[data$time == 1, , drop = FALSE][1:8, , drop = FALSE]
 
   plan <- markov.misc:::compile_sop_execution_plan(

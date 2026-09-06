@@ -98,7 +98,8 @@ scores when \code{cluster} is supplied}
 \description{
 Computes the Huber-White sandwich covariance matrix estimator for vglm
 objects, optionally with cluster-robust standard errors. This provides
-functionality similar to \code{rms::robcov()} for vglm models.
+functionality for vglm models using the same HC1 and finite-cluster scalar
+corrections as the package-owned ORM sandwich.
 }
 \details{
 The sandwich estimator has the form:
@@ -127,8 +128,8 @@ meat matrix:
 The \code{type} and \code{cadjust} corrections are separate, matching the controls used
 by \code{sandwich::meatCL()}. For clustered data, \code{cadjust = TRUE} multiplies the
 meat by G/(G-1). \code{type = "HC1"} independently multiplies it by
-(n-1)/(n-p). Set \code{cadjust = FALSE} and \code{type = "HC0"} when matching
-unadjusted \code{rms::robcov()} results.
+(n-1)/(n-p). Set \code{cadjust = FALSE} and \code{type = "HC0"} for an unadjusted
+sandwich.
 
 \strong{Z-statistics and p-values}: The returned object includes z-statistics
 computed as coefficients divided by robust standard errors, and two-sided
@@ -142,9 +143,9 @@ responses, this treats each fitted row as the independent score contribution.
 That can differ from a sandwich estimator computed after expanding data to
 one row per independent individual.
 
-\strong{Comparison with rms::robcov()}: For equivalent models, results should be
-compared after accounting for parameterization, cutpoint direction, response
-coding, weights, and missing-data handling.
+\strong{Backend comparisons}: For equivalent models, results should be compared
+after accounting for parameterization, cutpoint direction, response coding,
+weights, bread choice, and missing-data handling.
 }
 \examples{
 \dontrun{

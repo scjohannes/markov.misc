@@ -6,14 +6,22 @@
 #' in a dataset. Optionally aggregates results within strata defined by grouping
 #' variables.
 #'
+#' For supported frequentist models, pass the result to
+#' `inferences(method = "delta", vcov = "conditional")` for analytical
+#' confidence intervals. These account for coefficient estimation while
+#' treating the starting states and covariates used for prediction as given.
+#' `sops()` does not support unconditional analytical variance. See [inferences()]
+#' for model restrictions and other inference methods.
+#'
 #' @param model A fitted model object (e.g., `vglm`, `orm`, or `blrm`). For
 #'   `vglm` models, the family must be cumulative-logit with `reverse = TRUE`.
 #'   For `orm` models, the family must be logistic.
 #' @param newdata Optional. A data frame of prediction profiles. When supplied,
-#'   every row is treated as a separate baseline profile and the internal
-#'   `rowid` column is regenerated. If `NULL`, uses the data stored by
-#'   [orm_markov()], [blrm_markov()], or [vglm_markov()] and extracts one
-#'   prediction row per `id_var`.
+#'   every row supplies a separate starting state and set of covariates. The
+#'   internal `rowid` column is regenerated. If `NULL`, uses the data stored by
+#'   [orm_markov()], [blrm_markov()], or [vglm_markov()] and requires exactly
+#'   one complete designated starting profile per fitted patient. `refit_data`
+#'   is never used as a prediction-profile fallback.
 #' @param times Required visit-scale time points to estimate. For numeric time
 #'   variables this is usually a numeric vector. For factor-valued visit
 #'   indices, values are matched to fitted visit levels.
@@ -35,8 +43,8 @@
 #' @param id_var Character ID column used when `include_re = TRUE`. For `blrm`,
 #'   `NULL` is inferred from wrapper metadata, then `model$clusterInfo$name`
 #'   when available, otherwise `"id"`. For frequentist models, `id_var` is used
-#'   for stored-data extraction and refit bootstrap metadata, not for ordinary
-#'   user-supplied prediction rows.
+#'   for stored starting-profile validation and refit bootstrap metadata, not
+#'   for ordinary user-supplied prediction rows.
 #' @param time_var Name of the time variable in the model.
 #' @param p_var Name of the previous state variable in the model.
 #' @param p2_var Optional second previous-state variable. `NULL` uses a
@@ -74,6 +82,13 @@
 #' This function wraps `soprob_markov()` and converts its array output to a tidy
 #' data frame. The output contains one row per patient-time-state combination
 #' (or stratum-time-state if `by` is used).
+#'
+#' Automatic prediction from a wrapper-fitted model uses the cohort-wide
+#' designated `first_followup_time` retained before response-driven model-frame
+#' omission. The transition response is not required on that row, but ID,
+#' modeled predictors, time information, and previous state must be complete.
+#' Each included patient must contribute at least one usable fitted transition
+#' somewhere; later rows are not substituted for a missing starting profile.
 #'
 #' For `rmsb::blrm()` models, SOPs are computed on sampled posterior draws and
 #' then summarized. The point estimate is the requested posterior summary of the
@@ -156,7 +171,13 @@ sops <- function(
   }
   conf_level <- validate_conf_level(conf_level)
 
-  data_res <- resolve_markov_source_data(model, newdata, refit_data)
+  data_res <- resolve_markov_source_data(
+    model,
+    newdata,
+    refit_data,
+    time_var = time_var,
+    p_var = p_var
+  )
   newdata_orig <- data_res$source_data
   refit_data <- data_res$refit_data
   newdata_supplied <- data_res$newdata_supplied
@@ -692,10 +713,11 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'   `vglm` models, the family must be cumulative-logit with `reverse = TRUE`.
 #'   For `orm` models, the family must be logistic.
 #' @param newdata Optional data frame of standardization profiles. When
-#'   supplied, every row is treated as a separate baseline profile and the
-#'   internal `rowid` column is regenerated. If `NULL`, uses data stored by
-#'   [orm_markov()], [blrm_markov()], or [vglm_markov()] and extracts one
-#'   prediction row per `id_var`.
+#'   supplied, every row supplies a separate starting state and set of
+#'   covariates. The internal `rowid` column is regenerated. If `NULL`, uses data stored by
+#'   [orm_markov()], [blrm_markov()], or [vglm_markov()] and requires exactly
+#'   one complete designated starting profile per fitted patient. `refit_data`
+#'   is never used as a prediction-profile fallback.
 #' @param variables A named list specifying the variable(s) to standardize over.
 #'   E.g., `list(tx = c(0, 1))` creates counterfactual datasets for treatment
 #'   and control.
@@ -763,6 +785,12 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'
 #' The result represents the expected SOP if the entire population received
 #' treatment vs. control, averaged over the observed covariate distribution.
+#' For automatic wrapper-stored standardization, that distribution contains
+#' exactly the fitted patients with a complete designated starting profile and
+#' at least one usable likelihood transition. A missing response at the
+#' designated row alone does not exclude a patient who contributes a later
+#' transition. Patients with no usable fitted transition are excluded, and a
+#' fitted patient without a complete designated profile is an error.
 #' For `rmsb::blrm()` models, patient-level posterior arrays are chunked and
 #' marginalized by draw before summarizing to reduce memory use.
 #' State-wise medians and interval bounds are not constrained to sum to one
@@ -770,7 +798,16 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #' themselves need to preserve total probability. Draw-level probabilities
 #' stored with `return_draws = TRUE` remain normalized within each draw.
 #'
-#' @seealso [sops()] for individual-level SOPs, [inferences()] for bootstrap
+#' For supported frequentist models, `inferences(method = "delta")` adds
+#' analytical confidence intervals. Its default `vcov = "unconditional"`
+#' accounts for coefficient estimation and sampling the patients used in the
+#' average. Use `vcov = "conditional"` to treat those patients' starting states
+#' and covariates as given and account only for coefficient estimation.
+#' User-supplied `newdata` requires the conditional choice. See [inferences()]
+#' for model restrictions.
+#'
+#' @seealso [sops()] for individual-level SOPs, [inferences()] for analytical,
+#'   simulation, or bootstrap
 #'   uncertainty and [avg_comparisons()] for specialized estimands.
 #'
 #' @examples
@@ -782,7 +819,7 @@ sops_draw_matrix_to_df <- function(draw_values, result, draw_indices) {
 #'   id_var = "id"
 #' )
 #'
-#' # Wrapper-fitted models can use stored data and extract baseline rows.
+#' # Wrapper-fitted models can use their stored designated starting profiles.
 #' result <- avg_sops(
 #'   model = fit,
 #'   variables = list(tx = c(0, 1)),
@@ -840,7 +877,13 @@ avg_sops <- function(
     )
   }
 
-  data_res <- resolve_markov_source_data(model, newdata, refit_data)
+  data_res <- resolve_markov_source_data(
+    model,
+    newdata,
+    refit_data,
+    time_var = time_var,
+    p_var = p_var
+  )
   newdata_orig <- data_res$source_data
   refit_data <- data_res$refit_data
   newdata_supplied <- data_res$newdata_supplied

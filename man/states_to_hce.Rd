@@ -8,7 +8,7 @@ states_to_hce(
   count_data,
   absorbing_state = 6,
   recovery_state = 1,
-  ventilator_states = 4:6
+  ventilator_states = 5:6
 )
 }
 \arguments{
@@ -18,7 +18,7 @@ states_to_hce(
 
 \item{recovery_state}{Integer. The state representing sustained recovery (default: 1).}
 
-\item{ventilator_states}{Integer vector. The states representing ventilator use (default: 4:6).}
+\item{ventilator_states}{Integer vector. The states representing ventilator use (default: 5:6).}
 }
 \value{
 A data frame with columns:

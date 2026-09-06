@@ -2,7 +2,8 @@
 #'
 #' Computes the Huber-White sandwich covariance matrix estimator for vglm
 #' objects, optionally with cluster-robust standard errors. This provides
-#' functionality similar to `rms::robcov()` for vglm models.
+#' functionality for vglm models using the same HC1 and finite-cluster scalar
+#' corrections as the package-owned ORM sandwich.
 #'
 #' @param fit A fitted vglm object from the VGAM package.
 #' @param cluster Optional vector of cluster identifiers. If provided, computes
@@ -106,8 +107,8 @@
 #' The `type` and `cadjust` corrections are separate, matching the controls used
 #' by `sandwich::meatCL()`. For clustered data, `cadjust = TRUE` multiplies the
 #' meat by G/(G-1). `type = "HC1"` independently multiplies it by
-#' (n-1)/(n-p). Set `cadjust = FALSE` and `type = "HC0"` when matching
-#' unadjusted `rms::robcov()` results.
+#' (n-1)/(n-p). Set `cadjust = FALSE` and `type = "HC0"` for an unadjusted
+#' sandwich.
 #'
 #' **Z-statistics and p-values**: The returned object includes z-statistics
 #' computed as coefficients divided by robust standard errors, and two-sided
@@ -121,9 +122,9 @@
 #' That can differ from a sandwich estimator computed after expanding data to
 #' one row per independent individual.
 #'
-#' **Comparison with rms::robcov()**: For equivalent models, results should be
-#' compared after accounting for parameterization, cutpoint direction, response
-#' coding, weights, and missing-data handling.
+#' **Backend comparisons**: For equivalent models, results should be compared
+#' after accounting for parameterization, cutpoint direction, response coding,
+#' weights, bread choice, and missing-data handling.
 #'
 #' @examples
 #' \dontrun{
@@ -300,22 +301,17 @@ robcov_vglm <- function(
     meat <- crossprod(scores)
   }
 
-  adjustment_factor <- 1
-  if (type == "HC1") {
-    if (n <= p) {
-      stop("`type = \"HC1\"` requires more observations than parameters.")
-    }
-    adjustment_factor <- adjustment_factor * ((n - 1) / (n - p))
-  }
-  if (cadjust) {
-    adjustment_clusters <- if (is.null(n_clusters)) n else n_clusters
-    if (adjustment_clusters < 2L) {
-      stop("`cadjust = TRUE` requires at least two independent clusters.")
-    }
-    adjustment_factor <- adjustment_factor *
-      (adjustment_clusters / (adjustment_clusters - 1))
-  }
-  meat <- meat * adjustment_factor
+  assembled <- markov_assemble_sandwich(
+    sandwich_scores = sandwich_scores,
+    bread = bread,
+    n = n,
+    p = p,
+    n_clusters = n_clusters,
+    type = type,
+    cadjust = cadjust
+  )
+  adjustment_factor <- assembled$adjustment_factor
+  meat <- assembled$meat
   dimnames(meat) <- list(names(coefficients), names(coefficients))
   validate_vglm_matrix(
     meat,
@@ -327,11 +323,7 @@ robcov_vglm <- function(
   # --- 4. Compute the sandwich: V = B * M * B ---
   # The crossproduct form is algebraically equivalent for symmetric bread and
   # remains numerically positive semidefinite for ill-conditioned fits.
-  transformed_scores <- sandwich_scores %*% bread
-  robust_var <- crossprod(transformed_scores) * adjustment_factor
-
-  # Ensure symmetry (numerical stability)
-  robust_var <- (robust_var + t(robust_var)) / 2
+  robust_var <- assembled$covariance
   dimnames(robust_var) <- dimnames(model_vcov)
   validate_vglm_matrix(
     robust_var,
@@ -421,8 +413,14 @@ robcov_vglm <- function(
   class(result) <- "robcov_vglm"
   result <- markov_attach_model_data(
     result,
-    markov_model_data(fit),
-    markov_model_id_var(fit)
+    data = markov_model_data(fit),
+    id_var = markov_model_id_var(fit),
+    refit_data = markov_model_refit_data(fit),
+    starting_profile_data = markov_model_metadata_attr(
+      fit,
+      "markov_starting_profile_data"
+    ),
+    starting_profile_metadata = markov_model_starting_profile_metadata(fit)
   )
   attr(result, "markov_vglm") <- attr(fit, "markov_vglm", exact = TRUE)
   attr(result, "markov_split_assign") <- attr(
@@ -435,6 +433,7 @@ robcov_vglm <- function(
     "markov_basis_terms",
     exact = TRUE
   )
+  result <- markov_inherit_fit_wrapper(result, fit)
   return(result)
 }
 
@@ -1223,12 +1222,17 @@ vcov.robcov_vglm <- function(object, ...) {
 #' @export
 compare_se_orm_vglm <- function(orm_fit, vglm_fit, cluster = NULL) {
   # Model-based SEs
-  se_orm_model <- sqrt(diag(rms::robcov(orm_fit)$orig.var))
+  se_orm_model <- sqrt(diag(orm_model_bread(orm_fit)$bread))
   se_vglm_model <- sqrt(diag(vcov(vglm_fit)))
 
   # Robust SEs
   if (!is.null(cluster)) {
-    orm_robust <- rms::robcov(orm_fit, cluster = cluster)
+    orm_robust <- robcov_orm(
+      orm_fit,
+      cluster = cluster,
+      type = "HC0",
+      cadjust = FALSE
+    )
     se_orm_robust <- sqrt(diag(orm_robust$var))
 
     vglm_robust <- robcov_vglm(
@@ -1239,7 +1243,7 @@ compare_se_orm_vglm <- function(orm_fit, vglm_fit, cluster = NULL) {
     )
     se_vglm_robust <- vglm_robust$se
   } else {
-    orm_robust <- rms::robcov(orm_fit)
+    orm_robust <- robcov_orm(orm_fit)
     se_orm_robust <- sqrt(diag(orm_robust$var))
 
     vglm_robust <- robcov_vglm(vglm_fit)

@@ -32,7 +32,7 @@ marginalize_sops_array(
 
 \item{n_each}{Number of patients per scenario.}
 
-\item{weights}{Optional patient-level weights for one empirical cohort.}
+\item{weights}{Optional patient-level weights for one set of patients.}
 
 \item{by}{Optional character vector of variables to aggregate by.}
 

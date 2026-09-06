@@ -12,6 +12,10 @@ cpp_markov_update_po <- function(previous, scalar_predictor, cutpoints, non_abso
   .Call(`_markov_misc_cpp_markov_update_po`, previous, scalar_predictor, cutpoints, non_absorb, absorb)
 }
 
+cpp_run_sop_delta <- function(initial_design, transition_designs, gamma, coefficient_map, origin_positions, non_absorb, absorb, intercept, group_size, retain_individual_probabilities) {
+  .Call(`_markov_misc_cpp_run_sop_delta`, initial_design, transition_designs, gamma, coefficient_map, origin_positions, non_absorb, absorb, intercept, group_size, retain_individual_probabilities)
+}
+
 cpp_sample_categorical_rows <- function(probabilities) {
   .Call(`_markov_misc_cpp_sample_categorical_rows`, probabilities)
 }

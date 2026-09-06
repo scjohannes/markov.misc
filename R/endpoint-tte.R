@@ -10,6 +10,9 @@
 #'   the output (default: c("age", "sofa")). The first value of each covariate
 #'   per patient will be retained.
 #'
+#' @param absorbing_state State code for the absorbing outcome (default: 6).
+#'   An unchanged final observation in this state is omitted.
+#'
 #' @return A data frame with columns:
 #'   - id: patient identifier
 #'   - tx: treatment assignment

@@ -353,13 +353,13 @@ test_that("get_draws() preserves covariates for individual SOP draws", {
   data <- make_test_data(n_patients = 20, seed = 123, follow_up_time = 30)
   data$age <- stats::rnorm(nrow(data), 60, 10)
 
-  m_vglm <- VGAM::vglm(
-    ordered(y) ~ rms::rcs(time, 3) + tx + yprev + age,
-    family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
-    data = data
-  )
   expect_warning(
-    m_vglm_rob <- robcov_vglm(m_vglm, cluster = data$id),
+    m_vglm_rob <- vglm_markov(
+      ordered(y) ~ rms::rcs(time, 3) + tx + yprev + age,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id"
+    ),
     "fewer than 30 clusters"
   )
 
@@ -541,6 +541,7 @@ test_that("low-level SOP helpers validate model families and state metadata", {
   )
 
   model <- methods::new("vglm")
+  attr(model, "markov_fit_wrapper") <- "vglm_markov"
   model@family <- methods::new("vglmff", vfamily = "binomialff")
   expect_error(
     markov.misc:::validate_markov_model(model),
@@ -578,6 +579,7 @@ test_that("low-level SOP helpers validate model families and state metadata", {
       data = offset_data
     )
   )
+  attr(offset_model, "markov_fit_wrapper") <- "vglm_markov"
   expect_error(
     markov.misc:::validate_markov_model(offset_model),
     "Model offsets are not supported",
@@ -592,13 +594,14 @@ test_that("low-level SOP helpers validate model families and state metadata", {
       offset = NULL
     )
   )
+  attr(null_offset_model, "markov_fit_wrapper") <- "vglm_markov"
   expect_error(
     markov.misc:::validate_markov_model(null_offset_model),
     NA
   )
 
   fit_with_optional_offset <- function(offset = NULL) {
-    suppressWarnings(
+    fit <- suppressWarnings(
       VGAM::vglm(
         y ~ x,
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
@@ -606,6 +609,8 @@ test_that("low-level SOP helpers validate model families and state metadata", {
         offset = offset
       )
     )
+    attr(fit, "markov_fit_wrapper") <- "vglm_markov"
+    fit
   }
   expect_error(
     markov.misc:::validate_markov_model(fit_with_optional_offset()),
@@ -666,6 +671,7 @@ test_that("low-level SOP helpers reject orm offsets", {
     x = TRUE,
     y = TRUE
   )
+  attr(offset_model, "markov_fit_wrapper") <- "orm_markov"
 
   expect_error(
     markov.misc:::validate_markov_model(offset_model),

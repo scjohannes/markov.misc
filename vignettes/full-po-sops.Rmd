@@ -167,7 +167,7 @@ sop_vglm <- avg_sops(
   absorb = ABSORB
 ) |> 
   inferences(
-    n_draws = 100
+    method = "delta"
   )
 
 sop_orm <- avg_sops(
@@ -177,14 +177,12 @@ sop_orm <- avg_sops(
   y_levels = fit_orm$yunique,
   absorb = ABSORB
 ) |> 
-  inferences(n_draws = 100)
+  inferences(method = "delta")
 
 combined_sops <- rbind(
   data.frame(backend = "VGAM vglm", as.data.frame(sop_vglm)),
   data.frame(backend = "rms orm", as.data.frame(sop_orm))
 )
-
-head(combined_sops)
 ```
 
 ```{r plot-sops}

@@ -37,6 +37,11 @@ make_mock_avg_sops <- function(by = NULL, tx_levels = c(0, 1, 2)) {
   attr(out, "call_args") <- list(times = sort(unique(out$time)))
   attr(out, "time_var") <- "time"
   attr(out, "p_var") <- "yprev"
+  attr(out, "newdata_orig") <- data.frame(
+    id = 1:2,
+    yprev = c("1", "2")
+  )
+  attr(out, "newdata_supplied") <- TRUE
   out
 }
 
@@ -124,12 +129,53 @@ test_that("avg_comparisons() uses real-time AUC for time-in-state", {
         estimand = "time_in_state",
         state_sets = "1",
         times = 1:2,
-        time_map = c("1" = 0, "2" = 2)
+        time_map = c("1" = 1, "2" = 3)
       )
     }
   )
 
   expect_equal(out$estimate, 0.6)
+})
+
+test_that("real-time comparisons use baseline support without integrating it", {
+  avg <- make_mock_avg_sops(tx_levels = c(0, 1))
+
+  with_mocked_bindings(
+    avg_sops = function(...) avg,
+    {
+      explicit <- avg_comparisons(
+        structure(list(), class = "mock_model"),
+        variables = list(tx = c(0, 1)),
+        estimand = "time_in_state",
+        state_sets = "1",
+        times = 1:2,
+        time_map = c("1" = 7, "2" = 14),
+        baseline_time = 0,
+        target_times = 1:14
+      )
+      disabled <- avg_comparisons(
+        structure(list(), class = "mock_model"),
+        variables = list(tx = c(0, 1)),
+        estimand = "time_in_state",
+        state_sets = "1",
+        times = 1:2,
+        time_map = c("1" = 7, "2" = 14),
+        baseline_time = NULL
+      )
+    }
+  )
+
+  difference <- stats::approx(
+    x = c(0, 7, 14),
+    y = c(0, 0.3, 0.3),
+    xout = 1:14
+  )$y
+  expected <- sum(
+    utils::head(difference, -1L) + utils::tail(difference, -1L)
+  ) /
+    2
+  expect_equal(explicit$estimate, expected)
+  expect_equal(disabled$estimate, 2.1)
 })
 
 test_that("avg_comparisons() forwards model-structure args for marginal metrics", {
@@ -312,7 +358,7 @@ test_that("time-benefit array reducer uses real-time AUC when mapped", {
     weights = NULL,
     time_unit = NULL,
     time_map = c("1" = 0, "2" = 4),
-    origin = "none"
+    baseline_time = NULL
   )
 
   expect_equal(out$estimate, 2)
@@ -350,9 +396,8 @@ test_that("time-benefit simulation inference uses real-time comparison scale", {
     estimand = "time_benefit",
     comparison = "difference",
     time_map = c("1" = 0, "2" = 4),
-    origin_time = NULL,
+    baseline_time = NULL,
     target_times = NULL,
-    origin = "none",
     time_unit = NULL
   )
   attr(object, "newdata_orig") <- baseline
@@ -442,6 +487,26 @@ test_that("avg_comparisons() validates v1 interface boundaries", {
           comparison = "ratio"
         ),
         "only supports",
+        fixed = TRUE
+      )
+      expect_error(
+        avg_comparisons(
+          structure(list(), class = "mock_model"),
+          variables = list(tx = c(0, 1)),
+          times = 1,
+          origin_time = 0
+        ),
+        "`origin_time` is no longer supported; use `baseline_time` instead.",
+        fixed = TRUE
+      )
+      expect_error(
+        avg_comparisons(
+          structure(list(), class = "mock_model"),
+          variables = list(tx = c(0, 1)),
+          times = 1,
+          origin = "none"
+        ),
+        "`origin` is no longer supported; use `baseline_time` instead.",
         fixed = TRUE
       )
     }

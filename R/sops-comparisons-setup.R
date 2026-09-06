@@ -258,9 +258,8 @@ set_avg_comparison_attrs <- function(
   posterior_summary,
   conf_level,
   time_map,
-  origin_time,
+  baseline_time,
   target_times,
-  origin,
   time_unit,
   extra_args
 ) {
@@ -283,9 +282,8 @@ set_avg_comparison_attrs <- function(
       posterior_summary = posterior_summary,
       conf_level = conf_level,
       time_map = time_map,
-      origin_time = origin_time,
+      baseline_time = baseline_time,
       target_times = target_times,
-      origin = origin,
       time_unit = time_unit,
       extra_args = extra_args
     ),

@@ -140,9 +140,8 @@ inferences_avg_comparisons_linear <- function(
     state_sets = state_sets,
     comparison = args$comparison,
     time_map = args$time_map,
-    origin_time = args$origin_time,
+    baseline_time = args$baseline_time,
     target_times = args$target_times,
-    origin = args$origin,
     time_unit = args$time_unit,
     return_draws = return_draws
   )
@@ -261,9 +260,8 @@ inferences_avg_comparisons_time_benefit_simulation <- function(
       weights = baseline_weights,
       time_unit = args$time_unit,
       time_map = args$time_map,
-      origin_time = args$origin_time,
-      target_times = args$target_times,
-      origin = args$origin
+      baseline_time = args$baseline_time,
+      target_times = args$target_times
     )
     draw_i$draw_id <- i
     draw_i
@@ -434,9 +432,8 @@ inferences_avg_comparisons_time_benefit_bootstrap <- function(
       weights = baseline_weights,
       time_unit = args$time_unit,
       time_map = args$time_map,
-      origin_time = args$origin_time,
-      target_times = args$target_times,
-      origin = args$origin
+      baseline_time = args$baseline_time,
+      target_times = args$target_times
     )
   }
 
@@ -561,21 +558,21 @@ reduce_time_benefit_array_for_setup <- function(
   weights,
   time_unit,
   time_map = NULL,
-  origin_time = NULL,
-  target_times = NULL,
-  origin = "empirical_baseline"
+  baseline_time = 0,
+  target_times = NULL
 ) {
-  if (!is.null(time_map) || !is.null(origin_time)) {
-    if (is.null(time_map)) {
-      stop("`time_map` must be supplied for real-time AUC.")
-    }
+  if (!is.null(time_map)) {
     ind <- time_benefit_sops_from_array(sops_array, setup)
+    target_times <- comparison_real_time_target_times(
+      ind,
+      time_map,
+      target_times
+    )
     ind <- interpolate_sops(
       ind,
       time_map = time_map,
       target_times = target_times,
-      origin_time = origin_time,
-      origin = origin
+      baseline_time = baseline_time
     )
     real_setup <- setup
     real_setup$times <- sort(unique(ind$time))

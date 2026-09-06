@@ -1,0 +1,642 @@
+make_delta_comparison_factor_data <- function(
+  n_patients = 45,
+  n_visits = 4,
+  seed = 8421
+) {
+  set.seed(seed)
+  visits <- paste0("v", seq_len(n_visits))
+  data <- expand.grid(
+    id = seq_len(n_patients),
+    time = visits,
+    KEEP.OUT.ATTRS = FALSE
+  )
+  data <- data[order(data$id, data$time), , drop = FALSE]
+  data$time <- factor(data$time, levels = visits)
+  treatment <- stats::rbinom(n_patients, 1, 0.5)
+  sex <- sample(c("F", "M"), n_patients, replace = TRUE)
+  data$tx <- treatment[data$id]
+  data$sex <- factor(sex[data$id])
+  data$yprev <- factor(
+    sample(seq_len(4), nrow(data), replace = TRUE),
+    levels = as.character(seq_len(4))
+  )
+  data$yprev2 <- factor(
+    sample(seq_len(4), nrow(data), replace = TRUE),
+    levels = as.character(seq_len(4))
+  )
+  eta <-
+    -0.4 *
+    data$tx +
+    0.22 * as.integer(data$time) +
+    0.18 * as.integer(as.character(data$yprev))
+  probability <- stats::plogis(eta - mean(eta))
+  outcome <- pmin(
+    4L,
+    pmax(1L, 1L + stats::rbinom(nrow(data), 3L, probability))
+  )
+  data$y <- ordered(outcome, levels = as.character(seq_len(4)))
+  data
+}
+
+delta_comparison_factor_case <- local({
+  value <- NULL
+  function() {
+    skip_if_not_installed("rms")
+    if (is.null(value)) {
+      data <- make_delta_comparison_factor_data()
+      visits <- levels(data$time)
+      old_options <- options(datadist = NULL)
+      on.exit(options(old_options), add = TRUE)
+      fit <- suppressWarnings(orm_markov(
+        y ~ time + tx + yprev,
+        data = data,
+        id_var = "id",
+        first_followup_time = visits[1L],
+        opt_method = "LM",
+        scale = TRUE,
+        maxit = 100
+      ))
+      value <<- list(
+        data = data,
+        fit = fit,
+        visits = visits,
+        time_map = stats::setNames(c(3, 7, 14, 21), visits),
+        target_times = 1:21,
+        y_levels = fit$yunique,
+        covariance = fit$var
+      )
+    }
+    value
+  }
+})
+
+delta_factor_time_point <- function(model, case) {
+  avg_comparisons(
+    model,
+    variables = list(tx = c(0, 1)),
+    estimand = "time_in_state",
+    state_sets = list(lower = c("1", "2")),
+    comparison = "difference",
+    times = case$visits,
+    y_levels = case$y_levels,
+    time_map = case$time_map,
+    baseline_time = 0,
+    target_times = case$target_times,
+    time_unit = "days"
+  )
+}
+
+central_delta_comparison_jacobian <- function(model, point_function) {
+  coefficient <- get_coef(model)
+  point <- point_function(model)$estimate
+  jacobian <- matrix(
+    NA_real_,
+    nrow = length(point),
+    ncol = length(coefficient),
+    dimnames = list(NULL, names(coefficient))
+  )
+  for (j in seq_along(coefficient)) {
+    step <- .Machine$double.eps^(1 / 3) * max(1, abs(coefficient[j]))
+    upper <- lower <- coefficient
+    upper[j] <- upper[j] + step
+    lower[j] <- lower[j] - step
+    jacobian[, j] <- (point_function(set_coef(model, upper))$estimate -
+      point_function(set_coef(model, lower))$estimate) /
+      (2 * step)
+  }
+  jacobian
+}
+
+manual_factor_time_auc <- function(avg, case, states, level) {
+  baseline <- attr(avg, "newdata_orig")
+  baseline <- baseline[!duplicated(baseline$id), , drop = FALSE]
+  anchor <- mean(as.character(baseline$yprev) %in% as.character(states))
+  keep <-
+    as.character(avg$state) %in%
+    as.character(states) &
+    as.character(avg$tx) == as.character(level)
+  visits <- stats::aggregate(
+    estimate ~ time,
+    data = as.data.frame(avg)[keep, , drop = FALSE],
+    FUN = sum
+  )
+  visits <- visits[
+    match(case$visits, as.character(visits$time)),
+    ,
+    drop = FALSE
+  ]
+  interpolated <- stats::approx(
+    x = c(0, unname(case$time_map)),
+    y = c(anchor, visits$estimate),
+    xout = case$target_times,
+    rule = 1,
+    ties = "ordered"
+  )$y
+  list(
+    anchor = anchor,
+    auc = sum(
+      diff(case$target_times) *
+        (utils::head(interpolated, -1L) + utils::tail(interpolated, -1L)) /
+        2
+    )
+  )
+}
+
+test_that("joint average SOP Jacobians retain cross-arm covariance", {
+  case <- delta_comparison_factor_case()
+  variables <- list(tx = c(0, 1, 2))
+  state_sets <- list(lower = c("1", "2"))
+  times <- case$visits[1:2]
+
+  avg <- avg_sops(
+    case$fit,
+    variables = variables,
+    times = times,
+    y_levels = case$y_levels
+  )
+  avg <- inferences(
+    avg,
+    method = "delta",
+    vcov = case$covariance,
+    conf_type = "wald"
+  )
+  comparison <- avg_comparisons(
+    case$fit,
+    variables = variables,
+    estimand = "sop",
+    state_sets = state_sets,
+    comparison = "difference",
+    times = times,
+    y_levels = case$y_levels
+  )
+  comparison <- inferences(
+    comparison,
+    method = "delta",
+    vcov = case$covariance
+  )
+
+  average_jacobian <- get_jacobian(avg)
+  comparison_jacobian <- get_jacobian(comparison)
+  expected <- matrix(
+    0,
+    nrow = nrow(comparison),
+    ncol = ncol(average_jacobian),
+    dimnames = list(NULL, colnames(average_jacobian))
+  )
+  arm_jacobians <- vector("list", nrow(comparison))
+  for (i in seq_len(nrow(comparison))) {
+    common <-
+      as.character(avg$time) == as.character(comparison$time[i]) &
+      as.character(avg$state) %in% state_sets[[comparison$state_set[i]]]
+    high <- common &
+      as.character(avg$tx) == as.character(comparison$comparison_level[i])
+    reference <- common &
+      as.character(avg$tx) == as.character(comparison$reference_level[i])
+    high_jacobian <- colSums(average_jacobian[high, , drop = FALSE])
+    reference_jacobian <- colSums(
+      average_jacobian[reference, , drop = FALSE]
+    )
+    expected[i, ] <- high_jacobian - reference_jacobian
+    arm_jacobians[[i]] <- list(
+      high = high_jacobian,
+      reference = reference_jacobian
+    )
+  }
+
+  discrepancy <- max(abs(comparison_jacobian - expected))
+  expect_lt(discrepancy, 1e-12)
+
+  covariance <- case$covariance[
+    colnames(comparison_jacobian),
+    colnames(comparison_jacobian),
+    drop = FALSE
+  ]
+  correct <- naive <- numeric(nrow(comparison))
+  cross_covariance <- numeric(nrow(comparison))
+  for (i in seq_len(nrow(comparison))) {
+    high <- arm_jacobians[[i]]$high
+    reference <- arm_jacobians[[i]]$reference
+    correct[i] <- drop((high - reference) %*% covariance %*% (high - reference))
+    naive[i] <- drop(high %*% covariance %*% high) +
+      drop(reference %*% covariance %*% reference)
+    cross_covariance[i] <- drop(high %*% covariance %*% reference)
+  }
+  expect_equal(correct, comparison$std.error^2, tolerance = 1e-12)
+  expect_gt(max(abs(cross_covariance)), 1e-8)
+  expect_gt(max(abs(correct - naive)), 1e-8)
+})
+
+test_that("factor-time ORM differences match public finite differences", {
+  case <- delta_comparison_factor_case()
+  point <- delta_factor_time_point(case$fit, case)
+  inferred <- inferences(
+    point,
+    method = "delta",
+    vcov = case$covariance
+  )
+
+  numeric_jacobian <- central_delta_comparison_jacobian(
+    case$fit,
+    function(model) delta_factor_time_point(model, case)
+  )
+  analytical_jacobian <- get_jacobian(inferred)
+  discrepancy <- max(abs(analytical_jacobian - numeric_jacobian))
+  expect_lt(discrepancy, 1e-7)
+
+  avg <- avg_sops(
+    case$fit,
+    variables = list(tx = c(0, 1)),
+    times = case$visits,
+    y_levels = case$y_levels
+  )
+  operator <- delta_comparison_operator(
+    point,
+    avg,
+    attr(point, "comparison_args"),
+    attr(point, "avg_args")
+  )
+  expect_lt(
+    max(abs(
+      drop(delta_apply_comparison_operator(operator, avg$estimate)) -
+        point$estimate
+    )),
+    1e-12
+  )
+
+  rounded <- point
+  rounded$estimate <- rounded$estimate +
+    (1e-12 + 1e-10 * abs(rounded$estimate)) / 2
+  expect_equal(
+    delta_comparison_operator(
+      rounded,
+      avg,
+      attr(point, "comparison_args"),
+      attr(point, "avg_args")
+    ),
+    operator
+  )
+
+  stale <- point
+  stale$estimate[1] <- stale$estimate[1] + 1e-6
+  condition <- tryCatch(
+    delta_comparison_operator(
+      stale,
+      avg,
+      attr(stale, "comparison_args"),
+      attr(stale, "avg_args")
+    ),
+    error = identity
+  )
+  expect_s3_class(condition, "error")
+  expect_match(
+    conditionMessage(condition),
+    "did not reproduce the stored point estimates",
+    fixed = TRUE
+  )
+
+  reference <- manual_factor_time_auc(avg, case, c("1", "2"), 0)
+  treatment <- manual_factor_time_auc(avg, case, c("1", "2"), 1)
+  expect_equal(treatment$anchor - reference$anchor, 0)
+  expect_equal(treatment$auc - reference$auc, point$estimate, tolerance = 1e-12)
+
+  target_weights <- markov.misc:::delta_trapezoid_weights(case$target_times)
+  source_basis <- vapply(
+    seq_along(case$time_map),
+    function(j) {
+      values <- numeric(length(case$time_map))
+      values[j] <- 1
+      stats::approx(
+        x = c(0, unname(case$time_map)),
+        y = c(0, values),
+        xout = case$target_times,
+        ties = "ordered"
+      )$y
+    },
+    numeric(length(case$target_times))
+  )
+  expected_visit_weights <- drop(target_weights %*% source_basis)
+  analytical_visit_weights <- markov.misc:::delta_real_time_visit_weights(
+    avg,
+    attr(point, "comparison_args")
+  )
+  expect_equal(
+    unname(analytical_visit_weights),
+    expected_visit_weights,
+    tolerance = 1e-12
+  )
+
+  covariance <- case$covariance[
+    colnames(analytical_jacobian),
+    colnames(analytical_jacobian),
+    drop = FALSE
+  ]
+  expected_se <- sqrt(drop(
+    analytical_jacobian %*% covariance %*% t(analytical_jacobian)
+  ))
+  expect_equal(inferred$std.error, expected_se, tolerance = 1e-12)
+})
+
+test_that("delta real-time weights exclude baseline unless explicitly targeted", {
+  case <- delta_comparison_factor_case()
+  avg <- avg_sops(
+    case$fit,
+    variables = list(tx = c(0, 1)),
+    times = case$visits,
+    y_levels = case$y_levels
+  )
+  args <- list(
+    time_map = case$time_map,
+    baseline_time = 0,
+    target_times = NULL
+  )
+
+  anchored <- markov.misc:::delta_real_time_visit_weights(avg, args)
+  args$baseline_time <- NULL
+  unanchored <- markov.misc:::delta_real_time_visit_weights(avg, args)
+  expected <- markov.misc:::delta_trapezoid_weights(
+    sort(unique(unname(case$time_map)))
+  )
+
+  expect_equal(unname(anchored), expected)
+  expect_equal(unname(unanchored), expected)
+
+  args$baseline_time <- min(case$time_map)
+  expect_snapshot(
+    markov.misc:::delta_real_time_visit_weights(avg, args),
+    error = TRUE
+  )
+})
+
+test_that("delta real-time weights ignore unused time-map entries", {
+  case <- delta_comparison_factor_case()
+  avg <- avg_sops(
+    case$fit,
+    variables = list(tx = c(0, 1)),
+    times = case$visits,
+    y_levels = case$y_levels
+  )
+  args <- list(
+    time_map = c(unused = -10, case$time_map),
+    baseline_time = 0,
+    target_times = NULL
+  )
+  expected_args <- args
+  expected_args$time_map <- case$time_map
+
+  expect_equal(
+    markov.misc:::delta_real_time_visit_weights(avg, args),
+    markov.misc:::delta_real_time_visit_weights(avg, expected_args)
+  )
+})
+
+test_that("factor-time unconditional differences use the replayed grid", {
+  case <- delta_comparison_factor_case()
+  point <- delta_factor_time_point(case$fit, case)
+  inferred <- inferences(
+    point,
+    method = "delta",
+    vcov = "unconditional"
+  )
+
+  expect_identical(attr(inferred, "target"), "unconditional")
+  expect_equal(inferred$estimate, point$estimate, tolerance = 1e-12)
+  expect_equal(sum(is.finite(inferred$std.error)), nrow(inferred))
+})
+
+test_that("unconditional comparisons retain transformed stacked influence", {
+  case <- delta_comparison_factor_case()
+  point <- avg_comparisons(
+    case$fit,
+    variables = list(tx = c(0, 1)),
+    estimand = "sop",
+    state_sets = list(lower = c("1", "2")),
+    comparison = "difference",
+    times = case$visits[1:3],
+    y_levels = case$y_levels
+  )
+  inferred <- inferences(
+    point,
+    method = "delta",
+    vcov = "unconditional"
+  )
+  analytical <- attr(inferred, "analytical")
+  rows <- c(1L, nrow(inferred))
+  expected <- stats::cov(analytical$influence[, rows, drop = FALSE]) /
+    nrow(analytical$influence)
+
+  expect_identical(analytical$representation, "influence")
+  expect_equal(
+    unname(stats::vcov(inferred, rows = rows)),
+    unname(expected),
+    tolerance = 1e-12
+  )
+  expect_equal(
+    inferred$std.error[rows]^2,
+    unname(diag(expected)),
+    tolerance = 1e-12
+  )
+
+  expect_snapshot(
+    inferences(
+      point,
+      method = "delta",
+      vcov = "unknown"
+    ),
+    error = TRUE
+  )
+})
+
+test_that("analytical comparison scope rejects deferred estimands", {
+  case <- delta_comparison_factor_case()
+  local_reproducible_output(width = 80)
+  base <- avg_comparisons(
+    case$fit,
+    variables = list(tx = c(0, 1)),
+    estimand = "sop",
+    state_sets = "1",
+    comparison = "difference",
+    times = case$visits[1:2],
+    y_levels = case$y_levels
+  )
+
+  ratio <- base
+  ratio$comparison <- "ratio"
+  ratio_args <- attr(ratio, "comparison_args")
+  ratio_args$comparison <- "ratio"
+  attr(ratio, "comparison_args") <- ratio_args
+  expect_snapshot(inferences(ratio, method = "delta"), error = TRUE)
+
+  time_benefit <- base
+  time_benefit$estimand <- "time_benefit"
+  time_benefit_args <- attr(time_benefit, "comparison_args")
+  time_benefit_args$estimand <- "time_benefit"
+  attr(time_benefit, "comparison_args") <- time_benefit_args
+  expect_snapshot(inferences(time_benefit, method = "delta"), error = TRUE)
+
+  stratified <- base
+  stratified_args <- attr(stratified, "avg_args")
+  stratified_args$by <- "sex"
+  attr(stratified, "avg_args") <- stratified_args
+  expect_snapshot(inferences(stratified, method = "delta"), error = TRUE)
+
+  second_order <- base
+  attr(second_order, "p2_var") <- "yprev2"
+  expect_snapshot(
+    inferences(
+      second_order,
+      method = "delta",
+      vcov = case$covariance
+    ),
+    error = TRUE
+  )
+})
+
+test_that("analytical comparisons reject partial proportional odds", {
+  skip_if_not_installed("VGAM")
+  case <- delta_comparison_factor_case()
+  local_reproducible_output(width = 80)
+  partial_model <- suppressWarnings(vglm_markov(
+    y ~ time + tx + yprev,
+    family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
+    data = case$data
+  ))
+  baseline <- case$data[!duplicated(case$data$id), , drop = FALSE]
+  partial <- avg_comparisons(
+    partial_model,
+    newdata = baseline,
+    variables = list(tx = c(0, 1)),
+    estimand = "sop",
+    state_sets = "1",
+    comparison = "difference",
+    times = case$visits[1:2],
+    y_levels = case$y_levels
+  )
+  expect_snapshot(
+    inferences(
+      partial,
+      method = "delta",
+      vcov = stats::vcov(partial_model)
+    ),
+    error = TRUE
+  )
+})
+
+test_that("compact comparison propagation matches dense products in both orientations", {
+  operator <- list(
+    list(index = c(1L, 3L), weight = c(-0.25, 0.75)),
+    list(index = integer(), weight = numeric()),
+    list(index = 2L, weight = -1)
+  )
+  dense <- rbind(c(-0.25, 0, 0.75), c(0, 0, 0), c(0, -1, 0))
+  values <- matrix(seq_len(15) / 7, nrow = 3)
+  expect_equal(
+    delta_apply_comparison_operator(operator, values),
+    dense %*% values
+  )
+  expect_equal(
+    delta_apply_comparison_operator(operator, t(values), transpose = TRUE),
+    t(values) %*% t(dense)
+  )
+  expect_equal(
+    delta_apply_comparison_operator(operator, values[, 1]),
+    dense %*% values[, 1]
+  )
+  withr::local_options(markov.misc.delta_max_bytes = 1)
+  condition <- tryCatch(
+    delta_apply_comparison_operator(operator, values),
+    error = identity
+  )
+  expect_s3_class(condition, "markov_misc_delta_too_large")
+})
+
+test_that("large SOP comparison grids avoid the dense operator allocation", {
+  avg <- expand.grid(time = seq_len(1100), state = as.character(1:4), tx = 0:1)
+  avg$estimate <- rep(
+    c(0.1, 0.2, 0.3, 0.4, 0.15, 0.15, 0.25, 0.45),
+    each = 1100
+  )
+  attr(avg, "y_levels") <- as.character(1:4)
+  object <- expand.grid(time = seq_len(1100), state_set = as.character(1:4))
+  object$comparison_level <- 1
+  object$reference_level <- 0
+  object$estimate <- rep(c(0.05, -0.05, -0.05, 0.05), each = 1100)
+  args <- list(
+    estimand = "sop",
+    state_sets = as.list(stats::setNames(as.character(1:4), 1:4))
+  )
+  avg_args <- list(variables = list(tx = 0:1))
+  withr::local_options(markov.misc.delta_max_bytes = 2 * 1024^2)
+  operator <- delta_comparison_operator(object, avg, args, avg_args)
+  expect_equal(
+    drop(delta_apply_comparison_operator(operator, avg$estimate)),
+    object$estimate
+  )
+  expect_gt(as.double(nrow(object)) * nrow(avg) * 8, 256 * 1024^2)
+  expect_equal(
+    sum(vapply(operator, \(row) length(row$index), integer(1))),
+    2L * nrow(object)
+  )
+
+  class(object) <- c("markov_avg_comparisons", "data.frame")
+  jacobian <- cbind(seq_len(nrow(object)) / nrow(object), 1)
+  attr(object, "analytical") <- list(
+    representation = "coefficient",
+    jacobian = jacobian,
+    coefficient_vcov = diag(2),
+    row_key = as.character(seq_len(nrow(object)))
+  )
+  rows <- c(5L, 1L, 5L)
+  expect_equal(
+    unname(stats::vcov(object, rows = rows)),
+    tcrossprod(jacobian[rows, ])
+  )
+  condition <- tryCatch(stats::vcov(object), error = identity)
+  expect_s3_class(condition, "markov_misc_delta_too_large")
+  influence <- matrix(seq_len(5L * nrow(object)) / 100, nrow = 5)
+  attr(object, "analytical") <- list(
+    representation = "influence",
+    influence = influence,
+    row_key = as.character(seq_len(nrow(object)))
+  )
+  expect_equal(
+    unname(stats::vcov(object, rows = rows)),
+    stats::cov(influence[, rows]) / 5
+  )
+  condition <- tryCatch(stats::vcov(object), error = identity)
+  expect_s3_class(condition, "markov_misc_delta_too_large")
+})
+
+test_that("real-time weights collapse duplicate visits and handle a single node", {
+  avg <- data.frame(time = c("late", "early", "duplicate"))
+  args <- list(
+    time_map = c(late = 7, early = 3, duplicate = 3),
+    baseline_time = 0,
+    target_times = c(0, 1, 3, 5, 7)
+  )
+  weights <- delta_real_time_visit_weights(avg, args)
+  basis <- vapply(
+    seq_len(3),
+    function(j) {
+      values <- numeric(3)
+      values[j] <- 1
+      stats::approx(
+        c(0, 7, 3, 3),
+        c(0, values),
+        xout = args$target_times,
+        ties = mean
+      )$y
+    },
+    numeric(length(args$target_times))
+  )
+  expected <- drop(delta_trapezoid_weights(args$target_times) %*% basis)
+  expect_equal(unname(weights), expected, tolerance = 1e-12)
+  args$target_times <- 5
+  expect_equal(unname(delta_real_time_visit_weights(avg, args)), numeric(3))
+  expect_equal(
+    delta_real_time_visit_weights(
+      data.frame(time = "v1"),
+      list(time_map = c(v1 = 3), baseline_time = NULL)
+    ),
+    c(v1 = 0)
+  )
+})

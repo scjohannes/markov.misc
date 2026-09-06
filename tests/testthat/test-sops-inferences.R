@@ -76,12 +76,22 @@ describe("avg_sops() and inferences() pipeline", {
 
   fit_pipeline_model <- function(data) {
     suppressWarnings(
-      VGAM::vglm(
+      markov.misc::vglm_markov(
         ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + yprev + age,
         family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
         data = data
       )
     )
+  }
+
+  fit_pipeline_wrapper_model <- function(data) {
+    suppressWarnings(markov.misc::vglm_markov(
+      ordered(y) ~ (time_lin + time_nlin_1 + time_nlin_2) * tx + yprev + age,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id",
+      time_var = "time_lin"
+    ))
   }
 
   fit_inline_pipeline_model <- function(data) {
@@ -94,6 +104,15 @@ describe("avg_sops() and inferences() pipeline", {
     )
   }
 
+  fit_inline_pipeline_wrapper_model <- function(data) {
+    suppressWarnings(markov.misc::vglm_markov(
+      ordered(y) ~ rms::rcs(time, 4) * tx + yprev + age,
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id"
+    ))
+  }
+
   fit_numeric_yprev_model <- function(data) {
     suppressWarnings(
       markov.misc::vglm_markov(
@@ -102,6 +121,15 @@ describe("avg_sops() and inferences() pipeline", {
         data = data
       )
     )
+  }
+
+  fit_numeric_yprev_wrapper_model <- function(data) {
+    suppressWarnings(markov.misc::vglm_markov(
+      ordered(y) ~ rms::rcs(time, 4) * tx + rms::rcs(yprev, 6),
+      family = VGAM::cumulative(reverse = TRUE, parallel = TRUE),
+      data = data,
+      id_var = "id"
+    ))
   }
 
   pipeline_signature <- function(result) {
@@ -129,6 +157,27 @@ describe("avg_sops() and inferences() pipeline", {
     out$draw <- round(out$draw, digits = 8)
     rownames(out) <- NULL
     lapply(out, unname)
+  }
+
+  expect_draw_specific_baseline_anchor <- function(result, n_draws, times) {
+    anchors <- attr(result, "baseline_anchor_draws")
+    expect_s3_class(anchors, "data.frame")
+    expect_equal(sort(unique(anchors$draw_id)), seq_len(n_draws))
+    sums <- stats::aggregate(
+      estimate ~ draw_id + tx,
+      data = anchors,
+      FUN = sum
+    )
+    expect_equal(sums$estimate, rep(1, nrow(sums)), tolerance = 1e-12)
+
+    interpolated <- interpolate_sops(
+      result,
+      time_map = stats::setNames(seq_along(times) * 7, times),
+      target_times = c(0, 1, 7)
+    )
+    draws <- attr(interpolated, "draws")
+    early <- draws[draws$time < 7, , drop = FALSE]
+    expect_false(anyNA(early$estimate))
   }
 
   test_that("create_counterfactual_data() stacks one baseline copy per scenario", {
@@ -472,10 +521,7 @@ describe("avg_sops() and inferences() pipeline", {
       time_var = "time_lin",
       p_var = "yprev"
     )
-    gamma <- markov.misc:::compute_Gamma(
-      stats::coef(model),
-      VGAM::constraints(model)
-    )
+    gamma <- markov.misc:::get_effective_coefs(model)
     fast <- markov.misc:::markov_msm_run(
       components = components,
       Gamma = gamma,
@@ -517,10 +563,7 @@ describe("avg_sops() and inferences() pipeline", {
       y_levels = case$y_levels,
       p_var = "yprev"
     )
-    gamma <- markov.misc:::compute_Gamma(
-      stats::coef(model),
-      VGAM::constraints(model)
-    )
+    gamma <- markov.misc:::get_effective_coefs(model)
     fast <- markov.misc:::markov_msm_run(
       components = components,
       Gamma = gamma,
@@ -555,10 +598,7 @@ describe("avg_sops() and inferences() pipeline", {
       y_levels = case$y_levels,
       p_var = "yprev"
     )
-    gamma <- markov.misc:::compute_Gamma(
-      stats::coef(model),
-      VGAM::constraints(model)
-    )
+    gamma <- markov.misc:::get_effective_coefs(model)
     fast <- markov.misc:::markov_msm_run(
       components = components,
       Gamma = gamma,
@@ -663,7 +703,7 @@ describe("avg_sops() and inferences() pipeline", {
     skip_if_not_installed("rms")
 
     case <- build_brownian_pipeline_case()
-    model <- fit_pipeline_model(case$data)
+    model <- fit_pipeline_wrapper_model(case$data)
 
     avg <- markov.misc::avg_sops(
       model = model,
@@ -677,7 +717,8 @@ describe("avg_sops() and inferences() pipeline", {
       time_covariates = case$time_covariates,
       id_var = "id"
     )
-    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$data))
+    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$baseline))
+    expect_equal(nrow(attr(avg, "refit_data")), nrow(case$data))
 
     withr::local_seed(4402)
     inferred <- markov.misc::inferences(
@@ -694,6 +735,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(attr(inferred, "n_successful"), 2L)
     expect_inference_intervals(inferred)
     expect_equal(sort(unique(draws$draw_id)), 1:2)
+    expect_draw_specific_baseline_anchor(inferred, 2, 1:8)
 
     expect_snapshot_value(
       list(
@@ -710,7 +752,7 @@ describe("avg_sops() and inferences() pipeline", {
     skip_if_not_installed("rms")
 
     case <- build_brownian_pipeline_case()
-    model <- fit_pipeline_model(case$data)
+    model <- fit_pipeline_wrapper_model(case$data)
 
     avg <- markov.misc::avg_sops(
       model = model,
@@ -742,6 +784,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(attr(inferred, "n_successful"), 2L)
     expect_inference_intervals(inferred)
     expect_equal(sort(unique(draws$draw_id)), 1:2)
+    expect_draw_specific_baseline_anchor(inferred, 2, 1:8)
   })
 
   test_that("numeric previous-state spline supports bootstrap inference", {
@@ -749,7 +792,7 @@ describe("avg_sops() and inferences() pipeline", {
     skip_if_not_installed("rms")
 
     case <- build_numeric_yprev_case()
-    model <- fit_numeric_yprev_model(case$data)
+    model <- fit_numeric_yprev_wrapper_model(case$data)
 
     avg <- markov.misc::avg_sops(
       model = model,
@@ -780,8 +823,8 @@ describe("avg_sops() and inferences() pipeline", {
     skip_if_not_installed("rms")
 
     case <- build_brownian_pipeline_case()
-    model <- fit_pipeline_model(case$data)
-    robust_model <- markov.misc::robcov_vglm(model, cluster = case$data$id)
+    model <- fit_pipeline_wrapper_model(case$data)
+    robust_model <- model
 
     avg <- markov.misc::avg_sops(
       model = robust_model,
@@ -795,7 +838,8 @@ describe("avg_sops() and inferences() pipeline", {
       time_covariates = case$time_covariates,
       id_var = "id"
     )
-    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$data))
+    expect_equal(nrow(attr(avg, "newdata_orig")), nrow(case$baseline))
+    expect_equal(nrow(attr(avg, "refit_data")), nrow(case$data))
 
     withr::local_seed(4403)
     inferred <- markov.misc::inferences(
@@ -811,6 +855,7 @@ describe("avg_sops() and inferences() pipeline", {
     expect_equal(attr(inferred, "n_successful"), 3L)
     expect_inference_intervals(inferred, require_positive_std_error = TRUE)
     expect_equal(sort(unique(draws$draw_id)), 1:3)
+    expect_draw_specific_baseline_anchor(inferred, 3, 1:8)
 
     expect_snapshot_value(
       list(
@@ -822,13 +867,89 @@ describe("avg_sops() and inferences() pipeline", {
     )
   })
 
+  test_that("rerunning inference replaces baseline draws", {
+    skip_if_not_installed("rms")
+    skip_if_not_installed("mvtnorm")
+
+    data <- suppressWarnings(make_test_data(
+      n_patients = 28,
+      follow_up_time = 5,
+      seed = 2811
+    ))
+    model <- orm_markov(
+      ordered(y) ~ time + tx + yprev,
+      data = data,
+      id_var = "id"
+    )
+    avg <- avg_sops(model, variables = "tx", times = 1:3, absorb = "6")
+    previous <- inferences(
+      avg,
+      method = "score_bootstrap",
+      cluster = data$id,
+      n_draws = 4,
+      seed = 1
+    )
+    expect_s3_class(attr(previous, "baseline_anchor_draws"), "data.frame")
+
+    for (n_draws in c(4, 6)) {
+      fresh <- inferences(avg, method = "mvn", n_draws = n_draws, seed = 2)
+      rerun <- inferences(previous, method = "mvn", n_draws = n_draws, seed = 2)
+      expect_null(attr(rerun, "baseline_anchor_draws"))
+      interpolated <- interpolate_sops(
+        rerun,
+        time_map = c("1" = 1, "2" = 2, "3" = 3),
+        target_times = 0:3
+      )
+      expected <- interpolate_sops(
+        fresh,
+        time_map = c("1" = 1, "2" = 2, "3" = 3),
+        target_times = 0:3
+      )
+      expect_equal(interpolated$std.error, expected$std.error)
+      expect_equal(interpolated$conf.low, expected$conf.low)
+      expect_equal(interpolated$conf.high, expected$conf.high)
+      expect_equal(
+        interpolated$std.error[interpolated$time == 0],
+        rep(0, sum(interpolated$time == 0))
+      )
+      expect_equal(
+        sort(unique(get_draws(interpolated)$draw_id)),
+        seq_len(n_draws)
+      )
+    }
+
+    replacement <- inferences(
+      previous,
+      method = "score_bootstrap",
+      cluster = data$id,
+      n_draws = 2,
+      seed = 3
+    )
+    expect_equal(
+      sort(unique(attr(replacement, "baseline_anchor_draws")$draw_id)),
+      1:2
+    )
+    for (method in c("mvn", "score_bootstrap", "delta")) {
+      omitted <- inferences(
+        previous,
+        method = method,
+        cluster = data$id,
+        n_draws = 2,
+        seed = 3,
+        return_draws = FALSE
+      )
+      expect_null(attr(omitted, "draws"))
+      expect_null(attr(omitted, "baseline_anchor_draws"))
+    }
+  })
+
   test_that("numeric previous-state spline supports score-bootstrap fast path", {
     skip_if_not_installed("VGAM")
     skip_if_not_installed("rms")
 
     case <- build_numeric_yprev_case()
-    model <- fit_numeric_yprev_model(case$data)
-    robust_model <- markov.misc::robcov_vglm(model, cluster = case$data$id)
+    model <- fit_numeric_yprev_wrapper_model(case$data)
+    robust_model <- model
 
     avg <- markov.misc::avg_sops(
       model = robust_model,
@@ -927,16 +1048,10 @@ describe("avg_sops() and inferences() pipeline", {
     skip_if_not_installed("rms")
 
     case <- build_brownian_pipeline_case()
-    explicit_model <- fit_pipeline_model(case$data)
-    inline_model <- fit_inline_pipeline_model(case$data)
-    explicit_robust <- markov.misc::robcov_vglm(
-      explicit_model,
-      cluster = case$data$id
-    )
-    inline_robust <- markov.misc::robcov_vglm(
-      inline_model,
-      cluster = case$data$id
-    )
+    explicit_model <- fit_pipeline_wrapper_model(case$data)
+    inline_model <- fit_inline_pipeline_wrapper_model(case$data)
+    explicit_robust <- explicit_model
+    inline_robust <- inline_model
 
     explicit_avg <- markov.misc::avg_sops(
       model = explicit_robust,
@@ -1167,7 +1282,7 @@ describe("avg_sops() and inferences() pipeline", {
     )
 
     explicit_fit <- suppressWarnings(
-      VGAM::vglm(
+      markov.misc::vglm_markov(
         ordered(y) ~ time_lin + time_nlin_1 + time_nlin_2 + tx + age + yprev,
         family = VGAM::cumulative(reverse = TRUE, parallel = FALSE),
         data = data,
