@@ -130,7 +130,7 @@ jobs:
       - name: Install Valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
       - name: Install package
-        run: R CMD INSTALL .
+        run: R CMD INSTALL --preclean .
       - name: Run native smoke tests under Valgrind
         run: |
           R -d "valgrind --tool=memcheck --leak-check=full --errors-for-leak-kinds=definite --suppressions=.github/valgrind.supp --error-exitcode=1" --vanilla -e 'testthat::test_local(".", filter = "sops-native|sops-delta-core", load_package = "installed", stop_on_failure = TRUE)'

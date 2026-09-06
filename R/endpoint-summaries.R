@@ -310,7 +310,7 @@ states_to_drs <- function(
 #' @param count_data A data frame containing trajectory data in count format. Must contain columns: `id`, `tx`, `start`, `stop`, and `y`.
 #' @param absorbing_state Integer. The state representing death (default: 6).
 #' @param recovery_state Integer. The state representing sustained recovery (default: 1).
-#' @param ventilator_states Integer vector. The states representing ventilator use (default: 4:6).
+#' @param ventilator_states Integer vector. The states representing ventilator use (default: 5:6).
 #'
 #' @return A data frame with columns:
 #'   - id: patient identifier

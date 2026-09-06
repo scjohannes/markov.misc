@@ -275,7 +275,9 @@ data-generating mechanism:
 - `sim_trajectories_deterministic()` implements a line-of-destiny latent
   trajectory with absorbing recovery and death states.
 - `sim_trajectories_tte()` uses recurrent event times and last-observation
-  carry-forward expansion to daily ordinal trajectories.
+  carry-forward expansion to daily ordinal trajectories. Supplied baseline data
+  include patient frailty; `frailty_event_param` has one value per state.
+  `recurr_event()` accepts a scalar rate or one baseline rate per patient.
 
 The Typst report `doc/po-threshold-heterogeneity-power.qmd` is a reproducible
 simulation study that compares full proportional-odds `rms::orm()` analyses
@@ -574,7 +576,9 @@ reference across visit layouts and absorbing-state choices. Recursion changes
 must update the reference and parity tests together. Existing AddressSanitizer
 and UndefinedBehaviorSanitizer CI jobs include all analytical tests; Valgrind
 includes the analytical core tests. These Linux checks complement the regular
-Windows, macOS, and Linux package checks.
+Windows, macOS, and Linux package checks. Native-safety and Valgrind installations
+use `--preclean` to rebuild the current C++ sources. Compiled objects and shared
+libraries in `src/` are ignored and must not be committed.
 
 Logit-delta intervals return warned `NA` limits for exact zero/one estimates,
 regardless of the numerical standard error. The engine predicts the initial

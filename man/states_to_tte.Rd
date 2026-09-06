@@ -14,6 +14,9 @@ columns: \code{id}, \code{time}, \code{y} (state), and \code{tx} (treatment).}
 \item{covariates}{Character vector of additional covariate names to include in
 the output (default: c("age", "sofa")). The first value of each covariate
 per patient will be retained.}
+
+\item{absorbing_state}{State code for the absorbing outcome (default: 6).
+An unchanged final observation in this state is omitted.}
 }
 \value{
 A data frame with columns:

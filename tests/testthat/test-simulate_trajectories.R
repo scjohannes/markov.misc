@@ -1410,14 +1410,29 @@ test_that("recurr_event simulates events and validates vector parameter lengths"
   expect_true(all(result[, "id"] %in% 1:2))
   expect_true(all(result[, "event_time"] < 10))
 
+  set.seed(3)
+  expected <- c(
+    cumsum(stats::rexp(3, rate = 0.5)),
+    cumsum(stats::rexp(3, rate = 2))
+  )
+  set.seed(3)
+  per_patient <- recurr_event(
+    id = 1:2,
+    param = c(0.5, 2),
+    follow_up = Inf,
+    max_events = 3
+  )
+  expect_equal(unname(per_patient[, "event_time"]), expected)
+  expect_equal(unname(per_patient[, "id"]), rep(1:2, each = 3))
+
   expect_error(
     recurr_event(
       id = 1:2,
-      param = c(0.1, 0.2),
+      param = c(0.1, 0.2, 0.3),
       follow_up = 10,
       max_events = NULL
     ),
-    "Length of param must be one or equal to max_events",
+    "Length of param must be one or equal to the number of participants.",
     fixed = TRUE
   )
 })
@@ -1431,7 +1446,7 @@ test_that("recurr_event auto-selects event counts for scalar and vector rates", 
     max_events = NULL
   )
   vector <- recurr_event(
-    id = 1,
+    id = 1:3,
     param = c(0.01, 0.02, 0.03),
     b = 0,
     follow_up = 1,
@@ -1465,7 +1480,7 @@ test_that("sim_trajectories_tte validates inputs", {
     "baseline_data must contain columns",
     fixed = TRUE
   )
-  baseline <- data.frame(id = 1, tx = 0, state = 2, event_time = 0)
+  baseline <- data.frame(id = 1, tx = 0, state = 2, frailty = 0, event_time = 0)
   expect_error(
     sim_trajectories_tte(baseline, states = 1:3, param = c(0.1, 0.2)),
     "param length must equal length\\(states\\)"
@@ -1478,6 +1493,7 @@ test_that("sim_trajectories_tte validates inputs", {
   expect_error(
     sim_trajectories_tte(
       baseline,
+      frailty_event_param = rep(0, 3),
       states = 1:3,
       param = rep(0.1, 3),
       hazard_ratios = list(c(1, 1))
@@ -1488,6 +1504,7 @@ test_that("sim_trajectories_tte validates inputs", {
   expect_error(
     sim_trajectories_tte(
       baseline,
+      frailty_event_param = rep(0, 3),
       states = 1:3,
       param = rep(0.1, 3),
       hazard_ratios = list(rep(1, 3)),
@@ -1503,6 +1520,7 @@ test_that("sim_trajectories_tte expands event histories into daily states", {
     id = c(1, 2),
     tx = c(0, 1),
     state = c(2, 2),
+    frailty = 0,
     event_time = 0
   )
 
@@ -1516,6 +1534,7 @@ test_that("sim_trajectories_tte expands event histories into daily states", {
     {
       result <- sim_trajectories_tte(
         baseline,
+        frailty_event_param = rep(0, 3),
         states = 1:3,
         absorbing_states = 3,
         follow_up_time = 3,
@@ -1538,6 +1557,7 @@ test_that("sim_trajectories_tte maps positive tx codes to matching hazard ratios
     id = 1,
     tx = 1,
     state = 1,
+    frailty = 0,
     event_time = 0
   )
   observed_param <- numeric()
@@ -1550,6 +1570,7 @@ test_that("sim_trajectories_tte maps positive tx codes to matching hazard ratios
     {
       sim_trajectories_tte(
         baseline,
+        frailty_event_param = rep(0, 2),
         states = 1:2,
         absorbing_states = 2,
         follow_up_time = 1,
@@ -1569,12 +1590,14 @@ test_that("sim_trajectories_tte requires hazard ratios for observed treatment ar
     id = 1,
     tx = 2,
     state = 1,
+    frailty = 0,
     event_time = 0
   )
 
   expect_error(
     sim_trajectories_tte(
       baseline,
+      frailty_event_param = rep(0, 2),
       states = 1:2,
       param = c(10, 20),
       hazard_ratios = list(c(1, 1)),
@@ -1595,6 +1618,7 @@ test_that("sim_trajectories_tte generates baseline data and handles absorbing ba
         baseline_states = 1:3,
         prob = c(0.2, 0.3, 0.5),
         n = 2,
+        frailty_event_param = rep(0, 3),
         states = 1:3,
         absorbing_states = 3,
         follow_up_time = 2,
@@ -1613,6 +1637,7 @@ test_that("sim_trajectories_tte generates baseline data and handles absorbing ba
     id = c(1, 2),
     tx = c(0, 1),
     state = factor(c(NA, 3), levels = 1:3),
+    frailty = 0,
     event_time = 0
   )
   with_mocked_bindings(
@@ -1623,6 +1648,7 @@ test_that("sim_trajectories_tte generates baseline data and handles absorbing ba
       expect_warning(
         absorbing <- sim_trajectories_tte(
           baseline,
+          frailty_event_param = rep(0, 3),
           states = 1:3,
           absorbing_states = 3,
           follow_up_time = 2,
@@ -1644,6 +1670,7 @@ test_that("sim_trajectories_tte generates baseline data and handles absorbing ba
     id = 1,
     tx = 0,
     state = 3,
+    frailty = 0,
     event_time = 0
   )
   with_mocked_bindings(
@@ -1654,6 +1681,7 @@ test_that("sim_trajectories_tte generates baseline data and handles absorbing ba
       expect_warning(
         numeric_out <- sim_trajectories_tte(
           numeric_absorbing,
+          frailty_event_param = rep(0, 3),
           states = 1:3,
           absorbing_states = 3,
           follow_up_time = 2,
