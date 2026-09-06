@@ -381,6 +381,8 @@ control SOP recursion, interpolation, or integration.
 `markov_prepare_stored_data()` creates these attributes before response
 omission, and `markov_validate_starting_profiles()` enforces their exact
 patient-level contract when automatic profiles are resolved.
+Rows with missing times are excluded from starting-profile selection, so an
+unusable later row cannot introduce an artificial missing profile.
 
 The wrappers do not store real-time mapping or baseline-anchor settings.
 Downstream functions use `baseline_time` (default 0) to place the observed

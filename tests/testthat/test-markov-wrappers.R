@@ -344,6 +344,31 @@ test_that("missing first outcome preserves a complete starting profile", {
   expect_equal(attr(comparison, "newdata_orig")$id, profiles$id)
 })
 
+test_that("missing later times do not create incomplete starting profiles", {
+  skip_if_not_installed("rms")
+
+  data <- make_test_data(n_patients = 40, follow_up_time = 6, seed = 1001)
+  data$time[which(data$time == 3)[1L]] <- NA_real_
+  fit <- orm_markov(y ~ time + tx + yprev, data = data, id_var = "id")
+  profiles <- markov_validate_starting_profiles(fit)
+  starting_rows <- which(data$time == 1)
+
+  expect_equal(profiles$id, data$id[starting_rows])
+  expect_equal(profiles$.markov_source_row, starting_rows)
+  expect_equal(profiles$time, rep(1, length(starting_rows)))
+
+  individual <- sops(fit, times = 1:2, y_levels = 1:6, absorb = 6)
+  average <- avg_sops(
+    fit,
+    variables = list(tx = c(0, 1)),
+    times = 1:2,
+    y_levels = 1:6,
+    absorb = 6
+  )
+  expect_equal(attr(individual, "newdata_orig")$id, profiles$id)
+  expect_equal(attr(average, "newdata_orig")$id, profiles$id)
+})
+
 test_that("profile-only patients are excluded from the fitted cohort", {
   skip_if_not_installed("VGAM")
 

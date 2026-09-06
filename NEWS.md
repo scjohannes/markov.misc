@@ -54,6 +54,9 @@
   missing when the patient contributes a usable later transition. Patients with
   no usable fitted transition are excluded, and `refit_data` is not used as a
   prediction-profile fallback.
+- `orm_markov()`, `vglm_markov()`, and `blrm_markov()` now exclude missing
+  times when selecting starting profiles, allowing automatic SOP prediction
+  when a patient has a complete starting profile and a later time is missing.
 - `orm_markov()`, `vglm_markov()`, and `blrm_markov()` now use
   `first_followup_time` solely to select automatic starting profiles. Numeric
   time defaults to 1 and rejects schedules below 1; factor or character time

@@ -827,7 +827,7 @@ markov_prepare_stored_data <- function(
   if (anyNA(fitted_ids) || any(fitted_ids == "")) {
     stop("Fitted patient IDs must be non-missing and non-empty.", call. = FALSE)
   }
-  at_start <- as.character(refit_data[[time_var]]) ==
+  at_start <- as.character(refit_data[[time_var]]) %in%
     as.character(scheduled_start)
   in_fit <- as.character(refit_data[[id_var]]) %in% fitted_ids
   starting_profile_data <- refit_data[at_start & in_fit, , drop = FALSE]
