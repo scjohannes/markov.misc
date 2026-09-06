@@ -39,6 +39,38 @@ local_delta_orm_fit <- local({
   }
 })
 
+test_that("explicit zero ORM penalties preserve unpenalized inference", {
+  skip_if_not_installed("rms")
+  data <- make_test_data(n_patients = 35, follow_up_time = 6, seed = 2402)
+  reference <- local_delta_orm_fit()
+  infer <- function(model, covariance) {
+    avg <- avg_sops(
+      model,
+      variables = list(tx = c(0, 1)),
+      times = 1:3,
+      absorb = 6
+    )
+    inferences(avg, method = "delta", vcov = covariance)
+  }
+  for (variance in c("simple", "sandwich")) {
+    model <- orm_markov(
+      ordered(y) ~ time + tx + yprev,
+      data = data,
+      id_var = "id",
+      penalty = 0,
+      var.penalty = variance
+    )
+    expect_type(model$penalty, "list")
+    expect_equal(orm_model_bread(model)$bread, orm_model_bread(reference)$bread)
+    for (covariance in c("conditional", "unconditional")) {
+      actual <- infer(model, covariance)
+      expected <- infer(reference, covariance)
+      expect_equal(actual$estimate, expected$estimate)
+      expect_equal(stats::vcov(actual), stats::vcov(expected))
+    }
+  }
+})
+
 delta_weighted_sop_estimate <- function(
   model,
   coefficient,

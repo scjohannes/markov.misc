@@ -464,7 +464,7 @@ delta_reject_weighted_orm_superpopulation <- function(model) {
 
 delta_reject_penalized_orm_superpopulation <- function(model) {
   penalty_matrix <- model$penalty.matrix
-  penalty <- model$penalty
+  penalty <- unlist(model$penalty, use.names = FALSE)
   penalized <-
     (!is.null(penalty_matrix) &&
       length(penalty_matrix) > 0L &&

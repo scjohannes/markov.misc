@@ -818,7 +818,10 @@ For inference, `set_coef.orm()` mutates a copy of the model coefficients, and
 and-slope scale. It obtains the model-based covariance from a valid `orig.var`
 or `stats::vcov(..., intercepts = "all")`; penalized fits requesting
 `var.penalty = "sandwich"` instead use their retained
-`var.from.info.matrix` inverse sensitivity. It multiplies analytic row scores
+`var.from.info.matrix` inverse sensitivity. Penalty detection flattens rms's
+numeric/list settings in both bread selection and the superpopulation guard;
+explicit zero penalties therefore follow the unpenalized path.
+It multiplies analytic row scores
 by fitted case weights, aggregates them by patient, and forms the sandwich as
 the crossproduct of bread-transformed cluster scores. Zero-weight rows are
 excluded, as are clusters represented only by zero-weight rows. It shares

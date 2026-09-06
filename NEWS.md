@@ -1,5 +1,7 @@
 # markov.misc 0.1.0
 
+- `orm_markov()` and analytical inference now accept explicit `penalty = 0`
+  without failing on rms's stored penalty list.
 - Model-based SOP and diagnostic workflows now require fits created by
   `orm_markov()`, `vglm_markov()`, or `blrm_markov()`. This wrapper provenance
   guarantees the stored fitting-data contracts needed for prediction and

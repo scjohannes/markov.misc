@@ -105,7 +105,7 @@ validate_robcov_orm_fit <- function(fit) {
 orm_model_bread <- function(fit) {
   coefficients <- stats::coef(fit)
   penalty_matrix <- fit$penalty.matrix
-  penalty <- fit$penalty
+  penalty <- unlist(fit$penalty, use.names = FALSE)
   penalized <-
     (!is.null(penalty_matrix) &&
       length(penalty_matrix) > 0L &&

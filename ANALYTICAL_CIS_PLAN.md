@@ -219,7 +219,7 @@ For every concern:
 | ACI-18 | High | Open | Independent superpopulation-inference validation oracle |
 | ACI-19 | Low | Resolved | Public target terminology and formal defaults |
 | ACI-20 | Low | Open | Generated native build artifacts in the worktree |
-| ACI-21 | Medium | Open | Explicit zero ORM penalty list handling |
+| ACI-21 | Medium | Resolved | Explicit zero ORM penalty list handling |
 
 ### ACI-01: Superpopulation finite-sample normalization and fitted-cohort contract
 
@@ -840,7 +840,7 @@ For every concern:
 
 ### ACI-21: Explicit zero ORM penalty list handling
 
-- **Status:** Open (2026-09-05)
+- **Status:** Resolved (2026-09-06)
 - **Priority:** Medium
 - **Concern:** With an explicit `penalty = 0`, rms stores penalty settings as
   a list while its penalty matrix contains only zeros. `orm_model_bread()` then
@@ -854,7 +854,13 @@ For every concern:
 - **Resolution approach:** Check every penalty-detection caller, handle the
   backend's penalty representation consistently, and add a small explicit-zero
   regression. Preserve rejection of genuinely penalized unconditional inference.
-- **Resolution log:** Pending.
+- **Resolution log:** Flatten stored penalty settings with base `unlist()` in
+  both `orm_model_bread()` and `delta_reject_penalized_orm_superpopulation()`.
+  A regression fits actual wrapper models with omitted and explicit zero
+  penalties under both penalty-variance modes, then compares model bread,
+  estimates, and conditional/unconditional SOP covariance. The superpopulation,
+  spline, and ORM robust-covariance test files passed, including existing
+  rejection of positive penalties. No dependency or helper was added.
 
 ## Resolved Implementation Decisions
 
@@ -962,6 +968,7 @@ issues.
   covariance limit. Resolved ACI-14 after full tests passed with the expected
   installed-package skip and package checking passed with 0 errors, 0 warnings,
   and the sole network-time verification note, including both vignette builds.
+
 - Marked ACI-12 **Active**, then **Resolved** under the user-approved
   internal-only accessor contract. Removed the `get_jacobian()` export and
   public help, retained explicit `:::` inspection in the vignette, and verified
@@ -978,3 +985,9 @@ issues.
   absorption are omitted. Full tests passed with the expected installed-only skip.
   Package checking (tests run separately) passed with 0 errors, 0 warnings,
   and the sole network-time verification note, including both vignette builds.
+
+### 2026-09-06
+
+- Committed the ACI-06/07/08/11 changes in `af9ed07`, then resolved ACI-21
+  with two penalty-list normalization changes and an end-to-end regression.
+  Focused tests passed; no vignettes were built.
