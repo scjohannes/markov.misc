@@ -722,3 +722,66 @@ test_that("empirical covariance propagates named raw coefficients", {
 
   expect_equal(delta_empirical_covariance(jacobian, covariance), expected)
 })
+
+
+test_that("matrix validation respects covariance units", {
+  for (scale in c(1e-20, 1, 1e20)) {
+    covariance <- diag(c(1, 2)) * scale
+    dimnames(covariance) <- list(c("a", "b"), c("a", "b"))
+    expect_equal(
+      delta_validate_named_matrix(
+        covariance,
+        c("a", "b"),
+        "vcov",
+        positive_definite = TRUE
+      ) /
+        scale,
+      covariance / scale
+    )
+    invalid <- covariance
+    invalid[1, 1] <- -scale
+    expect_match(
+      tryCatch(
+        delta_validate_named_matrix(
+          invalid,
+          c("a", "b"),
+          "vcov",
+          positive_semidefinite = TRUE
+        ),
+        error = conditionMessage
+      ),
+      "not numerically positive semidefinite"
+    )
+    invalid <- covariance
+    invalid[1, 2] <- scale / 10
+    expect_match(
+      tryCatch(
+        delta_validate_named_matrix(invalid, c("a", "b"), "vcov"),
+        error = conditionMessage
+      ),
+      "not numerically symmetric"
+    )
+  }
+  zero <- covariance * 0
+  expect_equal(
+    delta_validate_named_matrix(
+      zero,
+      c("a", "b"),
+      "vcov",
+      positive_semidefinite = TRUE
+    ),
+    zero
+  )
+  expect_match(
+    tryCatch(
+      delta_validate_named_matrix(
+        zero,
+        c("a", "b"),
+        "bread",
+        positive_definite = TRUE
+      ),
+      error = conditionMessage
+    ),
+    "not numerically positive definite"
+  )
+})

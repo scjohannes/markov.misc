@@ -194,7 +194,10 @@ delta_match_cells <- function(object, calculated, key_cols) {
       length(object_estimate) != length(calculated_estimate) ||
       any(!is.finite(object_estimate)) ||
       any(!is.finite(calculated_estimate)) ||
-      any(abs(object_estimate - calculated_estimate) >= 1e-12)
+      any(
+        abs(object_estimate - calculated_estimate) >
+          1e-12 + 1e-10 * pmax(abs(object_estimate), abs(calculated_estimate))
+      )
   ) {
     stop(
       "Analytical SOP replay did not reproduce the stored point estimates.",
@@ -227,7 +230,7 @@ delta_align_coefficient_vcov <- function(result, coefficient_names) {
   if (any(!is.finite(V))) {
     stop("The analytical coefficient covariance must contain finite values.")
   }
-  (V + t(V)) / 2
+  V / 2 + t(V) / 2
 }
 
 delta_coefficient_state <- function(model, cluster, vcov, jacobian) {
@@ -250,7 +253,7 @@ delta_jacobian_variance <- function(jacobian, coefficient_vcov) {
   delta_assert_bytes(working_bytes, "Analytical standard-error calculation")
   JV <- jacobian %*% coefficient_vcov
   variance <- rowSums(JV * jacobian)
-  tolerance <- sqrt(.Machine$double.eps) * pmax(1, rowSums(abs(JV * jacobian)))
+  tolerance <- sqrt(.Machine$double.eps) * rowSums(abs(JV * jacobian))
   variance[variance < 0 & abs(variance) <= tolerance] <- 0
   if (any(variance < 0)) {
     stop("Analytical propagation produced a negative variance.", call. = FALSE)

@@ -261,7 +261,7 @@ test_that("factor visit designs use the same analytical recursion", {
     newdata = baseline,
     times = levels(data$time),
     y_levels = seq_len(4),
-    absorb = 4
+    absorb = NULL
   )
 
   analytical <- run_sop_delta_plan(plan, model)
@@ -293,19 +293,61 @@ test_that("native recursion reproduces the R analytic oracle", {
   skip_if_not_installed("rms")
 
   for (case in list(delta_vglm_case(), delta_orm_case())) {
-    native <- run_sop_delta_plan(case$plan, case$model)
-    oracle <- run_sop_delta_r_oracle(case$plan, case$model)
+    for (visits in c(1L, length(case$plan$times))) {
+      for (absorbing in list(
+        case$plan$absorb,
+        case$y_levels[c(1L, length(case$y_levels))]
+      )) {
+        plan <- case$plan
+        plan$times <- plan$times[seq_len(visits)]
+        plan$components$X_transition <- plan$components$X_transition[seq_len(
+          visits
+        )]
+        plan$absorb <- absorbing
+        native <- run_sop_delta_plan(plan, case$model)
+        oracle <- run_sop_delta_r_oracle(plan, case$model)
+
+        expect_equal(
+          native$probabilities,
+          oracle$probabilities,
+          tolerance = 1e-12
+        )
+        expect_equal(native$jacobian, oracle$jacobian, tolerance = 1e-12)
+      }
+    }
+  }
+})
+
+test_that("changing covariate units preserves analytical probabilities", {
+  skip_if_not_installed("VGAM")
+  skip_if_not_installed("rms")
+  for (case in list(delta_vglm_case(), delta_orm_case())) {
+    original <- run_sop_delta_plan(case$plan, case$model)
+    plan <- case$plan
+    plan$components$X_init[, "tx"] <- plan$components$X_init[, "tx"] * 1e12
+    plan$components$X_transition <- lapply(
+      plan$components$X_transition,
+      function(design) {
+        if (!is.null(design)) {
+          design[, "tx"] <- design[, "tx"] * 1e12
+        }
+        design
+      }
+    )
+    coef <- get_coef(case$model)
+    coef["tx"] <- coef["tx"] / 1e12
+    model <- set_coef(case$model, coef)
+    native <- run_sop_delta_plan(plan, model)
+    oracle <- run_sop_delta_r_oracle(plan, model)
 
     expect_equal(
-      unname(native$probabilities),
-      unname(oracle$probabilities),
+      native$probabilities,
+      original$probabilities,
       tolerance = 1e-12
     )
-    expect_equal(
-      unname(native$jacobian),
-      unname(oracle$jacobian),
-      tolerance = 1e-12
-    )
+    expect_equal(native$jacobian, oracle$jacobian, tolerance = 1e-12)
+    native$jacobian[,,, "tx"] <- native$jacobian[,,, "tx"] / 1e12
+    expect_equal(native$jacobian, original$jacobian, tolerance = 1e-12)
   }
 })
 
@@ -315,7 +357,7 @@ test_that("grouped recursion retains only the required analytical state", {
   case <- delta_vglm_case()
   plan <- case$plan
   plan$components$X_init <- plan$components$X_init[
-    rep(seq_len(4L), 2L),
+    rep(seq_len(4L), each = 2L),
     ,
     drop = FALSE
   ]
@@ -329,13 +371,13 @@ test_that("grouped recursion retains only the required analytical state", {
       origin_count <- nrow(design) / 4L
       rows <- unlist(lapply(seq_len(origin_count), function(origin) {
         source <- (origin - 1L) * 4L + seq_len(4L)
-        c(source, source)
+        rep(source, each = 2L)
       }))
       design[rows, , drop = FALSE]
     }
   )
 
-  full <- run_sop_delta_plan(plan, case$model)
+  full <- run_sop_delta_r_oracle(plan, case$model)
   grouped <- run_sop_delta_plan(
     plan,
     case$model,
@@ -348,8 +390,8 @@ test_that("grouped recursion retains only the required analytical state", {
     retain_individual_probabilities = TRUE
   )
 
-  expected_probability <- apply(full$probabilities, c(2L, 3L), mean)
-  expected_jacobian <- apply(full$jacobian, c(2L, 3L, 4L), mean)
+  expected_probability <- apply(full$probabilities[1:4, , ], c(2L, 3L), mean)
+  expected_jacobian <- apply(full$jacobian[1:4, , , ], c(2L, 3L, 4L), mean)
   expect_identical(
     dim(grouped$probabilities),
     c(2L, 5L, length(case$y_levels))
@@ -371,7 +413,12 @@ test_that("grouped recursion retains only the required analytical state", {
   )
   expect_equal(
     unname(grouped$probabilities[2L, , ]),
-    unname(expected_probability),
+    unname(apply(full$probabilities[5:8, , ], c(2L, 3L), mean)),
+    tolerance = 1e-15
+  )
+  expect_equal(
+    unname(grouped$jacobian[2L, , , ]),
+    unname(apply(full$jacobian[5:8, , , ], c(2L, 3L, 4L), mean)),
     tolerance = 1e-15
   )
   expect_identical(
@@ -381,7 +428,7 @@ test_that("grouped recursion retains only the required analytical state", {
   expect_equal(
     unname(unconditional$individual_probabilities),
     unname(full$probabilities),
-    tolerance = 0
+    tolerance = 1e-12
   )
 
   individual_bytes <- sop_delta_preflight(plan, length(get_coef(case$model)))

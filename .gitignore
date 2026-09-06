@@ -67,3 +67,6 @@ slides/
 # Compiled R package build artifacts
 /src/*.o
 /src/*.dll
+
+# Optional local performance experiments and results
+/benchmarks/local/

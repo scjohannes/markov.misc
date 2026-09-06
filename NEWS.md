@@ -1,5 +1,11 @@
 # markov.misc 0.1.0
 
+- `inferences(method = "delta")` now checks covariance matrices and variances
+  relative to their scale, accepting small valid matrices while rejecting
+  negative variances that were previously rounded to zero. Point-estimate
+  checks allow small numerical differences relative to the estimate, and
+  derivative checks accommodate covariates expressed in large units.
+
 - `inferences(method = "delta")` now uses `"unconditional"` consistently in
   result metadata and error messages for variance that includes patient sampling.
   Internal helper and test filenames use the same terminology.

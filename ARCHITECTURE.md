@@ -537,8 +537,8 @@ implementation. Basis-vector regressions verify the entire linear map for
 transformed and interaction terms, constrained thresholds, and rescaled
 common-slope constraints; unsupported zero-column constraints still error.
 
-Fixed-profile SOPs retain the patient-by-time-by-state probability array and
-patient-by-time-by-state-by-raw-coefficient Jacobian. Averaged empirical targets
+Individual SOPs retain the patient-by-time-by-state probability array and
+patient-by-time-by-state-by-raw-coefficient Jacobian. Averaged SOPs
 instead average each counterfactual scenario inside the native recursion and
 retain only scenario-by-time-by-state probabilities and Jacobians.
 Before native averaging, stored counterfactual data must consist of contiguous
@@ -551,10 +551,23 @@ cannot detect all within-block profile permutations.
 Unconditional targets additionally retain individual probabilities for the profile term, but
 never individual Jacobians. The delta memory preflight therefore counts the
 actual target-specific outputs plus the rolling probability/Jacobian workspace.
+This guards principal numeric allocations, not total process memory: existing
+models, data and designs, temporary R copies, and allocator overhead can require
+additional memory. Optional process-memory measurements live in ignored
+`benchmarks/local/`; they are not package tests.
 Crossed raw ordinal probabilities are errors in this path; they are not repaired
 by clipping before differentiation. Central finite differences and the former R
 recursion appear only in regression tests as independent derivative oracles.
 They are not production fallbacks.
+
+The native interface documents column-major output order, absorbing-state
+probability and derivative propagation, and contiguous scenario averaging.
+Tests compare individual and grouped native output with the test-only R
+reference across visit layouts and absorbing-state choices. Recursion changes
+must update the reference and parity tests together. Existing AddressSanitizer
+and UndefinedBehaviorSanitizer CI jobs include all analytical tests; Valgrind
+includes the analytical core tests. These Linux checks complement the regular
+Windows, macOS, and Linux package checks.
 
 Logit-delta intervals return warned `NA` limits for exact zero/one estimates,
 regardless of the numerical standard error. The engine predicts the initial
@@ -1263,6 +1276,14 @@ Important validation checks include:
 - Analytical covariance requires the complete named raw-coefficient scale.
   Patient clustering is resolved explicitly or from stored fitting data plus
   `id_var`; observation rows are never an implicit independence unit.
+  Matrix symmetry and eigenvalue tolerances scale with the supplied matrix,
+  without a unit-sized floor. Negative propagated variances are rounded to zero
+  only within a tolerance proportional to the absolute quadratic-form terms.
+  Point replay uses absolute `1e-12` plus relative `1e-10` tolerance, including
+  comparisons whose time units can make estimates much larger than one.
+  Category and occupancy derivative-sum checks add a relative allowance based
+  on the sum of absolute derivatives, preserving validation after a change
+  of covariate units.
 - Fitted-cohort unconditional inference rejects user-supplied `newdata`, custom
   coefficient covariance, profile-only patients, and unmatched score/profile
   IDs. A missing first transition response is allowed when the first-follow-up

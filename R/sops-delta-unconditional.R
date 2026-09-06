@@ -137,18 +137,18 @@ delta_validate_named_matrix <- function(
     stop("`", label, "` contains non-finite values.", call. = FALSE)
   }
 
-  scale <- max(1, max(abs(value)))
-  symmetry_error <- max(abs(value - t(value))) / scale
-  if (!is.finite(symmetry_error) || symmetry_error > 1e-8) {
+  scale <- max(abs(value))
+  symmetry_error <- max(abs(value - t(value)))
+  if (!is.finite(symmetry_error) || symmetry_error > 1e-8 * scale) {
     stop("`", label, "` is not numerically symmetric.", call. = FALSE)
   }
-  value <- (value + t(value)) / 2
+  value <- value / 2 + t(value) / 2
 
   if (positive_semidefinite || positive_definite) {
     eigenvalues <- eigen(value, symmetric = TRUE, only.values = TRUE)$values
-    eigen_scale <- max(1, max(abs(eigenvalues))) * q
+    eigen_scale <- max(abs(eigenvalues))
     semidefinite_tolerance <- sqrt(.Machine$double.eps) * eigen_scale
-    definite_tolerance <- 100 * .Machine$double.eps * eigen_scale
+    definite_tolerance <- 100 * .Machine$double.eps * q * eigen_scale
     if (
       positive_semidefinite &&
         min(eigenvalues) < -semidefinite_tolerance

@@ -13,7 +13,10 @@ The limit is checked for the SOP Jacobian and recursion workspace, retained
 low-rank analytical state, standard-error workspaces, and covariance or
 Jacobian blocks requested through \code{\link[stats:vcov]{stats::vcov()}} or internal accessors. Sizes
 are measured in bytes. The checks estimate the principal numeric allocations
-and are not a guarantee of total process memory use.
+and are not a guarantee of total process memory use. Existing models and
+prediction data, design matrices, temporary R copies, and allocation overhead
+can require additional memory. A calculation can therefore use more memory
+than this option even when every check passes.
 
 Increase the option only after confirming that the reported allocation and
 additional R overhead fit comfortably in available memory. Restore the prior

@@ -239,7 +239,10 @@ delta_comparison_operator <- function(object, avg, args, avg_args) {
   propagated <- drop(delta_apply_comparison_operator(operator, source$estimate))
   if (
     any(!is.finite(propagated)) ||
-      any(abs(propagated - object$estimate) >= 1e-12)
+      any(
+        abs(propagated - object$estimate) >
+          1e-12 + 1e-10 * pmax(abs(propagated), abs(object$estimate))
+      )
   ) {
     stop(
       "The analytical comparison operator did not reproduce the stored point ",

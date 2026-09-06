@@ -365,10 +365,12 @@ bool delta_category_probabilities(
       cumulative_derivatives[cumulative_offset + thresholds - 1];
 
     double derivative_sum = 0.0;
+    double derivative_scale = 0.0;
     for (int state = 0; state < states; ++state) {
       derivative_sum += derivatives[derivative_offset + state];
+      derivative_scale += std::abs(derivatives[derivative_offset + state]);
     }
-    if (std::abs(derivative_sum) > 1e-12) {
+    if (std::abs(derivative_sum) > 1e-12 + 1e-12 * derivative_scale) {
       failure.code = DeltaFailureCode::derivative_mass;
       failure.value = derivative_sum;
       return false;
@@ -379,6 +381,15 @@ bool delta_category_probabilities(
 
 }  // namespace
 
+// Contract with run_sop_delta_plan() and the test-only R oracle:
+// - Matrices/arrays use R column-major order: patient, visit, state, coefficient.
+// - State and origin indices are one-based; origin_positions selects patient
+//   blocks in transition rows. The first visit uses only initial_design.
+// - Absorbing states carry probability AND derivatives unchanged; other states
+//   propagate both product-rule terms. No clipping or renormalization is allowed.
+// - Groups are contiguous equal-sized patient blocks, averaged at every visit;
+//   retained individual probabilities preserve the original patient order.
+// Recursion changes must update helper-sops-delta-oracle.R and parity tests.
 [[cpp11::register]] list cpp_run_sop_delta(
     doubles_matrix<> initial_design,
     list transition_designs,
@@ -710,14 +721,17 @@ bool delta_category_probabilities(
       }
       for (int coefficient = 0; coefficient < coefficients; ++coefficient) {
         double derivative_sum = 0.0;
+        double derivative_scale = 0.0;
         for (int state = 0; state < states; ++state) {
-          derivative_sum += next_jacobian[jacobian_index(
+          const double derivative = next_jacobian[jacobian_index(
             observation,
             state,
             coefficient
           )];
+          derivative_sum += derivative;
+          derivative_scale += std::abs(derivative);
         }
-        if (std::abs(derivative_sum) > 1e-10) {
+        if (std::abs(derivative_sum) > 1e-10 + 1e-12 * derivative_scale) {
           failure.code = DeltaFailureCode::sop_derivative_mass;
           failure.visit = visit + 1;
           failure.value = derivative_sum;

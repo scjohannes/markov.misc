@@ -1,6 +1,6 @@
 # Analytical Confidence Intervals Implementation Plan
 
-Status date: 2026-07-19
+Status date: 2026-09-06
 Working branch: `analytical-cis`
 
 This is the durable implementation checklist for analytical confidence
@@ -208,14 +208,14 @@ For every concern:
 | ACI-07 | Medium | Resolved | VGLM raw-to-effective constraint mapping |
 | ACI-08 | Medium | Resolved | Structural boundary classification |
 | ACI-09 | Medium | Resolved | First-follow-up profiles and real-time integration conventions |
-| ACI-10 | Medium | Open | Memory accounting versus actual process memory |
+| ACI-10 | Medium | Resolved | Memory accounting versus actual process memory |
 | ACI-11 | Medium | Resolved | Grouped native execution row-layout contract |
 | ACI-12 | Medium | Resolved | Unconditional `get_jacobian()` semantics |
 | ACI-13 | Medium | Resolved | `vcov()` dispatch for non-delta result objects |
 | ACI-14 | Medium | Resolved | Dense comparison and covariance materialization |
-| ACI-15 | Medium | Open | Numerical validation tolerances and portability |
-| ACI-16 | Medium | Open | Native C++ maintenance and semantic parity |
-| ACI-17 | Low | Open | Performance benchmark generalizability |
+| ACI-15 | Medium | Resolved | Numerical validation tolerances and portability |
+| ACI-16 | Medium | Resolved | Native C++ maintenance and semantic parity |
+| ACI-17 | Low | Resolved | Performance benchmark generalizability |
 | ACI-18 | High | Resolved | Independent validation of unconditional variance |
 | ACI-19 | Low | Resolved | Public target terminology and formal defaults |
 | ACI-20 | Low | Resolved | Generated native build artifacts in the worktree |
@@ -606,20 +606,27 @@ For every concern:
 
 ### ACI-10: Memory accounting versus process memory
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-06; measured and documented limitation)
 - **Priority:** Medium
-- **Current decision:** `markov.misc.delta_max_bytes` guards principal numeric
-  outputs, rolling recursion workspace, retained state, and requested
-  Jacobian/covariance blocks.
-- **Concern:** It is not a hard cap on total R process memory. Existing design
-  matrices, R copies, object headers, allocator overhead, and C++ container
-  capacity are not all included. The estimate may therefore differ from peak
-  resident memory.
-- **Resolution approach:** Profile peak memory for representative small, full-PO,
-  and many-level workflows. Reconcile measured peaks with each accounted
-  component, add a safety factor if useful, and keep documentation explicit
-  about what the option does and does not guarantee.
-- **Resolution log:** Pending.
+- **Decision:** Keep the guard on principal numeric allocations, not total R
+  process memory. The native formula matches its main outputs and nine rolling
+  numeric workspaces. No universal multiplier is justified by the measurements.
+- **Evidence:** Fresh-process experiments on Windows 11, R 4.6.1, AMD Ryzen AI 9
+  HX 370 sampled resident memory every 10 ms. Ungrouped small, full-PO, and
+  many-level recursion accounted for 0.016, 17.58, and 67.15 MiB respectively;
+  sampled increases were 0, 11.74, and 108.48 MiB. Averaged variants accounted
+  for 0.008, 1.12, and 6.24 MiB, with increases of 0.09, 0, and 0.23 MiB.
+  Full conditional inference for 1,000 profiles, six states, and 30 visits
+  increased sampled resident memory by 117.57 MiB above a 416.68 MiB baseline,
+  despite a 17.58 MiB recursion estimate; existing designs occupied 7.80 MiB
+  and the returned R object occupied 46.08 MiB.
+- **Remaining limitation:** Sampling can miss short peaks; allocator reuse means
+  zero resident growth does not mean zero allocation. Existing models, data,
+  designs, R copies, object overhead, and native allocator capacity prevent a
+  fixed relationship between the guard and process memory.
+- **Resolution log:** Expanded option help to name these exclusions explicitly.
+  Scripts, results, and session details remain ignored in `benchmarks/local/`
+  as `aci-10-*`; no performance tests or production budget changes were added.
 
 ### ACI-11: Grouped native execution row-layout contract
 
@@ -756,48 +763,64 @@ For every concern:
 
 ### ACI-15: Numerical validation tolerances and portability
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-06; local validation, CI pending)
 - **Priority:** Medium
-- **Current decision:** Use strict absolute point-replay tolerance `1e-12`, raw
-  crossed-probability tolerance `-1e-10`, derivative/mass tolerances, and
-  scale-dependent covariance eigenvalue tolerances.
-- **Concern:** The point-replay tolerance may be unnecessarily strict across
-  platforms, BLAS implementations, or unusually scaled models. PSD tolerances
-  may also become permissive or restrictive as coefficient dimension grows.
-- **Resolution approach:** Run the focused suite on supported operating systems
-  and R/backend versions. Test extreme but valid scales, then define tolerances
-  using explicit absolute-plus-relative formulas tied to the numerical quantity
-  being validated.
-- **Resolution log:** Pending.
+- **Fix:** Covariance symmetry and eigenvalue checks now use the matrix's actual
+  scale instead of a minimum scale of one. PSD tolerance no longer grows with
+  coefficient count; positive-definite checks retain the dimension-dependent
+  roundoff allowance. Zero covariance remains valid for PSD checks.
+  Negative propagated variance is rounded to zero only within a tolerance
+  proportional to its quadratic-form terms. Point replay uses absolute `1e-12`
+  plus relative `1e-10` tolerance. Category and occupancy derivative sums use
+  absolute-plus-relative bounds based on the sum of absolute derivatives.
+- **Evidence:** Regressions cover covariance scales `1e-20`, `1`, and `1e20`,
+  invalid asymmetry/negative eigenvalues, cancellation, and stale point estimates.
+  Expressing a covariate in units differing by `1e12` reproduced a native
+  validation failure before the fix; equivalent ORM/VGLM probabilities and
+  correctly rescaled derivatives are now checked against the R reference.
+- **Remaining limitation:** Local checks use Windows/R 4.6.1. Existing CI covers
+  Windows, macOS, Linux release, and Linux devel; those remote runs have not
+  been executed for this change. Arbitrary backend versions and scales remain
+  outside the evidence from these targeted regressions.
+- **Resolution log:** Removed demonstrated unit-dependent validation failures
+  and documented the numerical contracts. `devtools::check(vignettes = FALSE,
+  document = FALSE)` passed the full test suite, examples, documentation, and
+  compiled-code checks: zero errors, zero warnings, one note because remote
+  clock verification was unavailable.
 
 ### ACI-16: Native C++ maintenance and semantic parity
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-06; maintenance checks in place)
 - **Priority:** Medium
-- **Current decision:** Native cpp11 recursion is the sole production analytical
-  path. The slower R recursion is a test-only oracle and never a fallback.
-- **Concern:** The native implementation materially improves speed but adds a
-  second-language maintenance surface and the possibility that later R and C++
-  execution semantics diverge.
-- **Resolution approach:** Keep shared deterministic fixtures and native-versus-R
-  oracle tests for every supported feature. Document invariants next to the
-  native interface, add sanitizer or compiled-code checks where practical, and
-  require oracle updates with any recursion change.
-- **Resolution log:** Pending.
+- **Decision:** C++ remains the production analytical recursion; the R reference
+  remains test-only. Changes to recursion must update reference/parity checks
+  together, as recorded in `AGENTS.md` and beside the native interface.
+- **Evidence:** Existing deterministic ORM/VGLM parity tests now cover one and
+  multiple visits, no/one/multiple absorbing states, and distinct averaged
+  groups. Grouped probabilities and derivatives are compared with means from
+  the R reference instead of another run of the native implementation. Existing
+  spline and finite-difference checks remain in place.
+- **Resolution log:** Documented array order, transition layout, absorbing-state
+  propagation, and group averaging at the native boundary. Added analytical
+  tests to existing AddressSanitizer/UndefinedBehaviorSanitizer jobs and the
+  analytical core to the existing Valgrind job. Linux instrumentation results
+  remain pending CI; no new CI framework or production fallback was added.
+  The full Windows package check, including all parity tests and compiled-code
+  checks, passed with zero errors or warnings.
 
 ### ACI-17: Performance benchmark generalizability
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-06; scope decision)
 - **Priority:** Low
-- **Current decision:** Report measured speedups from the exact full-PO vignette
-  workflow with 100 MVN draws on the development machine.
-- **Concern:** The measured VGLM and ORM speedups do not imply the same advantage
-  for small models, very few draws, different coefficient dimensions, or
-  workloads dominated by execution-plan compilation.
-- **Resolution approach:** Add a reproducible benchmark grid varying patients,
-  states, visits, coefficients, and MVN draws. Report absolute times and
-  break-even regions rather than a single general speedup claim.
-- **Resolution log:** Pending.
+- **Decision:** Broader performance benchmarks are optional local experiments,
+  not package tests or a requirement for analytical inference. Any new work
+  for this concern belongs in ignored `benchmarks/local/`, including scripts
+  and results. The existing `.Rbuildignore` excludes all benchmarks from
+  package builds.
+- **Remaining limitation:** Reported speedups apply to the measured workflow
+  and machine; do not present them as guarantees for other analyses.
+- **Resolution log:** Closed by user decision. No benchmark grid or additional
+  package tests are needed.
 
 ### ACI-18: Independent validation of unconditional variance
 

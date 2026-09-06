@@ -263,8 +263,21 @@ test_that("factor-time ORM differences match public finite differences", {
     1e-12
   )
 
+  rounded <- point
+  rounded$estimate <- rounded$estimate +
+    (1e-12 + 1e-10 * abs(rounded$estimate)) / 2
+  expect_equal(
+    delta_comparison_operator(
+      rounded,
+      avg,
+      attr(point, "comparison_args"),
+      attr(point, "avg_args")
+    ),
+    operator
+  )
+
   stale <- point
-  stale$estimate[1] <- stale$estimate[1] + 5e-12
+  stale$estimate[1] <- stale$estimate[1] + 1e-6
   condition <- tryCatch(
     delta_comparison_operator(
       stale,

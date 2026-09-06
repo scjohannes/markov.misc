@@ -11,11 +11,11 @@ Use standard R package workflows from the repository root:
 
 - `R -q -e "devtools::document()"`: regenerate `NAMESPACE` and `man/*.Rd` from roxygen2 comments.
 - `R -q -e "devtools::test()"`: run the full testthat suite.
-- `R -q -e "devtools::check(build_vignettes = FALSE)"`: run package checks (tests, examples, metadata) without building vignettes.
+- `R -q -e "devtools::check(vignettes = FALSE)"`: run package checks (tests, examples, metadata) without building vignettes.
 - `R -q -e "remotes::install_local('.')"`: install the local package for interactive use.
 - `R -q -e "testthat::test_file('tests/testthat/test-sops.R')"`: run a focused test file.
 
-By default, skip vignette building when running package checks because it takes too long. Use `devtools::check(build_vignettes = FALSE)`; build vignettes only when explicitly requested.
+By default, skip vignette building when running package checks because it takes too long. Use `devtools::check(vignettes = FALSE)`; build vignettes only when explicitly requested.
 
 ## Coding Style & Naming Conventions
 Follow tidyverse-oriented R style: 2-space indentation, `|>` pipes, and explicit namespaces for non-base calls (for example `dplyr::mutate`, `stats::predict`). Use `snake_case` for functions and variables. Preserve project naming for state-model fields (`id`, `time`, `y`, `yprev`, `tx`). Exported functions require roxygen2 docs with `@export`; add `@importFrom` tags as needed. If you use NSE column names in dplyr/ggplot2, register them in `R/globals.R`.
@@ -32,5 +32,15 @@ Follow tidyverse-oriented R style: 2-space indentation, `|>` pipes, and explicit
 ## Testing Guidelines
 Testing uses `testthat` edition 3. Name files `test-<feature>.R` and keep scenarios deterministic (`set.seed()`, fixed fixtures). Add regression tests for bug fixes and edge cases (absorbing states, model-class compatibility, bootstrap paths). Snapshot updates in `tests/testthat/_snaps/` should only be committed when behavior changes intentionally.
 
+When changing the analytical recursion, update its test-only R reference and
+native-versus-R checks in the same change. Cover the affected behavior with a
+shared deterministic example; the R reference must never become a production
+fallback. Keep analytical recursion tests in the existing native-safety CI jobs.
+
+Optional performance benchmark scripts and results belong in ignored
+`benchmarks/local/`. Do not add performance benchmarks to package tests or
+require a broad benchmark grid for analytical inference. State the measured
+workflow and machine when reporting speedups.
+
 ## Commit & Pull Request Guidelines
-Recent history favors short, imperative commit messages (often prefixed with `//`). Keep commits focused and include regenerated docs when interfaces change. Pull requests should include: a brief problem/solution summary, linked issue (if available), affected files/modules, and evidence of validation (`devtools::test()` and, for larger changes, `devtools::check(build_vignettes = FALSE)`).
+Recent history favors short, imperative commit messages (often prefixed with `//`). Keep commits focused and include regenerated docs when interfaces change. Pull requests should include: a brief problem/solution summary, linked issue (if available), affected files/modules, and evidence of validation (`devtools::test()` and, for larger changes, `devtools::check(vignettes = FALSE)`).

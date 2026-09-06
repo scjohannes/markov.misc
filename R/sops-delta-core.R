@@ -545,7 +545,8 @@ sop_delta_raw_probabilities <- function(X, Gamma, map, context) {
     derivative[, K, coefficient] <- cumulative_derivative[, M]
   }
   derivative_mass <- apply(derivative, c(1L, 3L), sum)
-  if (max(abs(derivative_mass)) > 1e-12) {
+  derivative_scale <- apply(abs(derivative), c(1L, 3L), sum)
+  if (any(abs(derivative_mass) > 1e-12 + 1e-12 * derivative_scale)) {
     stop(
       "Internal analytical category derivatives do not sum to zero.",
       call. = FALSE

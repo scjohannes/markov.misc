@@ -946,3 +946,37 @@ test_that("delta vcov validates strings and does not silently change targets", {
     )
   }
 })
+
+
+test_that("negative variance checks respect covariance units", {
+  for (scale in c(1e-20, 1, 1e20)) {
+    expect_equal(delta_jacobian_variance(matrix(1), matrix(scale)) / scale, 1)
+    expect_match(
+      tryCatch(
+        delta_jacobian_variance(matrix(1), matrix(-scale)),
+        error = conditionMessage
+      ),
+      "negative variance"
+    )
+    cancellation <- diag(c(1, -1 - .Machine$double.eps)) * scale
+    expect_equal(
+      delta_jacobian_variance(matrix(c(1, 1), nrow = 1), cancellation),
+      0
+    )
+  }
+})
+
+test_that("SOP replay allows roundoff while detecting changed estimates", {
+  point <- data.frame(time = 1:2, estimate = c(0, 0.8))
+  replay <- point
+  replay$estimate <- replay$estimate + c(5e-13, 5e-11)
+  expect_identical(delta_match_cells(point, replay, "time"), 1:2)
+  replay$estimate[2] <- replay$estimate[2] + 1e-8
+  expect_match(
+    tryCatch(
+      delta_match_cells(point, replay, "time"),
+      error = conditionMessage
+    ),
+    "did not reproduce"
+  )
+})
