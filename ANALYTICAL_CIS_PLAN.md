@@ -211,14 +211,14 @@ For every concern:
 | ACI-10 | Medium | Open | Memory accounting versus actual process memory |
 | ACI-11 | Medium | Resolved | Grouped native execution row-layout contract |
 | ACI-12 | Medium | Resolved | Superpopulation `get_jacobian()` semantics |
-| ACI-13 | Medium | Open | `vcov()` dispatch for non-delta result objects |
+| ACI-13 | Medium | Resolved | `vcov()` dispatch for non-delta result objects |
 | ACI-14 | Medium | Resolved | Dense comparison and covariance materialization |
 | ACI-15 | Medium | Open | Numerical validation tolerances and portability |
 | ACI-16 | Medium | Open | Native C++ maintenance and semantic parity |
 | ACI-17 | Low | Open | Performance benchmark generalizability |
 | ACI-18 | High | Open | Independent superpopulation-inference validation oracle |
 | ACI-19 | Low | Resolved | Public target terminology and formal defaults |
-| ACI-20 | Low | Open | Generated native build artifacts in the worktree |
+| ACI-20 | Low | Resolved | Generated native build artifacts in the worktree |
 | ACI-21 | Medium | Resolved | Explicit zero ORM penalty list handling |
 
 ### ACI-01: Superpopulation finite-sample normalization and fitted-cohort contract
@@ -678,18 +678,19 @@ For every concern:
 
 ### ACI-13: `vcov()` dispatch for non-delta results
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-06)
 - **Priority:** Medium
 - **Current decision:** S3 `vcov()` methods are registered for SOP and average
-  comparison classes and require an attached analytical state.
+  comparison classes and require an attached analytical state. Errors on
+  bootstrap and MVN results are intentional; these results need not support
+  `vcov()`.
 - **Concern:** Calling `vcov()` on MVN/bootstrap results of the same classes now
   reaches the new method and errors. A delta-specific accessor would have
   avoided changing generic dispatch for non-delta objects.
-- **Resolution approach:** Characterize prior and current dispatch behavior.
-  Decide whether `vcov()` should support draw-based results, delegate when no
-  analytical state exists, or be replaced/supplemented by a dedicated accessor.
-  Add compatibility tests for every inference method.
-- **Resolution log:** Pending.
+- **Resolution approach:** Retain the existing analytical-only contract.
+- **Resolution log:** The user explicitly accepted errors for bootstrap and
+  MVN results on 2026-09-06. Resolved as a scope decision; no code change,
+  alternative accessor, or additional draw-based covariance support is needed.
 
 ### ACI-14: Dense comparison and covariance materialization
 
@@ -827,16 +828,21 @@ For every concern:
 
 ### ACI-20: Generated native build artifacts in the worktree
 
-- **Status:** Open
+- **Status:** Resolved (2026-09-06)
 - **Priority:** Low
 - **Current decision:** Native object and DLL files are generated locally during
   package loading, documentation, testing, or checking and are not committed.
-- **Concern:** `src/cpp11.o`, `src/sops.o`, and `src/markov.misc.dll` are currently
-  untracked. They can obscure a clean status or be staged accidentally.
+- **Concern:** Generated object and DLL files can obscure a clean status or be
+  staged accidentally without ignore rules.
 - **Resolution approach:** Confirm the package's intended cleanup and ignore
   policy, remove only verified generated artifacts, and add a repeatable clean
   validation step before commits without hiding source or meaningful outputs.
-- **Resolution log:** Pending; the files are not part of commit `76c18c3`.
+- **Resolution log:** Verified existing `/src/*.o` and `/src/*.dll` rules with
+  `git check-ignore -v` for all three reported artifacts. `git ls-files src`
+  contains only the two C++ source files; `git status --short
+  --untracked-files=all src` is clean. Retain ignored build outputs for reuse;
+  no cleanup or additional rules are needed for these artifacts. Repeat these
+  checks before commits involving native build outputs.
 
 ### ACI-21: Explicit zero ORM penalty list handling
 
@@ -991,3 +997,5 @@ issues.
 - Committed the ACI-06/07/08/11 changes in `af9ed07`, then resolved ACI-21
   with two penalty-list normalization changes and an end-to-end regression.
   Focused tests passed; no vignettes were built.
+- Resolved ACI-13 by user decision: `vcov()` remains analytical-only and may
+  error for bootstrap and MVN results. No implementation change was needed.
