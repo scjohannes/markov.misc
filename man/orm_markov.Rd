@@ -103,9 +103,10 @@ zero-weight rows are excluded from correction counts. The fitted model-
 based covariance is used as the bread; a penalized fit requesting
 \code{var.penalty = "sandwich"} uses its retained \code{var.from.info.matrix}
 inverse sensitivity. The selected \code{type} and \code{cadjust} settings affect
-empirical and
-fixed-profile coefficient inference; fitted-cohort superpopulation
-inference instead uses its own unadjusted score and sensitivity contract.
+conditional analytical variance estimates and MVN inference.
+Unconditional analytical variance estimates instead combine variation
+between patients' predictions with uncertainty in coefficient estimation;
+see \code{\link[=inferences]{inferences()}} for the calculation and supported models.
 
 Model-based SOP and diagnostic workflows require models created by
 \code{orm_markov()}, \code{\link[=vglm_markov]{vglm_markov()}}, or \code{\link[=blrm_markov]{blrm_markov()}}. The wrappers record

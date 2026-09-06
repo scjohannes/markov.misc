@@ -131,6 +131,14 @@ Frequentist uncertainty follows the existing package workflow:
 \code{avg_comparisons(...) |> inferences(...)}. Bayesian \code{blrm} models use their
 posterior SOP draws directly and therefore return uncertainty from
 \code{avg_comparisons()}.
+
+For supported frequentist models, \code{inferences(method = "delta")} provides
+analytical intervals for differences in SOPs or time in state. The default
+\code{vcov = "unconditional"} accounts for coefficient estimation and sampling
+the patients used in the averages. Use \code{vcov = "conditional"} to treat
+those patients' starting states and covariates as given and account only
+for coefficient estimation. User-supplied \code{newdata} requires the conditional
+choice. See \code{\link[=inferences]{inferences()}} for model restrictions.
 }
 \examples{
 \dontrun{

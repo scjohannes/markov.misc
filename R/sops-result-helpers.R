@@ -323,7 +323,7 @@ validate_draw_weight_column_available <- function(newdata, weight_col) {
 #' @param variables Named list of variables.
 #' @param n_cf Number of counterfactual scenarios.
 #' @param n_each Number of patients per scenario.
-#' @param weights Optional patient-level weights for one empirical cohort.
+#' @param weights Optional patient-level weights for one set of patients.
 #' @param by Optional character vector of variables to aggregate by.
 #' @param newdata Counterfactual prediction data, required when `by` is used.
 #'

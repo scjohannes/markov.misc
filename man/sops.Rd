@@ -33,8 +33,8 @@ sops(
 For \code{orm} models, the family must be logistic.}
 
 \item{newdata}{Optional. A data frame of prediction profiles. When supplied,
-every row is treated as a separate fixed profile and the internal
-\code{rowid} column is regenerated. If \code{NULL}, uses the data stored by
+every row supplies a separate starting state and set of covariates. The
+internal \code{rowid} column is regenerated. If \code{NULL}, uses the data stored by
 \code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}} and requires exactly
 one complete designated starting profile per fitted patient. \code{refit_data}
 is never used as a prediction-profile fallback.}
@@ -119,6 +119,13 @@ in a dataset. Optionally aggregates results within strata defined by grouping
 variables.
 }
 \details{
+For supported frequentist models, pass the result to
+\code{inferences(method = "delta", vcov = "conditional")} for analytical
+confidence intervals. These account for coefficient estimation while
+treating the starting states and covariates used for prediction as given.
+\code{sops()} does not support unconditional analytical variance. See \code{\link[=inferences]{inferences()}}
+for model restrictions and other inference methods.
+
 This function wraps \code{soprob_markov()} and converts its array output to a tidy
 data frame. The output contains one row per patient-time-state combination
 (or stratum-time-state if \code{by} is used).

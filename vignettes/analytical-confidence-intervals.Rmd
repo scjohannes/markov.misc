@@ -19,40 +19,42 @@ knitr::opts_chunk$set(
 )
 ```
 
-`inferences(method = "delta")` adds deterministic first-order confidence
-intervals to state occupancy probabilities (SOPs) from supported frequentist
-Markov models. Unlike multivariate-normal simulation or bootstrap inference,
-the delta method does not generate draws. It differentiates the first-order SOP
-recursion analytically, then propagates coefficient or patient-level influence
-uncertainty.
+`inferences(method = "delta")` adds analytical confidence intervals to
+estimated state occupancy probabilities (SOPs): the probabilities of being in
+each state at a given time. It calculates standard errors from how these
+probabilities change with the fitted model coefficients. With unconditional
+variance, it also accounts for variation in which patients were sampled.
 
-The existing default remains `method = "mvn"`. Choose `method = "delta"`
-explicitly when the analytical target and supported model scope described below
-are appropriate.
+You must select `method = "delta"` explicitly. The default is `method = "mvn"`,
+which simulates model coefficients to calculate confidence intervals.
 
-## A Small Full Proportional-Odds Example
+## Fit a Model
 
-The package-aware fitting wrapper stores row-aligned fitting data and patient ID
-metadata. Those IDs define the independent clusters for analytical covariance
-and superpopulation influence calculations.
+This example simulates patient data and fits a proportional-odds model using
+`orm_markov()`. Setting `id_var = "id"` identifies observations from the same
+patient, so the variance calculation can account for their dependence.
 
 ```{r setup}
 library(markov.misc)
 library(rms)
+library(patchwork)
+library(ggplot2)
 
-N_PATIENTS <- 80
-FOLLOW_UP <- 6
+N_PATIENTS <- 800
+FOLLOW_UP <- 30
 SEED <- 20260718
-ABSORB <- "6"
+ABSORB <- "8"
 
-raw_data <- sim_trajectories_brownian(
+raw_data <- sim_actt2_brownian(
   n_patients = N_PATIENTS,
   follow_up_time = FOLLOW_UP,
   treatment_prob = 0.5,
   absorbing_state = as.integer(ABSORB),
   seed = SEED,
-  mu_treatment_effect = -0.03
+  mu_treatment_effect = -0.5
 )
+
+plot_sops(raw_data, linetype_var = "tx", facet_var = NULL)
 
 model_data <- prepare_markov_data(
   raw_data,
@@ -72,166 +74,216 @@ fit <- orm_markov(
   scale = TRUE,
   maxit = 100
 )
+```
 
-avg <- avg_sops(
+## Choose Conditional or Unconditional Variance
+
+Use `inferences(method = "delta", vcov = "conditional")` to account for
+uncertainty in the estimated model coefficients while treating the patients'
+starting states and covariates used for prediction as fixed. For an average,
+this answers how precisely we have estimated the average for those patients.
+
+Use `vcov = "unconditional"` to also account for variation in which patients
+are sampled from the population. This estimates uncertainty in the population
+average, including the association between the sampled patients and the model
+coefficients estimated from them. Both choices give the same point estimates;
+their standard errors and confidence intervals can differ.
+
+Averaged SOPs and comparisons default to unconditional variance; individual
+`sops()` results support only conditional variance.
+
+For conditional variance, let $h_i(\theta)$ contain patient $i$'s predicted
+probabilities and $G_i$ their derivatives with respect to the model coefficients
+$\theta$. The derivative of the average is $\bar G = n^{-1}\sum_i G_i$.
+With coefficient covariance $V_\theta$, the covariance of the average is
+$\bar G V_\theta \bar G^{\mathsf T}$.
+
+By default, $V_\theta$ is the patient-cluster robust covariance from the fit.
+For `orm_markov()` and `vglm_markov()`, `type = "HC1"` multiplies that
+covariance by $(m - 1) / (m - p)$, where $m$ is the number of fitting rows
+(positive-weight rows for ORM) and $p$ is the number of coefficients.
+`cadjust = TRUE` independently multiplies it by $n / (n - 1)$, where $n$ is
+the number of patient clusters. Clustered wrapper fits enable `cadjust` by
+default. Conditional analytical variance and MVN inference also support
+weighted and penalized ORM fits when their fitted covariance is valid.
+
+```{r conditional-variance}
+t1 <- Sys.time()
+avg_conditional <- avg_sops(
   fit,
   variables = list(tx = c(0, 1)),
   times = seq_len(FOLLOW_UP),
   y_levels = fit$yunique,
   absorb = ABSORB
-)
-```
-
-## Choose the Estimand
-
-For an empirical target, the observed standardization profiles are held fixed.
-If $h_i(\theta)$ is patient $i$'s vector of counterfactual SOP cells and
-$G_i(\theta)$ is its coefficient Jacobian, the average Jacobian is
-
-$$
-\bar G = n^{-1}\sum_i G_i.
-$$
-
-With coefficient covariance $V_\theta$, the empirical-target covariance is
-$\bar G V_\theta \bar G^{\mathsf T}$. By default, $V_\theta$ is the
-patient-cluster robust covariance associated with the fit.
-
-`orm_markov()` and `vglm_markov()` expose matched correction controls for that
-empirical sandwich. `type = "HC1"` multiplies by $(n - 1) / (n - p)$, while
-`cadjust = TRUE` independently multiplies by $G / (G - 1)$. Clustered wrapper
-fits use `cadjust = TRUE` by default. The ORM covariance is package-owned: it
-uses analytic likelihood-row scores, sums repeated rows within patient, and
-uses the complete model-based covariance as bread. Fitted case weights multiply
-the ORM row scores; zero-weight rows and clusters represented only by them do
-not enter $n$ or $G$. Penalized fits requesting `var.penalty = "sandwich"` use
-the retained `var.from.info.matrix` inverse sensitivity as bread. Weighted and
-penalized ORM empirical delta and MVN covariance are therefore supported.
-
-```{r empirical-target}
-avg_empirical <- inferences(
-  avg,
+) |> inferences(
   method = "delta",
   vcov = "conditional",
   conf_type = "auto"
 )
+t2 <- Sys.time()
+t2 - t1
 
-head(avg_empirical)
+comp_conditional <- avg_comparisons(
+  fit,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  y_levels = fit$yunique,
+  absorb = ABSORB,
+  estimand = "time_in_state",
+  comparison = "difference"
+) |>
+  inferences(
+    method = "delta",
+    vcov = "conditional"
+  )
+
+p1.sops <- plot_sops(avg_conditional, linetype_var = "tx", facet_var = NULL) + labs(
+  title = "Conditional Variance"
+)
+
+p1.c <- plot_comparisons(comp_conditional) + labs(
+  title = "Conditional Variance"
+)
 ```
 
-For a superpopulation target, the fitted cohort represents a sample from a
-superpopulation. Its profile distribution therefore also contributes
-uncertainty. The implementation constructs one influence row per patient,
+For unconditional variance, the calculation combines variation between
+patients' predictions with their contributions to coefficient estimation.
+Each patient contributes the vector
 
 $$
 \phi_i = h_i - \bar h + \bar G A^{-1}s_i,
 $$
 
-where $s_i$ is the patient-aggregated likelihood score and $A^{-1}$ is inverse
-per-patient sensitivity. It uses `stats::cov(phi) / n`, retaining the
-finite-sample cross-covariance between profile and model-score contributions.
-Because `stats::cov()` divides by $n - 1$, this equals the centered
-patient-level HC0 crossproduct multiplied by $n / (n - 1)$. That correction is
-part of the superpopulation estimator; it is not the fitted backend's row-level
-HC1 or cluster adjustment.
+where $n$ is the number of patients, $\bar h$ is their average prediction,
+$s_i$ is the sum of the derivatives of patient $i$'s log likelihood with
+respect to the coefficients, and $A$ is the negative derivative of the average
+patient score. Thus $A^{-1}s_i$ describes patient $i$'s contribution to
+coefficient estimation. It uses `stats::cov(phi) / n`, retaining the
+association between these two contributions in the observed sample.
+Here `stats::cov()` uses the usual sample-covariance divisor, $n - 1$.
+The fitting options `type` and `cadjust` do not apply an additional correction
+to this unconditional variance estimate.
 
-```{r superpopulation-target}
-avg_superpopulation <- inferences(
-  avg,
+```{r unconditional-variance}
+t1 <- Sys.time()
+avg_unconditional <- avg_sops(
+  fit,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  y_levels = fit$yunique,
+  absorb = ABSORB
+) |> inferences(
   method = "delta",
   vcov = "unconditional",
-  conf_type = "auto"
+  conf_type = "wald"
 )
+t2 <- Sys.time()
+t2 - t1
 
-head(avg_superpopulation)
+comp_unconditional <- avg_comparisons(
+  fit,
+  variables = list(tx = c(0, 1)),
+  times = seq_len(FOLLOW_UP),
+  y_levels = fit$yunique,
+  absorb = ABSORB,
+  estimand = "time_in_state",
+  comparison = "difference"
+) |>
+  inferences(
+    method = "delta",
+    vcov = "unconditional"
+  )
+
+p2.sops <- plot_sops(avg_unconditional, linetype_var = "tx", facet_var = NULL) + labs(title = "Unconditional Variance")
+p2.c <- plot_comparisons(comp_unconditional) + labs(
+  title = "Unconditional Variance"
+)
 ```
 
-The superpopulation route is a fitted-cohort calculation. It requires one
-stored first-follow-up profile per fitted patient and exact patient-ID
-alignment with the fitted likelihood scores. It is not an external-target or
-random-effects population analysis. ORM and VGLM `type` and `cadjust` choices
-affect the empirical coefficient sandwich, but the stacked superpopulation
-calculation uses unadjusted scores and model-based sensitivity with its own
-patient sample-covariance convention. It reports the ignored backend settings
-in covariance metadata. Weighted ORM remains unavailable for this target even
-though it is supported for empirical covariance.
+```{r}
+p1.sops + p2.sops + plot_layout(guides = 'collect')
+p1.c + p2.c
+```
 
-All model-based SOP and diagnostic workflows require a fit created by
-`orm_markov()`, `vglm_markov()`, or `blrm_markov()`. The wrappers attach explicit
-provenance alongside the fitting rows, refit rows, first-follow-up profiles, and
-ID metadata. Raw backend fits are rejected with a refitting instruction;
-package-internal bootstrap and FWB refits inherit the original provenance.
+Unconditional variance requires the patients stored with the fitted model,
+with one complete starting state and set of covariates per patient and matching
+patient IDs in the fitting data. It is unavailable for user-supplied `newdata`.
+The calculation uses unadjusted likelihood scores and model-based sensitivity,
+with the patient sample-covariance correction described above. The fitting
+options `type` and `cadjust` do not change it. Weighted and penalized ORM fits
+support conditional variance only.
 
-### Which patients define the fitted cohort?
+Use a model fitted with `orm_markov()` or `vglm_markov()` for analytical
+confidence intervals. These functions store the patient information needed
+for the calculations. Models fitted directly with `rms::orm()` or
+`VGAM::vglm()` cannot be used in this workflow.
 
-The fitting wrappers retain starting-profile information before a missing
-transition response can remove a row from the model frame. The contract is:
+### Which Patients Are Included in the Average?
 
-- a fitted patient must have exactly one complete profile at the designated
-  `first_followup_time`, containing ID, treatment/covariates, modeled time
-  information, and the known previous state such as `yprev`;
-- the transition response at that row is not required;
-- the patient must contribute at least one usable likelihood transition
-  somewhere in the fitted data;
-- a complete starting profile plus a missing first outcome plus a later usable
-  transition is included;
-- a starting profile with no usable transition anywhere is excluded; and
-- likelihood rows without a complete first-follow-up profile are an error.
+When you omit `newdata`, predictions use each fitted patient's starting state
+and covariates at `first_followup_time`. The model stores this information
+before dropping rows with missing outcomes.
 
-`first_followup_time` only selects and validates this automatic profile. For
-numeric time, its `NULL` default resolves to 1: time 1 must be present and the
-schedule may not contain values below 1. An explicit numeric value must be the
-earliest scheduled follow-up. Factor or character time requires an explicit
-matching value. The wrappers no longer accept `start_time`, `origin_time`, or
-`time_map`; real-time mapping and baseline anchoring belong to downstream SOP
-summaries. Later likelihood rows never silently replace a missing designated
-profile. This standardization contract assumes the observation process is
-non-informative; the analytical variance does not correct informative
-missingness.
+- Each patient must have exactly one row at that time with their ID,
+  predictors, time, and previous state (`yprev`) observed.
+- The outcome on that row may be missing if the patient has another usable
+  transition in the data used to fit the model.
+
+For numeric time, `first_followup_time` defaults to 1. Time 1 must be present,
+and the schedule cannot contain earlier values. If you specify another value,
+it must be the earliest scheduled follow-up. For factor or character time,
+you must specify a matching value explicitly. A later observation cannot
+replace missing starting information.
+
+These variance estimates do not correct bias caused by missing observations
+that depend on unobserved patient outcomes.
 
 Individual `sops()` results default to `vcov = "conditional"` and cannot use
 `"unconditional"`. Averaged SOPs and comparisons default to `"unconditional"`.
 A supplied coefficient covariance matrix selects conditional inference for any
 of these result types. Omitted `vcov` and `NULL` are equivalent. These string
-choices are available only with `method = "delta"`; `target` has been removed.
+choices are available only with `method = "delta"`.
 Unsupported unconditional inference errors without falling back, so supplied
 `newdata` requires an explicit conditional choice.
 
 ## Why Patient Clustering Matters
 
-Transition models contain repeated rows per patient. Those rows are not
-independent clusters. Analytical inference therefore follows this invariant:
+A patient can contribute several observations to the model. Treating those
+observations as independent can give misleading standard errors. The package
+uses patient IDs to account for dependence within each patient:
 
-1. An explicit row-aligned `cluster` vector takes precedence.
-2. Otherwise, the model must store both its fitting data and `id_var` metadata,
-   as `orm_markov(id_var = ...)` and `vglm_markov(id_var = ...)` do.
-3. Observation rows are never silently substituted as clusters.
+1. If you supply `cluster`, its entries must identify the patient for each row
+   used to fit the model, in the same order.
+2. Otherwise, the package uses the ID column named by `id_var` when fitting
+   with `orm_markov()` or `vglm_markov()`.
+3. Without patient IDs, it cannot calculate patient-cluster robust variance.
 
-For an empirical target, a complete user-supplied coefficient covariance can
-replace the fitted covariance after strict dimension, name, finiteness,
-symmetry, and positive-semidefiniteness checks. A custom covariance is not
-accepted for `vcov = "unconditional"`, because a covariance matrix alone does
-not contain the joint score/profile information needed by the stacked influence
-function.
+For conditional variance, you can instead supply a coefficient covariance
+matrix through `vcov`. It must include all model coefficients, with matching
+names. This selects conditional variance: a covariance matrix alone does not
+provide the individual patient information required for unconditional variance.
 
-Patient-cluster robustness protects the variance calculation against arbitrary
-within-patient score correlation. It does not remove bias from a misspecified
-transition model, an invalid Markov assumption, informative observation, or an
-incorrect proportional-odds restriction.
+Accounting for dependence within patients does not correct an inappropriate
+transition model or bias from missing observations.
 
 ## Logit and Wald Intervals
 
-For SOP probabilities, `conf_type = "auto"` selects componentwise logit-delta
-intervals. They remain inside $[0, 1]$, but they are not a simultaneous region
-for the probability simplex. Estimates exactly equal to zero or one receive
-`NA` logit limits with a warning, even when their standard error is zero.
-Numerical saturation can otherwise look like certainty. Absorbing-state
-transition rows are deterministic, but the probability of reaching that state
-is estimated. Those transition rules therefore do not certify a zero/one SOP.
-The engine supplies no explicit structural-boundary provenance for its SOPs.
+For probabilities, `conf_type = "auto"` calculates the interval on the logit
+scale and transforms its limits back to probabilities. This keeps the limits
+between zero and one. Each interval applies to one estimate; the stated
+confidence level does not apply to all intervals jointly.
 
-`conf_type = "wald"` instead uses identity-scale normal intervals and may extend
-outside $[0, 1]$. Supported average comparisons always use Wald intervals;
-`conf_type = "auto"` selects them automatically.
+If an estimated probability is exactly zero or one, the logit is undefined.
+The function returns `NA` limits and a warning, even if the standard error is
+zero. Such values can arise from numerical rounding and do not necessarily
+mean that the outcome is certain. An absorbing state does not change this:
+although patients stay there once they enter it, the probability of reaching
+it still has to be estimated.
+
+`conf_type = "wald"`, used in the examples above, calculates the estimate plus
+or minus a normal quantile times its standard error. Its limits can fall
+outside zero and one. Analytical intervals for differences always use this
+Wald calculation; `conf_type = "auto"` selects it automatically.
 
 ```{r comparison}
 sop_difference <- avg_comparisons(
@@ -253,76 +305,87 @@ sop_difference <- avg_comparisons(
 head(sop_difference)
 ```
 
-Analytical differences are linear transformations of average SOP cells.
-`estimand = "time_in_state"` is also supported, including factor-visit designs
-with real-time mapping, interpolation, an observed baseline anchor, and
-trapezoidal integration. See the factor-time vignette for that workflow.
+The example subtracts the average probability under the first treatment value
+from that under the second. The standard error accounts for the fact that
+both predictions come from the same fitted model and patients.
 
-## Inspect the Analytical State
+You can also compare expected time in a state with `estimand = "time_in_state"`.
+For visits recorded as factors, supply the elapsed time corresponding to each
+visit. See the factor-time vignette for examples of specifying those times
+and including the observed baseline state.
 
-Delta results do not store simulation draws or a dense covariance across every
-result cell. They retain a factorized analytical representation:
+## Extract Variances and Covariances
 
-- fixed individual and empirical averaged results store a result-cell Jacobian
-  and coefficient covariance;
-- superpopulation results store the average Jacobian and patient influence
-  matrix.
+The output from `inferences()` already includes standard errors and confidence
+limits. Use `vcov()` if you also need to know how uncertainty in different
+estimates is related. Its diagonal entries are the variances of the estimates;
+the other entries are covariances between pairs of estimates.
 
-Use `rows` to materialize only the block needed downstream.
-The Jacobian inspection below uses an unexported helper for illustration. It
-contains only coefficient derivatives; use `inferences()` and `vcov()` for
-uncertainty calculations, including the complete unconditional covariance.
+The example below requests the first six estimates. The returned covariance
+uses whichever choice, conditional or unconditional, you made when calling
+`inferences()`. Taking the square roots of its diagonal gives the standard
+errors for those rows.
 
 ```{r accessors}
-rows <- seq_len(min(6L, nrow(avg_empirical)))
+rows <- seq_len(min(6L, nrow(avg_conditional)))
 
-jacobian_block <- markov.misc:::get_jacobian(avg_empirical, rows = rows)
-empirical_covariance <- stats::vcov(avg_empirical, rows = rows)
-superpopulation_covariance <- stats::vcov(avg_superpopulation, rows = rows)
+conditional_covariance <- stats::vcov(avg_conditional, rows = rows)
+unconditional_covariance <- stats::vcov(avg_unconditional, rows = rows)
 
-dim(jacobian_block)
-diag(empirical_covariance)
-diag(superpopulation_covariance)
+sqrt(diag(conditional_covariance))
+sqrt(diag(unconditional_covariance))
 ```
 
-Numeric, logical, and stored character row keys are accepted. Analytical
-workspace, retained state, and accessor materialization are guarded by the
-`markov.misc.delta_max_bytes` option, which defaults to 256 MiB.
+For readers interested in the derivatives used in the calculation, the
+internal function below shows how each selected estimate changes with each
+model coefficient. Each row corresponds to an estimate and each column to a
+coefficient. These derivatives alone are not standard errors and do not
+include the additional patient-sampling contribution to unconditional variance.
+Use `inferences()` and `vcov()` for the uncertainty calculations.
 
-## Supported Scope and Explicit Errors
+```{r coefficient-derivatives}
+coefficient_derivatives <- markov.misc:::get_jacobian(avg_conditional, rows = rows)
+coefficient_derivatives
+```
 
-The current analytical implementation supports:
+Without `rows`, `vcov()` returns a covariance for every pair of estimates.
+This can require substantial memory: doubling the number of estimates
+quadruples the number of entries. Request only the rows you need for large
+results. The option `markov.misc.delta_max_bytes`, which defaults to 256 MiB,
+limits the main memory allocations used by analytical inference and covariance
+extraction. It is not a limit on the total memory used by R.
 
-- first-order Markov recursion;
+## Supported Models and Comparisons
+
+Analytical confidence intervals are available for:
+
+- first-order Markov models, where the next state depends on the previous
+  state and the model covariates;
 - full proportional odds with a reverse cumulative-logit link;
 - frequentist models created by `orm_markov()` or `vglm_markov()` (including
   the `robcov_vglm` object returned by the latter);
-- individual SOPs, empirical average SOPs, and fitted-cohort superpopulation
-  average SOPs;
+- individual SOPs with conditional variance, and average SOPs with conditional
+  or unconditional variance;
 - difference comparisons for `estimand = "sop"` and
   `estimand = "time_in_state"`; and
-- numeric and factor visit designs that can be represented by the first-order
-  execution plan.
+- numeric and factor visit times.
 
-The following requests fail explicitly rather than switching methods or
-estimands:
+The following requests are not supported and return an error:
 
 | Request | Current status |
 | --- | --- |
 | Individual `sops()` with `vcov = "unconditional"` | Unsupported; omit `vcov` or use `vcov = "conditional"`. |
-| Ratio comparison | Planned follow-up; analytical comparisons currently support differences only. |
-| `estimand = "time_benefit"` | Planned follow-up because it is nonlinear in paired state distributions. |
-| `by`-stratum analytical inference | Planned follow-up. |
-| Partial/nonproportional odds | Planned follow-up outside the current full-PO derivative scope. |
-| Second-order delta recursion | Planned follow-up; use an existing draw or refit method when applicable. |
-| `blrm` delta inference | Unsupported; use the model's posterior SOP intervals. |
-| Superpopulation target with user `newdata` | Unsupported; supplied profiles are fixed. |
-| Superpopulation target with a weighted or penalized ORM fit | Unsupported until the corresponding score/sensitivity contract is established; empirical delta inference remains available. |
+| Ratio comparison | Use differences for analytical intervals. |
+| `estimand = "time_benefit"` | Analytical intervals are not available for this comparison. |
+| Analytical intervals for groups specified with `by` | Not currently supported. |
+| Partial/nonproportional odds | Only full proportional-odds models are supported. |
+| Analytical intervals for second-order Markov models | Use simulation or bootstrap inference where supported. |
+| Analytical intervals for `blrm` models | Unsupported; use the model's posterior SOP intervals. |
+| Unconditional variance with user `newdata` | Unsupported; use `vcov = "conditional"`. |
+| Unconditional variance with a weighted or penalized ORM fit | Use conditional variance. |
 | Random or independent external population | Intentionally unsupported and out of scope. |
-| Simultaneous confidence bands or simplex regions | Out of scope; intervals are componentwise. |
+| Intervals intended to cover all estimates jointly | The confidence level applies to each interval separately. |
 
-Analytical gradients are checked against central finite differences in the test
-suite. Production inference always uses the analytic recursion. MVN and
-bootstrap procedures remain useful alternatives, but numerical agreement with
-their nonlinear draw distributions is not a validation requirement for this
-first-order approximation.
+Analytical intervals use an approximation based on small changes in the model
+coefficients. Simulation and bootstrap intervals can differ because they
+recalculate predictions over larger changes in coefficients or refitted data.

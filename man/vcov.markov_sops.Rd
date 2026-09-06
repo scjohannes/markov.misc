@@ -4,7 +4,7 @@
 \alias{vcov.markov_sops}
 \alias{vcov.markov_avg_sops}
 \alias{vcov.markov_avg_comparisons}
-\title{Analytical Covariance for Individual SOPs}
+\title{Analytical Covariance for SOPs and Average Comparisons}
 \usage{
 \method{vcov}{markov_sops}(object, rows = NULL, ...)
 
@@ -13,7 +13,8 @@
 \method{vcov}{markov_avg_comparisons}(object, rows = NULL, ...)
 }
 \arguments{
-\item{object}{A delta-inferred \code{markov_sops} object.}
+\item{object}{A \code{markov_sops}, \code{markov_avg_sops}, or
+\code{markov_avg_comparisons} object returned by \code{inferences(method = "delta")}.}
 
 \item{rows}{Optional numeric or logical row selection, or analytical row-key
 values. \code{NULL} returns every result row.}
@@ -26,6 +27,11 @@ A symmetric covariance matrix for the selected result cells.
 \description{
 Materializes a selected covariance block from the low-rank analytical state
 retained by \code{inferences(method = "delta")}.
+Returns the conditional or unconditional covariance selected by the \code{vcov}
+argument to \code{\link[=inferences]{inferences()}}; it does not change that choice. Conditional
+covariance accounts for coefficient estimation with prediction covariates
+treated as given. Unconditional covariance also accounts for sampling the
+patients used in the average. Bootstrap and MVN results are not supported.
 With \code{rows = NULL}, the full dense covariance matrix is requested and its
 storage grows quadratically with the number of result cells. Use \code{rows} to
 extract smaller blocks within the analytical memory limit. Standard errors

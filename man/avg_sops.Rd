@@ -34,8 +34,8 @@ avg_sops(
 For \code{orm} models, the family must be logistic.}
 
 \item{newdata}{Optional data frame of standardization profiles. When
-supplied, every row is treated as a separate fixed profile and the
-internal \code{rowid} column is regenerated. If \code{NULL}, uses data stored by
+supplied, every row supplies a separate starting state and set of
+covariates. The internal \code{rowid} column is regenerated. If \code{NULL}, uses data stored by
 \code{\link[=orm_markov]{orm_markov()}}, \code{\link[=blrm_markov]{blrm_markov()}}, or \code{\link[=vglm_markov]{vglm_markov()}} and requires exactly
 one complete designated starting profile per fitted patient. \code{refit_data}
 is never used as a prediction-profile fallback.}
@@ -143,6 +143,14 @@ State-wise medians and interval bounds are not constrained to sum to one
 across states; use \code{posterior_summary = "mean"} when the displayed estimates
 themselves need to preserve total probability. Draw-level probabilities
 stored with \code{return_draws = TRUE} remain normalized within each draw.
+
+For supported frequentist models, \code{inferences(method = "delta")} adds
+analytical confidence intervals. Its default \code{vcov = "unconditional"}
+accounts for coefficient estimation and sampling the patients used in the
+average. Use \code{vcov = "conditional"} to treat those patients' starting states
+and covariates as given and account only for coefficient estimation.
+User-supplied \code{newdata} requires the conditional choice. See \code{\link[=inferences]{inferences()}}
+for model restrictions.
 }
 \examples{
 \dontrun{
@@ -174,6 +182,7 @@ result_boot <- avg_sops(
 
 }
 \seealso{
-\code{\link[=sops]{sops()}} for individual-level SOPs, \code{\link[=inferences]{inferences()}} for bootstrap
+\code{\link[=sops]{sops()}} for individual-level SOPs, \code{\link[=inferences]{inferences()}} for analytical,
+simulation, or bootstrap
 uncertainty and \code{\link[=avg_comparisons]{avg_comparisons()}} for specialized estimands.
 }

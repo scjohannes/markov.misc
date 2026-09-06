@@ -488,12 +488,15 @@ handler so replay cannot accidentally change the selected calculation.
 | `markov_avg_sops` | `"unconditional"` | Conditional, unconditional, or a coefficient covariance matrix. |
 | `markov_avg_comparisons` | `"unconditional"` | The same choices, propagated through a supported linear comparison operator. |
 
-Conditional inference holds the prediction/standardization profiles fixed.
-Unconditional inference includes profile sampling variability and its cross-term
-with coefficient estimation. Unavailable unconditional inference errors rather
+Conditional variance accounts for coefficient estimation while treating the
+patients' starting states and covariates used for prediction as given.
+Unconditional variance also accounts for variation in which patients are sampled
+and its association with coefficient estimation from those same patients.
+Public documentation uses these two variance choices; the older target labels
+are internal implementation details. Unavailable unconditional inference errors rather
 than silently falling back to conditional inference.
 
-The superpopulation target is deliberately narrower than a generic
+Unconditional variance estimation is deliberately narrower than a generic
 external-target analysis. It requires the stored fitted cohort, one validated
 first-follow-up profile per fitted patient ID, and exact score/profile ID
 alignment. User-supplied `newdata` is a fixed standardization cohort and cannot

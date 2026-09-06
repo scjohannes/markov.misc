@@ -52,10 +52,10 @@ the model covariance. Character choices are available only for delta
 inference; other methods retain their existing matrix/\code{NULL} behavior.}
 
 \item{cluster}{Optional patient-cluster specification. For analytical
-fixed-profile, empirical-cohort, and superpopulation inference, supply a
+conditional and unconditional variance estimates, supply a
 vector aligned with the fitting rows or a one-sided formula selecting a
 stored fitting-data column. Otherwise the model's stored \code{id_var} is used;
-fitting rows are never treated as implicit clusters. For superpopulation
+fitting rows are never treated as implicit clusters. For unconditional
 inference, the cluster labels must match the stored starting-profile patient
 IDs exactly. For score bootstrap with \code{orm}, this is the row-aligned cluster
 vector.}
@@ -108,7 +108,7 @@ simulation, or bootstrap}
 For simulation and bootstrap methods, \code{return_draws = TRUE} also stores a
 \code{"draws"} attribute containing all individual draws. Delta results instead
 store a low-rank \code{"analytical"} attribute and never store draws. For
-ungrouped \code{sops()} objects evaluated on the stored empirical prediction
+ungrouped \code{sops()} objects evaluated on the stored prediction
 cohort, score-bootstrap and FWB draws include the draw-specific
 \code{score_weight} or \code{fwb_weight} column.
 }
@@ -125,21 +125,26 @@ errors for \code{blrm} objects.
 
 \code{method = "delta"} differentiates the first-order full
 proportional-odds SOP recursion on the model's complete raw-coefficient
-scale. For fixed-profile \code{sops()} results and empirical-cohort \code{avg_sops()}
-or \code{avg_comparisons()} results, covariance is propagated as
-\eqn{J V J^\top}, where \eqn{J} is the estimand Jacobian and \eqn{V} is a
-complete named coefficient covariance. An explicit covariance matrix passed
+scale. With \code{vcov = "conditional"}, covariance is propagated as
+\eqn{J V J^\top}, where \eqn{J} contains derivatives of the reported
+estimates with respect to the model coefficients and \eqn{V} is their
+complete named covariance matrix. An explicit covariance matrix passed
 as \code{vcov} overrides the model covariance for conditional inference.
 
-\code{vcov = "conditional"} conditions on the supplied prediction profiles for
-\code{sops()} and on the observed standardization profiles for averaged results.
+\code{vcov = "conditional"} accounts for uncertainty in the estimated model
+coefficients while treating the patients' starting states and covariates
+used for prediction or averaging as given.
 \code{vcov = "unconditional"} is the default for averaged results and is available
-only for the stored fitted-patient cohort. It adds profile-distribution
-uncertainty and its cross-term with coefficient estimation through the
-patient-level stacked influence \eqn{\phi_i = g_i - \bar g + J A^{-1}s_i},
-with covariance estimated as \eqn{\mathrm{cov}(\phi_i) / n}. This is the
-manuscript's patient-level sample-covariance correction, not a backend HC1
-setting. User-supplied prediction cohorts require \code{vcov = "conditional"};
+only for the patients stored with the fitted model. It also accounts for
+variation in which patients are sampled from the population, including its
+association with coefficient estimation from those same patients. Thus it
+estimates uncertainty in the population average. The calculation combines
+each patient's deviation from the average prediction with their contribution
+to coefficient estimation, then divides the sample covariance of these
+combined contributions by the number of patients. The sample covariance
+uses the usual divisor of one less than the number of patients; the model's
+\code{type} and \code{cadjust} corrections are not applied again.
+User-supplied prediction cohorts require \code{vcov = "conditional"};
 unavailable unconditional inference errors rather than silently falling back.
 A custom covariance matrix always selects conditional inference because
 unconditional inference requires fitted-model scores and sensitivity.
@@ -147,9 +152,9 @@ Every included patient must contribute at least one usable likelihood
 transition and have exactly one complete model-stored starting profile. The
 starting profile may have a missing first transition response; its ID,
 predictors, scheduled starting time, and previous state must be observed.
-Weighted and penalized ORM fits are not supported for this target because
+Weighted and penalized ORM fits do not support unconditional variance because
 their score/sensitivity contracts have not been established. They remain
-eligible for empirical delta inference when their fitted covariance is valid.
+eligible for conditional delta inference when their fitted covariance is valid.
 
 Analytical covariance is patient-cluster robust only when valid patient IDs
 are supplied explicitly or retained as the fitted model's \code{id_var}.
@@ -180,10 +185,10 @@ cluster-level exponential multipliers.
 for \code{engine = "mvn"}
 \item \code{engine = "score_bootstrap"} supports \code{avg_sops()} and \code{sops()} with
 \code{robcov_vglm} models and with \code{orm} models when \code{cluster} is supplied.
-When the prediction rows are the stored empirical cohort, the same
+When the prediction rows are the stored patients, the same
 cluster-level weights used for the score perturbation are used for every
 empirical averaging step. With \code{by}, weights are normalized within each
-subgroup; without \code{by}, they are normalized over the full empirical cohort.
+subgroup; without \code{by}, they are normalized over the full set of stored patients.
 }
 }
 
@@ -213,14 +218,14 @@ for bootstrap draw weights.
 }
 
 For marginal \code{avg_sops()} objects built from user-supplied \code{newdata}, the
-supplied rows are fixed standardization profiles. The same fixed-profile rule
-applies to \code{sops(newdata = ...)}. Score bootstrap and FWB use the
+supplied patients' starting states and covariates are treated as given.
+This also applies to \code{sops(newdata = ...)}. Score bootstrap and FWB use the
 original/refit data for coefficient or refit uncertainty, but do not attach or
 apply draw weights to the supplied prediction profiles because those rows
 cannot be assumed to align with the bootstrap clusters.
 
-This design ensures consistency: the same vcov is used for both point
-estimates and inference, regardless of how \code{inferences()} is called.
+Choosing conditional or unconditional analytical variance changes the
+standard errors and confidence intervals, not the point estimates.
 }
 }
 \examples{

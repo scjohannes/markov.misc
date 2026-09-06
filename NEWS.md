@@ -30,19 +30,13 @@
   Averaged inference now validates counterfactual scenario and patient ordering
   before native averaging, and VGLM coefficient maps are checked against VGAM's
   native coefficient expansion.
-- `inferences()` now supports deterministic analytical delta-method intervals
-  for fixed individual first-order full proportional-odds ORM/VGLM SOPs,
-  empirical and fitted-cohort superpopulation averages, and supported SOP or
-  time-in-state differences. `conf_type = "auto"` uses componentwise logit
-  intervals for SOP probabilities and Wald intervals for comparisons. The
-  analytic recursion runs in native code, and averaged targets retain only the
-  target-specific scenario Jacobians plus any superpopulation profile terms.
-- The public sampled-cohort analytical target is now
-  `target = "superpopulation"`; the unreleased `target = "population"` spelling
-  has no compatibility alias. Superpopulation inference uses
-  `stats::cov(influence) / n`, reports its patient-level finite-sample convention,
-  and rejects weighted or penalized ORM fits until their score/sensitivity
-  contracts are established.
+- `inferences()` now supports analytical delta-method intervals for individual
+  and average first-order full proportional-odds ORM/VGLM SOPs and supported
+  SOP or time-in-state differences. Conditional variance accounts for model
+  coefficient estimation; unconditional variance also accounts for sampling
+  the patients used in the average. `conf_type = "auto"` uses logit intervals
+  for SOP probabilities and Wald intervals for comparisons. Unconditional
+  variance is unavailable for weighted or penalized ORM fits.
 - `orm_markov()`, `vglm_markov()`, and `blrm_markov()` now retain designated
   starting profiles before response-driven row omission, separately from fitted
   likelihood rows and refit data. Automatic SOP prediction requires one complete

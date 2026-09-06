@@ -198,16 +198,22 @@ delta_vcov <- function(object, rows = NULL) {
   out
 }
 
-#' Analytical Covariance for Individual SOPs
+#' Analytical Covariance for SOPs and Average Comparisons
 #'
 #' Materializes a selected covariance block from the low-rank analytical state
 #' retained by `inferences(method = "delta")`.
+#' Returns the conditional or unconditional covariance selected by the `vcov`
+#' argument to [inferences()]; it does not change that choice. Conditional
+#' covariance accounts for coefficient estimation with prediction covariates
+#' treated as given. Unconditional covariance also accounts for sampling the
+#' patients used in the average. Bootstrap and MVN results are not supported.
 #' With `rows = NULL`, the full dense covariance matrix is requested and its
 #' storage grows quadratically with the number of result cells. Use `rows` to
 #' extract smaller blocks within the analytical memory limit. Standard errors
 #' are computed without materializing the full covariance matrix.
 #'
-#' @param object A delta-inferred `markov_sops` object.
+#' @param object A `markov_sops`, `markov_avg_sops`, or
+#'   `markov_avg_comparisons` object returned by `inferences(method = "delta")`.
 #' @param rows Optional numeric or logical row selection, or analytical row-key
 #'   values. `NULL` returns every result row.
 #' @param ... Reserved for the `stats::vcov()` generic.

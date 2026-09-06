@@ -36,10 +36,10 @@
 #'   the model covariance. Character choices are available only for delta
 #'   inference; other methods retain their existing matrix/`NULL` behavior.
 #' @param cluster Optional patient-cluster specification. For analytical
-#'   fixed-profile, empirical-cohort, and superpopulation inference, supply a
+#'   conditional and unconditional variance estimates, supply a
 #'   vector aligned with the fitting rows or a one-sided formula selecting a
 #'   stored fitting-data column. Otherwise the model's stored `id_var` is used;
-#'   fitting rows are never treated as implicit clusters. For superpopulation
+#'   fitting rows are never treated as implicit clusters. For unconditional
 #'   inference, the cluster labels must match the stored starting-profile patient
 #'   IDs exactly. For score bootstrap with `orm`, this is the row-aligned cluster
 #'   vector.
@@ -83,7 +83,7 @@
 #'   For simulation and bootstrap methods, `return_draws = TRUE` also stores a
 #'   `"draws"` attribute containing all individual draws. Delta results instead
 #'   store a low-rank `"analytical"` attribute and never store draws. For
-#'   ungrouped `sops()` objects evaluated on the stored empirical prediction
+#'   ungrouped `sops()` objects evaluated on the stored prediction
 #'   cohort, score-bootstrap and FWB draws include the draw-specific
 #'   `score_weight` or `fwb_weight` column.
 #'
@@ -92,21 +92,26 @@
 #'
 #' `method = "delta"` differentiates the first-order full
 #' proportional-odds SOP recursion on the model's complete raw-coefficient
-#' scale. For fixed-profile `sops()` results and empirical-cohort `avg_sops()`
-#' or `avg_comparisons()` results, covariance is propagated as
-#' \eqn{J V J^\top}, where \eqn{J} is the estimand Jacobian and \eqn{V} is a
-#' complete named coefficient covariance. An explicit covariance matrix passed
+#' scale. With `vcov = "conditional"`, covariance is propagated as
+#' \eqn{J V J^\top}, where \eqn{J} contains derivatives of the reported
+#' estimates with respect to the model coefficients and \eqn{V} is their
+#' complete named covariance matrix. An explicit covariance matrix passed
 #' as `vcov` overrides the model covariance for conditional inference.
 #'
-#' `vcov = "conditional"` conditions on the supplied prediction profiles for
-#' `sops()` and on the observed standardization profiles for averaged results.
+#' `vcov = "conditional"` accounts for uncertainty in the estimated model
+#' coefficients while treating the patients' starting states and covariates
+#' used for prediction or averaging as given.
 #' `vcov = "unconditional"` is the default for averaged results and is available
-#' only for the stored fitted-patient cohort. It adds profile-distribution
-#' uncertainty and its cross-term with coefficient estimation through the
-#' patient-level stacked influence \eqn{\phi_i = g_i - \bar g + J A^{-1}s_i},
-#' with covariance estimated as \eqn{\mathrm{cov}(\phi_i) / n}. This is the
-#' manuscript's patient-level sample-covariance correction, not a backend HC1
-#' setting. User-supplied prediction cohorts require `vcov = "conditional"`;
+#' only for the patients stored with the fitted model. It also accounts for
+#' variation in which patients are sampled from the population, including its
+#' association with coefficient estimation from those same patients. Thus it
+#' estimates uncertainty in the population average. The calculation combines
+#' each patient's deviation from the average prediction with their contribution
+#' to coefficient estimation, then divides the sample covariance of these
+#' combined contributions by the number of patients. The sample covariance
+#' uses the usual divisor of one less than the number of patients; the model's
+#' `type` and `cadjust` corrections are not applied again.
+#' User-supplied prediction cohorts require `vcov = "conditional"`;
 #' unavailable unconditional inference errors rather than silently falling back.
 #' A custom covariance matrix always selects conditional inference because
 #' unconditional inference requires fitted-model scores and sensitivity.
@@ -114,9 +119,9 @@
 #' transition and have exactly one complete model-stored starting profile. The
 #' starting profile may have a missing first transition response; its ID,
 #' predictors, scheduled starting time, and previous state must be observed.
-#' Weighted and penalized ORM fits are not supported for this target because
+#' Weighted and penalized ORM fits do not support unconditional variance because
 #' their score/sensitivity contracts have not been established. They remain
-#' eligible for empirical delta inference when their fitted covariance is valid.
+#' eligible for conditional delta inference when their fitted covariance is valid.
 #'
 #' Analytical covariance is patient-cluster robust only when valid patient IDs
 #' are supplied explicitly or retained as the fitted model's `id_var`.
@@ -144,10 +149,10 @@
 #'   for `engine = "mvn"`
 #' - `engine = "score_bootstrap"` supports `avg_sops()` and `sops()` with
 #'   `robcov_vglm` models and with `orm` models when `cluster` is supplied.
-#'   When the prediction rows are the stored empirical cohort, the same
+#'   When the prediction rows are the stored patients, the same
 #'   cluster-level weights used for the score perturbation are used for every
 #'   empirical averaging step. With `by`, weights are normalized within each
-#'   subgroup; without `by`, they are normalized over the full empirical cohort.
+#'   subgroup; without `by`, they are normalized over the full set of stored patients.
 #'
 #' ## Bootstrap Method
 #'
@@ -173,15 +178,14 @@
 #' for bootstrap draw weights.
 #'
 #' For marginal `avg_sops()` objects built from user-supplied `newdata`, the
-#' supplied rows are fixed standardization profiles. The same fixed-profile rule
-#' applies to `sops(newdata = ...)`. Score bootstrap and FWB use the
+#' supplied patients' starting states and covariates are treated as given.
+#' This also applies to `sops(newdata = ...)`. Score bootstrap and FWB use the
 #' original/refit data for coefficient or refit uncertainty, but do not attach or
 #' apply draw weights to the supplied prediction profiles because those rows
 #' cannot be assumed to align with the bootstrap clusters.
 #'
-#'
-#' This design ensures consistency: the same vcov is used for both point
-#' estimates and inference, regardless of how `inferences()` is called.
+#' Choosing conditional or unconditional analytical variance changes the
+#' standard errors and confidence intervals, not the point estimates.
 #'
 #' @seealso [avg_sops()], [sops()], [get_draws()],
 #'   [robcov_vglm()], [set_coef()]

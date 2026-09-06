@@ -69,6 +69,14 @@
 #' posterior SOP draws directly and therefore return uncertainty from
 #' `avg_comparisons()`.
 #'
+#' For supported frequentist models, `inferences(method = "delta")` provides
+#' analytical intervals for differences in SOPs or time in state. The default
+#' `vcov = "unconditional"` accounts for coefficient estimation and sampling
+#' the patients used in the averages. Use `vcov = "conditional"` to treat
+#' those patients' starting states and covariates as given and account only
+#' for coefficient estimation. User-supplied `newdata` requires the conditional
+#' choice. See [inferences()] for model restrictions.
+#'
 #' @seealso [avg_sops()], [sops()], [inferences()]
 #'
 #' @examples
