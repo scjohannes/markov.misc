@@ -29,9 +29,9 @@
 #'   must equal `length(states)`.
 #'   Default is `list(c(1, 1, 1, 1, 1, 1))` (no treatment effect).
 #' @param b Numeric. Autoregressive coefficient for recurrent events within a state
-#'   (default: 0). The rate for event j in a given state is:
-#'   rate_j = param + b * (j - 1). Positive b means events become more likely over time
-#'   (Poisson process acceleration); b = 0 means independent events. If a vector is given,
+#'   (default: 1). The rate for event j in a given state is:
+#'   rate_j = param * b^(j - 1). Positive b means events become more likely over time
+#'   (Poisson process acceleration); b = 1 means constant rates. If a vector is given,
 #'   it must be the same length as the states vector (event-type-specific acceleration).
 #' @param frailty_sd Numeric. Standard deviation of the patient-specific frailty (default: 0.1).
 #' @param frailty_event_param Numeric vector. Link between frailty and event rates for each state (default: c(-0.2, -0.1, 0, 0.1, 0.2, 0.05)).
@@ -90,7 +90,7 @@
 #'   follow_up_time = 60,
 #'   param = c(0.05, 0.003, 0.001, 0.001, 0.001, 0.0015),
 #'   hazard_ratios = list(c(1.145, 1, 1, 1, 1, 1)),
-#'   b = 0,
+#'   b = 1,
 #'   seed = NULL
 #' )
 #' plot_sops(test_traj)
@@ -126,7 +126,7 @@ sim_trajectories_tte <- function(
   follow_up_time = 60,
   param = c(0.05, 0.0035, 0.0025, 0.002, 0.002, 0.005),
   hazard_ratios = list(c(1, 1, 1, 1, 1, 1)),
-  b = 0,
+  b = 1,
   frailty_sd = 0.1,
   frailty_event_param = c(-0.2, -0.1, 0, 0.1, 0.2, 0.05),
   seed = NULL
