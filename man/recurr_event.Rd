@@ -8,7 +8,7 @@ recurr_event(
   id,
   dist = "Exponential",
   param,
-  b = 0,
+  b = 1,
   follow_up = 60,
   max_events = NULL
 )
@@ -26,9 +26,9 @@ rates per subject). If missing, identifiers 1:n are generated where
 Must have length 1, or length equal to the number of individuals in \code{id}.
 When a vector is supplied, each individual receives their own baseline rate.}
 
-\item{b}{Numeric scalar. Increment added to the rate for every subsequent
+\item{b}{Numeric scalar. Relative factor applied to the rate for every subsequent
 event (autoregressive Poisson / accelerating rates). Rate for event j is
-lambda_i + b * (j - 1). Default \code{0} (constant rates).}
+lambda_i * b^(j - 1). Default \code{1} (constant rates).}
 
 \item{follow_up}{Numeric scalar. Administrative follow-up time. Event times
 \code{>= follow_up} are censored and not returned. Default \code{60}.}
@@ -57,7 +57,7 @@ censored (removed).
 Algorithm summary:
 \enumerate{
 \item Construct a vector of per-event rates of length \code{max_events} for each
-subject: \eqn{rate_{ij} = lambda_i + b * (j - 1)}.
+subject: \eqn{rate_{ij} = lambda_i * b^(j - 1)}.
 \item If \code{max_events} is not supplied, choose the smallest value in
 3:20 for which the probability of experiencing all \code{max_events}
 within \code{follow_up} is < 1e-4. When rates are constant the gamma
@@ -76,10 +76,10 @@ Notes and caveats:
 }
 \examples{
 # small example
-recurr_event(id = 1:3, param = 0.1, b = 0, follow_up = 10, max_events = 5)
+recurr_event(id = 1:3, param = 0.1, b = 1, follow_up = 10, max_events = 5)
 
 # let function choose max_events automatically
-recurr_event(id = 1:10, param = 0.05, b = 0.01, follow_up = 30)
+recurr_event(id = 1:10, param = 0.05, b = 0.99, follow_up = 30)
 
 }
 \seealso{
