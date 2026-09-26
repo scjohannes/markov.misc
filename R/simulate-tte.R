@@ -167,14 +167,21 @@ sim_trajectories_tte <- function(
 
   if (
     !is.null(baseline_data) &&
-      !c("event_time", "frailty") %in% names(baseline_data)
+      !("event_time" %in% names(baseline_data))
   ) {
     warning(
-      "baseline_data is missing 'event_time' or 'frailty' columns. ",
-      "Default values will be used: event_time = 0, frailty ~ N(0, frailty_sd^2)."
+      "baseline_data is missing 'event_time' column. ",
+      "Default values will be used: event_time = 0, "
     )
 
     baseline_data <- cbind(baseline_data, event_time = 0)
+  }
+
+  if (!is.null(baseline_data) && !("frailty" %in% names(baseline_data))) {
+    warning(
+      "baseline_data is missing 'frailty' column. ",
+      "Default values will be used: frailty ~ N(0, frailty_sd^2)."
+    )
     baseline_data <- cbind(
       baseline_data,
       frailty = rnorm(nrow(baseline_data), mean = 0, sd = frailty_sd)

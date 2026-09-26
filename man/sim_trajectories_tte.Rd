@@ -6,7 +6,7 @@
 \usage{
 sim_trajectories_tte(
   baseline_data = NULL,
-  baseline_states = NULL,
+  baseline_states = 2:5,
   prob = c(0.55, 0.2, 0.15, 0.1),
   n = 1000,
   states = 1:6,
@@ -56,7 +56,7 @@ Default is \code{list(c(1, 1, 1, 1, 1, 1))} (no treatment effect).}
 
 \item{b}{Numeric. Autoregressive coefficient for recurrent events within a state
 (default: 1). The rate for event j in a given state is:
-rate_j = param * b^(j - 1). Positive b means events become more likely over time
+rate_j = param * b^(j - 1). b > 1 means events become more likely over time
 (Poisson process acceleration); b = 1 means constant rates. If a vector is given,
 it must be the same length as the states vector (event-type-specific acceleration).}
 
