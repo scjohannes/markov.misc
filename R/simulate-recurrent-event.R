@@ -89,7 +89,7 @@ recurr_event <- function(
   # Find max_events so that the probability of experiencing all events within
   # the study interval is very small (here set to 0.0001, can be changed below)
   if (is.null(max_events)) {
-    lambda_i_min <- min(lambda_i)
+    lambda_i_min <- max(lambda_i)
     for (candidate_max_events in 3:20) {
       candidate_rates <- lambda_i_min * b^(0:(candidate_max_events - 1))
       if (any(candidate_rates <= 0)) {
