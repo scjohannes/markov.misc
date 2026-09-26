@@ -30,7 +30,7 @@
 #'   Default is `list(c(1, 1, 1, 1, 1, 1))` (no treatment effect).
 #' @param b Numeric. Autoregressive coefficient for recurrent events within a state
 #'   (default: 1). The rate for event j in a given state is:
-#'   rate_j = param * b^(j - 1). Positive b means events become more likely over time
+#'   rate_j = param * b^(j - 1). b > 1 means events become more likely over time
 #'   (Poisson process acceleration); b = 1 means constant rates. If a vector is given,
 #'   it must be the same length as the states vector (event-type-specific acceleration).
 #' @param frailty_sd Numeric. Standard deviation of the patient-specific frailty (default: 0.1).
@@ -118,7 +118,7 @@
 
 sim_trajectories_tte <- function(
   baseline_data = NULL,
-  baseline_states = NULL,
+  baseline_states = 2:5,
   prob = c(0.55, 0.2, 0.15, 0.1),
   n = 1000,
   states = 1:6,
@@ -131,6 +131,11 @@ sim_trajectories_tte <- function(
   frailty_event_param = c(-0.2, -0.1, 0, 0.1, 0.2, 0.05),
   seed = NULL
 ) {
+  # Set seed
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
+
   # Input validation
   if (!is.null(baseline_data) && !is.data.frame(baseline_data)) {
     stop("baseline_data must be a data frame or NULL")
@@ -151,12 +156,28 @@ sim_trajectories_tte <- function(
     )
   }
 
-  required_cols <- c("id", "tx", "state", "event_time", "frailty")
+  required_cols <- c("id", "tx", "state")
   missing_cols <- setdiff(required_cols, names(baseline_data))
   if (length(missing_cols) > 0) {
     stop(
       "baseline_data must contain columns: ",
       paste(missing_cols, collapse = ", ")
+    )
+  }
+
+  if (
+    !is.null(baseline_data) &&
+      !c("event_time", "frailty") %in% names(baseline_data)
+  ) {
+    warning(
+      "baseline_data is missing 'event_time' or 'frailty' columns. ",
+      "Default values will be used: event_time = 0, frailty ~ N(0, frailty_sd^2)."
+    )
+
+    baseline_data <- cbind(baseline_data, event_time = 0)
+    baseline_data <- cbind(
+      baseline_data,
+      frailty = rnorm(nrow(baseline_data), mean = 0, sd = frailty_sd)
     )
   }
 
@@ -196,10 +217,6 @@ sim_trajectories_tte <- function(
     )
   }
 
-  if (!is.null(seed)) {
-    set.seed(seed)
-  }
-
   tx_levels <- sort(unique(baseline_data$tx))
   if (
     !is.numeric(tx_levels) ||
@@ -221,20 +238,27 @@ sim_trajectories_tte <- function(
     )
   }
 
+  if (any(b <= 0) || (length(b) > 1 && length(b) != length(states))) {
+    stop(
+      "b must be a positive scalar or a vector of length equal to length(states)"
+    )
+  }
+
   params_for_tx <- function(tx, frailty) {
-    if (tx == 0) {
-      return(sweep(
-        exp(outer(frailty, frailty_event_param, "*")),
-        2,
-        param,
-        "*"
-      ))
+    frailty_multiplier <-
+      exp(outer(frailty, frailty_event_param, "*"))
+
+    hr <- if (tx == 0) {
+      rep(1, length(states))
+    } else {
+      hazard_ratios[[tx]]
     }
+
     sweep(
-      exp(log(hazard_ratios[[tx]]) + outer(frailty, frailty_event_param, "*")),
-      2,
-      param,
-      "*"
+      frailty_multiplier,
+      MARGIN = 2,
+      STATS = param * hr,
+      FUN = "*"
     )
   }
 
