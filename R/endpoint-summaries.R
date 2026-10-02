@@ -377,12 +377,23 @@ states_to_hce <- function(
       min(x$stop[x$y %in% absorbing_state], na.rm = TRUE),
       max(x$stop, na.rm = TRUE)
     )
-    x$intervals <- x$stop - x$start
+    x$start_mod <- x$start
+    x$start_mod[x$start_mod == 0] <- 1 # do not count baseline day
+    x$intervals <- x$stop - x$start_mod
     # y of an interval is the state at the end of the interval, so we need to check the previous state for ventilator-free days
+    # this ignores a state change at the last day:
     x$Vfreedays <- sum(
       x$intervals[x$yprev < min(ventilator_states)],
       na.rm = TRUE
-    )
+    ) +
+      if (
+        x$y[nrow(x)] < min(ventilator_states) &&
+          x$yprev[nrow(x)] != x$y[nrow(x)]
+      ) {
+        1
+      } else {
+        0
+      }
     x[
       1,
       c(
