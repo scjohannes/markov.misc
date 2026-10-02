@@ -377,23 +377,35 @@ states_to_hce <- function(
       min(x$stop[x$y %in% absorbing_state], na.rm = TRUE),
       max(x$stop, na.rm = TRUE)
     )
-    x$start_mod <- x$start
-    x$start_mod[x$start_mod == 0] <- 1 # do not count baseline day
-    x$intervals <- x$stop - x$start_mod
-    # y of an interval is the state at the end of the interval, so we need to check the previous state for ventilator-free days
-    # this ignores a state change at the last day:
-    x$Vfreedays <- sum(
-      x$intervals[x$yprev < min(ventilator_states)],
+
+    # Ventilator-free days: split into two metrics: first, count the day when y is not a
+    # ventilator state, then count the days when yprev is not a ventilator state. (next interval
+    # starts on the next day, so interval -1)
+    # interval states indicated by yprev (days d with start < d <= stop), exclude day 0
+    day_start <- pmax(1L, floor(x$start) + 1L)
+    day_stop <- floor(x$stop)
+
+    # number of days strictly before the stop (these days carry yprev)
+    days_prev <- pmax(0L, day_stop - day_start)
+
+    # indicator for a last-day at the integer stop (1 if day_stop >= day_start)
+    has_last_day <- (day_stop >= day_start)
+
+    # ventilator-free days:
+    #  - days_prev counted when yprev is NOT a ventilator state
+    #  - the integer stop-day counted when y (end-of-interval state) is NOT a ventilator state
+    vfree_prev <- sum(
+      days_prev[!(x$yprev %in% ventilator_states)],
       na.rm = TRUE
-    ) +
-      if (
-        x$y[nrow(x)] < min(ventilator_states) &&
-          x$yprev[nrow(x)] != x$y[nrow(x)]
-      ) {
-        1
-      } else {
-        0
-      }
+    )
+    vfree_last <- sum(
+      has_last_day & !(x$y %in% ventilator_states),
+      na.rm = TRUE
+    )
+
+    x$Vfreedays <- vfree_prev + vfree_last
+
+    # Select the relevant columns for the HCE summary
     x[
       1,
       c(
