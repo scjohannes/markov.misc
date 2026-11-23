@@ -38,6 +38,17 @@
 #' @param covariate_names Character vector of covariate names from `baseline_data`
 #'   to pass to `lp_function`. Default is c("age", "sofa", "tx"). The function
 #'   will automatically detect and pass these to `lp_function`.
+#' @param n_patients Integer. Number of patients to simulate when
+#'   `baseline_data = NULL` (default: 1000). Ignored otherwise.
+#' @param baseline_probabilities Numeric vector with one probability per state
+#'   (`length(intercepts) + 1`), used when `baseline_data = NULL` to sample each
+#'   patient's initial `yprev`. Values are normalized to sum to one. The
+#'   simulated baseline data contain `id`, `yprev` and `tx`.
+#' @param treatment_prob Probability of `tx = 1` for simulated baseline data
+#'   (default: 0.5). Ignored when `baseline_data` is supplied.
+#'
+#' If `baseline_data` is `NULL` and `lp_function` is `NULL`,
+#' [lp_markov_minimal()] is used; otherwise the default is [lp_violet()].
 #'
 #' @return A data frame with columns:
 #'   - id: patient identifier
@@ -135,7 +146,7 @@ sim_trajectories_markov <- function(
   baseline_data = violet_baseline,
   follow_up_time = 60,
   intercepts = c(-9.353417, -4.294121, -1.389221, -0.555688, 3.127056),
-  lp_function = lp_violet,
+  lp_function = NULL,
   extra_params = c(
     "time" = -0.738194,
     "time'" = 0.7464006,
@@ -153,11 +164,58 @@ sim_trajectories_markov <- function(
   parameter = 0,
   absorbing_states = 6,
   seed = NULL,
-  covariate_names = c("age", "sofa", "tx")
+  covariate_names = c("age", "sofa", "tx"),
+  n_patients = 1000,
+  baseline_probabilities = NULL,
+  treatment_prob = 0.5
 ) {
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
+
+  if (is.null(baseline_data)) {
+    n_states_total <- length(intercepts) + 1
+    if (is.null(baseline_probabilities)) {
+      stop("baseline_probabilities is required when baseline_data is NULL")
+    }
+    if (
+      !is.numeric(baseline_probabilities) ||
+        length(baseline_probabilities) != n_states_total ||
+        anyNA(baseline_probabilities) ||
+        any(baseline_probabilities < 0) ||
+        sum(baseline_probabilities) <= 0
+    ) {
+      stop(
+        "baseline_probabilities must be a nonnegative numeric vector with one ",
+        "element per state (length(intercepts) + 1 = ",
+        n_states_total,
+        ")"
+      )
+    }
+    validate_markov_wrapper_inputs(n_patients, treatment_prob)
+    n_patients <- as.integer(n_patients)
+    baseline_data <- data.frame(
+      id = seq_len(n_patients),
+      yprev = sample(
+        seq_len(n_states_total),
+        size = n_patients,
+        replace = TRUE,
+        prob = baseline_probabilities
+      ),
+      tx = stats::rbinom(n_patients, size = 1L, prob = treatment_prob)
+    )
+    if (is.null(lp_function)) {
+      lp_function <- lp_markov_minimal
+    }
+  }
+
+  if (is.null(lp_function)) {
+    lp_function <- lp_violet
+  }
+
   # Input validation
   if (!is.data.frame(baseline_data)) {
-    stop("baseline_data must be a data frame")
+    stop("baseline_data must be a data frame or NULL")
   }
 
   required_cols <- c("id", "yprev")
@@ -177,10 +235,6 @@ sim_trajectories_markov <- function(
     stop("lp_function must be a function")
   }
 
-  if (!is.null(seed)) {
-    set.seed(seed)
-  }
-
   # Setup
   N <- nrow(baseline_data)
   times <- 1:follow_up_time
@@ -197,7 +251,10 @@ sim_trajectories_markov <- function(
 
   # Detect which covariates from baseline_data need to be passed to lp_function
   available_covariates <- intersect(covariate_names, names(baseline_data))
-  if (length(available_covariates) == 0) {
+  if (
+    length(available_covariates) == 0 &&
+      !identical(lp_function, lp_markov_minimal)
+  ) {
     warning("None of the specified covariate_names found in baseline_data")
   }
 
@@ -248,7 +305,10 @@ sim_trajectories_markov <- function(
     }
 
     n_thresholds <- length(intercepts)
-    if (identical(lp_function, lp_violet)) {
+    if (
+      identical(lp_function, lp_violet) ||
+        identical(lp_function, lp_markov_minimal)
+    ) {
       lp <- do.call(lp_function, c(lp_args, more_args))
       lp_matrix <- matrix(
         lp,
@@ -786,6 +846,64 @@ actt2_markov_60day_parameters <- function() {
       state8 = c(0, 0.00131, 0.03383, 0.09147, 0.09583, 0.09583)
     )
   )
+}
+
+
+#' Minimal linear predictor with a spline in time
+#'
+#' Linear predictor for a Markov proportional odds model whose only inputs are
+#' the previous state and time, with an optional treatment term. Time enters
+#' through a restricted cubic spline.
+#'
+#' @param yprev Previous state (factor or integer vector).
+#' @param t Current time (scalar).
+#' @param tx Treatment indicator (default 0, no treatment term).
+#' @param parameter Treatment effect (log odds ratio).
+#' @param extra_params Named numeric vector with spline coefficients named
+#'   `day`, `day'`, `day''`, ... (or `time`, `time'`, ...) and previous-state
+#'   coefficients named `yprev=<k>`. It must carry the spline knots in the
+#'   attribute `day_knots`; or pass them via [prepare_markov_minimal_params()].
+#'
+#' @return Numeric vector of linear predictors, one per element of `yprev`.
+#' @export
+lp_markov_minimal <- function(yprev, t, tx = 0, parameter = 0, extra_params) {
+  knots <- attr(extra_params, "day_knots")
+  if (is.null(knots)) {
+    stop("extra_params must have a 'day_knots' attribute")
+  }
+  n_coef <- length(knots) - 1L
+  prefix <- if ("day" %in% names(extra_params)) "day" else "time"
+  coef_names <- paste0(prefix, strrep("'", 0:(n_coef - 1L)))
+  if (!all(coef_names %in% names(extra_params))) {
+    stop(
+      "extra_params must contain spline coefficients: ",
+      paste(coef_names, collapse = ", ")
+    )
+  }
+  time_effect <- drop(markov_rcs_basis(t, knots) %*% extra_params[coef_names])
+
+  yprev_names <- paste0("yprev=", as.character(yprev))
+  prev_effect <- extra_params[yprev_names]
+  if (anyNA(prev_effect)) {
+    stop(
+      "extra_params lacks coefficients for: ",
+      paste(unique(yprev_names[is.na(prev_effect)]), collapse = ", ")
+    )
+  }
+
+  as.numeric(time_effect + prev_effect + parameter * tx)
+}
+
+
+#' Build `extra_params` for [lp_markov_minimal()]
+#'
+#' @param day_coefs Named spline coefficients (`day`, `day'`, ...).
+#' @param day_knots Numeric spline knots.
+#' @param yprev_coefs Named previous-state coefficients (`yprev=<k>`).
+#' @return Named numeric vector with attribute `day_knots`.
+#' @export
+prepare_markov_minimal_params <- function(day_coefs, day_knots, yprev_coefs) {
+  structure(c(day_coefs, yprev_coefs), day_knots = day_knots)
 }
 
 

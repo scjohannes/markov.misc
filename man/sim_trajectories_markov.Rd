@@ -8,7 +8,7 @@ sim_trajectories_markov(
   baseline_data = violet_baseline,
   follow_up_time = 60,
   intercepts = c(-9.353417, -4.294121, -1.389221, -0.555688, 3.127056),
-  lp_function = lp_violet,
+  lp_function = NULL,
   extra_params = c(time = -0.738194, `time'` = 0.7464006, age = 0.010321, sofa =
     0.046901, `yprev=1` = -8.518344, `yprev=3` = 0, `yprev=4` = 1.315332, `yprev=5` =
     6.576662, `yprev=1 * time` = 0, `yprev=3 * time` = 0, `yprev=4 * time` = 0,
@@ -16,7 +16,10 @@ sim_trajectories_markov(
   parameter = 0,
   absorbing_states = 6,
   seed = NULL,
-  covariate_names = c("age", "sofa", "tx")
+  covariate_names = c("age", "sofa", "tx"),
+  n_patients = 1000,
+  baseline_probabilities = NULL,
+  treatment_prob = 0.5
 )
 }
 \arguments{
@@ -64,6 +67,20 @@ entered, patients cannot leave). Default is 6 (death).}
 \item{covariate_names}{Character vector of covariate names from \code{baseline_data}
 to pass to \code{lp_function}. Default is c("age", "sofa", "tx"). The function
 will automatically detect and pass these to \code{lp_function}.}
+
+\item{n_patients}{Integer. Number of patients to simulate when
+\code{baseline_data = NULL} (default: 1000). Ignored otherwise.}
+
+\item{baseline_probabilities}{Numeric vector with one probability per state
+(\code{length(intercepts) + 1}), used when \code{baseline_data = NULL} to sample each
+patient's initial \code{yprev}. Values are normalized to sum to one. The
+simulated baseline data contain \code{id}, \code{yprev} and \code{tx}.}
+
+\item{treatment_prob}{Probability of \code{tx = 1} for simulated baseline data
+(default: 0.5). Ignored when \code{baseline_data} is supplied.
+
+If \code{baseline_data} is \code{NULL} and \code{lp_function} is \code{NULL},
+\code{\link[=lp_markov_minimal]{lp_markov_minimal()}} is used; otherwise the default is \code{\link[=lp_violet]{lp_violet()}}.}
 }
 \value{
 A data frame with columns:
